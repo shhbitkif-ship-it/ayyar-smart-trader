@@ -1,24 +1,31 @@
-"""Async provider adapters compatible with standard Python and Cloudflare Workers."""
+"""Keyless Iranian and global gold quotes from NerkhAra's public JSON feed.
+
+NerkhAra refreshes its source snapshot every ten minutes. Prices are indicative
+market readings, not executable broker quotes. We preserve source timestamps,
+stale flags, source count and spread metadata.
+"""
 from __future__ import annotations
-import os
+import time
 from datetime import datetime, timezone
-from typing import Any
 import httpx
 
-IRAN_BASE = "https://talasanj.info/api/v1"
-GLOBAL_BASE = "https://api.metals.dev/v1"
+SOURCE_URL = "https://nerkhara.com/api/v1/latest.json"
+CACHE_SECONDS = 60
+MAX_AGE_SECONDS = 660
 
+SYMBOLS = [
+    ("GOLD18", "طلای ۱۸ عیار", "gold-18k"),
+    ("GOLD24", "طلای ۲۴ عیار", "gold-24k"),
+    ("MESGHAL", "مظنه آبشده", "gold-mesghal"),
+    ("COIN_EMAMI", "سکه امامی", "coin-emami"),
+    ("COIN_HALF", "نیم سکه", "coin-half"),
+    ("COIN_QUARTER", "ربع سکه", "coin-quarter"),
+    ("USD_IRT", "دلار بازار آزاد", "usd"),
+    ("XAUUSD", "اونس جهانی طلا", "xau"),
+]
 
-def _secret(name: str, env: Any = None) -> str | None:
-    """Read a Cloudflare binding first, then process env for local development."""
-    if env is not None:
-        try:
-            value = env.get(name) if isinstance(env, dict) else getattr(env, name, None)
-            if value:
-                return str(value)
-        except Exception:
-            pass
-    return os.getenv(name)
+_cache: dict | None = None
+_cache_at = 0.0
 
 
 def _timestamp(value: str | None) -> datetime | None:
@@ -31,87 +38,68 @@ def _timestamp(value: str | None) -> datetime | None:
         return None
 
 
-def _quote(symbol: str, name: str, price: Any, unit: str, source: str,
-           stamp: datetime | None, extra: dict | None = None) -> dict:
+def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dict:
+    item = item or {}
+    price = item.get("price")
+    stamp = _timestamp(item.get("updated_utc"))
     now = datetime.now(timezone.utc)
-    valid_number = isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0
+    valid = isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0
     age = (now - stamp.astimezone(timezone.utc)).total_seconds() if stamp else None
-    status = "LIVE" if valid_number and age is not None and -30 <= age <= 90 else "STALE" if valid_number else "UNAVAILABLE"
+    stale_flag = item.get("stale") is True
+    status = "LIVE" if valid and stamp and not stale_flag and -30 <= age <= MAX_AGE_SECONDS else "STALE" if valid else "UNAVAILABLE"
+    unit = "USD/oz" if item.get("unit") == "USD" else "تومان"
+    name_data = item.get("name") or {}
+    display_name = name_data.get("fa") or name_data.get("en") or name
+    meta = {
+        "provider_id": source_id,
+        "change_pct": item.get("change_pct"),
+        "sources": item.get("sources"),
+        "spread_pct": item.get("spread_pct"),
+        "method": item.get("method"),
+        "stale": stale_flag,
+        "reason": None if valid else "Symbol is missing from the public provider feed",
+    }
     return {
-        "symbol": symbol, "name": name, "price": price if valid_number else None,
-        "unit": unit, "source": source, "timestamp": stamp,
+        "symbol": symbol, "name": display_name, "price": price if valid else None,
+        "unit": unit, "source": "NerkhAra", "timestamp": stamp,
         "age_seconds": round(age, 1) if age is not None else None,
-        "status": status, "meta": extra or {},
+        "status": status, "meta": meta,
     }
 
 
-async def get_iran_quotes(env: Any = None) -> list[dict]:
-    key = _secret("TALASANJ_KEY", env)
-    if not key:
-        return [_quote("IRAN_PROVIDER", "Iran market data", None, "", "Talasanj", None,
-                       {"reason": "TALASANJ_KEY is not configured"})]
+async def market_snapshot() -> dict:
+    global _cache, _cache_at
+    now_mono = time.monotonic()
+    if _cache is not None and now_mono - _cache_at < CACHE_SECONDS:
+        return _cache
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            response = await client.get(
-                f"{IRAN_BASE}/prices",
-                headers={"Authorization": f"Bearer {key}", "X-Client-Name": "Ayyar Smart Trader"},
-            )
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            response = await client.get(SOURCE_URL, headers={"Accept": "application/json"})
             response.raise_for_status()
             payload = response.json()
-        stamp = _timestamp(payload.get("updated_at"))
-        prices = payload.get("prices") or {}
-        mapping = [
-            ("GOLD18", "طلای ۱۸ عیار", "gram18"), ("GOLD24", "طلای ۲۴ عیار", "gram24"),
-            ("MESGHAL", "مظنه آبشده", "mazaneh"), ("COIN_EMAMI", "سکه امامی", "coin_full"),
-            ("COIN_HALF", "نیم سکه", "coin_half"), ("COIN_QUARTER", "ربع سکه", "coin_quarter"),
-            ("USD_IRT", "دلار تهران", "usd"), ("XAUUSD", "اونس جهانی طلا", "ounce"),
-        ]
-        out = []
-        for symbol, name, key_name in mapping:
-            row = prices.get(key_name) or {}
-            unit = "USD/oz" if key_name == "ounce" else "Toman"
-            out.append(_quote(symbol, name, row.get("price"), unit, "Talasanj", stamp,
-                              {k: v for k, v in row.items() if k != "price"}))
-        return out
-    except Exception as exc:
-        return [_quote("IRAN_PROVIDER", "Iran market data", None, "", "Talasanj", None,
-                       {"reason": type(exc).__name__})]
-
-
-async def get_global_quote(env: Any = None) -> dict:
-    key = _secret("METALS_DEV_KEY", env)
-    if not key:
-        return _quote("XAUUSD", "Gold spot", None, "USD/oz", "Metals.Dev", None,
-                      {"reason": "METALS_DEV_KEY is not configured"})
-    try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            response = await client.get(
-                f"{GLOBAL_BASE}/metal/spot",
-                params={"api_key": key, "metal": "gold", "currency": "USD"},
-                headers={"Accept": "application/json"},
-            )
-            response.raise_for_status()
-            payload = response.json()
-        rate = payload.get("rate") or {}
-        return _quote("XAUUSD", "Gold spot", rate.get("price"), "USD/oz", "Metals.Dev",
-                      _timestamp(payload.get("timestamp")),
-                      {k: v for k, v in rate.items() if k != "price"})
-    except Exception as exc:
-        return _quote("XAUUSD", "Gold spot", None, "USD/oz", "Metals.Dev", None,
-                      {"reason": type(exc).__name__})
-
-
-async def market_snapshot(env: Any = None) -> dict:
-    global_quote, iran = await __import__("asyncio").gather(get_global_quote(env), get_iran_quotes(env))
-    iran_global = next((q for q in iran if q["symbol"] == "XAUUSD"), None)
-    if global_quote["status"] != "LIVE" and iran_global and iran_global["status"] == "LIVE":
-        global_quote = {
-            **iran_global, "source": "Talasanj (fallback)",
-            "meta": {**iran_global["meta"], "fallback_for": "Metals.Dev"},
+        rows = payload.get("items") or []
+        by_id = {row.get("id"): row for row in rows if isinstance(row, dict)}
+        quotes = [_normalise(by_id.get(source_id), symbol, name, source_id)
+                  for symbol, name, source_id in SYMBOLS]
+        live = sum(1 for quote in quotes if quote["status"] == "LIVE")
+        result = {
+            "status": "LIVE" if live else "UNAVAILABLE",
+            "as_of": datetime.now(timezone.utc),
+            "provider_generated_at": _timestamp(payload.get("generated_utc")),
+            "quotes": quotes,
+            "notice": "NerkhAra is refreshed every ten minutes. These are indicative market readings, not broker execution quotes. STALE or UNAVAILABLE prices must never generate trade signals.",
+            "attribution": "NerkhAra — https://nerkhara.com",
         }
-    quotes = [global_quote] + [q for q in iran if q["symbol"] not in ("IRAN_PROVIDER", "XAUUSD")]
-    return {
-        "status": "LIVE" if any(q["status"] == "LIVE" for q in quotes) else "UNAVAILABLE",
-        "as_of": datetime.now(timezone.utc), "quotes": quotes,
-        "notice": "A quote marked STALE or UNAVAILABLE must never be used to generate a trade signal.",
-    }
+    except Exception as exc:
+        result = {
+            "status": "UNAVAILABLE",
+            "as_of": datetime.now(timezone.utc),
+            "provider_generated_at": None,
+            "quotes": [_normalise(None, symbol, name, source_id)
+                       for symbol, name, source_id in SYMBOLS],
+            "notice": "The public market-data provider is unavailable. No synthetic prices are shown.",
+            "error": type(exc).__name__,
+            "attribution": "NerkhAra — https://nerkhara.com",
+        }
+    _cache, _cache_at = result, now_mono
+    return result
