@@ -15,17 +15,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:String,val source:String,val status:String)
+data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:String,val source:String,val status:String,val timestamp:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);setContent { AyyarApp() }} }
 
 @Composable fun AyyarApp(){
  var refresh by remember { mutableIntStateOf(0) }
+ LaunchedEffect(Unit) { while (true) { delay(20000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.3.0",color=muted,fontSize=12.sp) }
@@ -44,7 +46,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
 @Composable private fun QuoteCard(q:QuoteUi){
  Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(16.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){
    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){ Text(q.name,color=Color.White,fontWeight=FontWeight.SemiBold); Text(q.status,color=if(q.status=="LIVE") Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontSize=11.sp) }
-   Text(q.price,color=gold,fontSize=23.sp,fontWeight=FontWeight.Bold); Text(q.symbol + "  •  " + q.unit + "  •  " + q.source,color=muted,fontSize=11.sp)
+   Text(q.price,color=gold,fontSize=23.sp,fontWeight=FontWeight.Bold); Text(q.symbol + "  •  " + q.unit + "  •  " + q.source,color=muted,fontSize=11.sp); Text("آخرین به‌روزرسانی: " + q.timestamp,color=muted,fontSize=10.sp)
  } }
 }
 
@@ -53,7 +55,7 @@ private fun fetchQuotes():List<QuoteUi>{
  connection.requestMethod="GET"; connection.connectTimeout=7000; connection.readTimeout=7000
  try { if(connection.responseCode !in 200..299) throw IllegalStateException("HTTP " + connection.responseCode)
    val body=connection.inputStream.bufferedReader().use{it.readText()}; val root=JSONObject(body); val arr=root.getJSONArray("quotes"); val result=mutableListOf<QuoteUi>()
-   for(i in 0 until arr.length()){ val o=arr.getJSONObject(i); val p=if(o.isNull("price")) "—" else String.format(java.util.Locale.US,"%,.2f",o.getDouble("price")); result.add(QuoteUi(o.optString("symbol"),o.optString("name"),p,o.optString("unit"),o.optString("source"),o.optString("status"))) }
+   for(i in 0 until arr.length()){ val o=arr.getJSONObject(i); val p=if(o.isNull("price")) "—" else String.format(java.util.Locale.US,"%,.2f",o.getDouble("price")); result.add(QuoteUi(o.optString("symbol"),o.optString("name"),p,o.optString("unit"),o.optString("source"),o.optString("status"),o.optString("timestamp","—"))) }
    return result
  } finally { connection.disconnect() }
 }
