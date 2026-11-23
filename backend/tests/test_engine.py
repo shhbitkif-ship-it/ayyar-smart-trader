@@ -14,5 +14,9 @@ def test_missing_confirmation_is_no_trade():
  out=evaluate(req,now); assert out.action=="NO_TRADE" and "confirmation" in out.reason.lower()
 
 def test_stale_data_rejected():
- now=datetime.now(timezone.utc); req=EvaluateRequest(symbol="XAUUSD",candles=candles(220,1,now-timedelta(hours=2)))
+ now=datetime.now(timezone.utc); req=EvaluateRequest(symbol="XAUUSD",candles=candles(220,1,now-timedelta(hours=6)))
+ assert evaluate(req,now).status=="STALE"
+
+def test_future_data_rejected():
+ now=datetime.now(timezone.utc); req=EvaluateRequest(symbol="XAUUSD",candles=candles(220,1,now+timedelta(minutes=1)))
  assert evaluate(req,now).status=="STALE"
