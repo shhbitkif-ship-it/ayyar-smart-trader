@@ -38,6 +38,21 @@ def _timestamp(value: str | None) -> datetime | None:
         return None
 
 
+async def _fetch_provider_json() -> dict:
+    # Pyodide's fetch bridge is the supported outbound HTTP path on Workers.
+    try:
+        from pyodide.http import pyfetch
+    except ImportError:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            response = await client.get(SOURCE_URL, headers={"Accept": "application/json"})
+            response.raise_for_status()
+            return response.json()
+    response = await pyfetch(SOURCE_URL, method="GET", headers={"Accept": "application/json"})
+    if not response.ok:
+        raise RuntimeError(f"NerkhAra HTTP {response.status}")
+    return await response.json()
+
+
 def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dict:
     item = item or {}
     price = item.get("price")
@@ -73,10 +88,7 @@ async def market_snapshot() -> dict:
     if _cache is not None and now_mono - _cache_at < CACHE_SECONDS:
         return _cache
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            response = await client.get(SOURCE_URL, headers={"Accept": "application/json"})
-            response.raise_for_status()
-            payload = response.json()
+        payload = await _fetch_provider_json()
         rows = payload.get("items") or []
         by_id = {row.get("id"): row for row in rows if isinstance(row, dict)}
         quotes = [_normalise(by_id.get(source_id), symbol, name, source_id)
