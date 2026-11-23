@@ -1,5 +1,11 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 
+val apiBaseUrl = providers.gradleProperty("API_BASE_URL")
+    .orElse(providers.environmentVariable("API_BASE_URL"))
+    .orElse("https://ayyar-smart-trader-api.workers.dev")
+    .get()
+    .trimEnd('/')
+
 android {
     namespace = "com.ayyar.smarttrader"
     compileSdk = 34
@@ -7,9 +13,9 @@ android {
         applicationId = "com.ayyar.smarttrader"
         minSdk = 23
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
-        buildConfigField("String", "API_BASE_URL", "\"https://ayyar-smart-trader-api.onrender.com\"")
+        versionCode = 4
+        versionName = "0.4.0"
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
