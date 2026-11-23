@@ -18,3 +18,14 @@ services:
         value: "0.03"
       - key: MAX_DRAWDOWN
         value: "0.08"
+  - type: worker
+    name: ayyar-smart-trader-telegram
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: API_BASE_URL
+        value: https://ayyar-smart-trader-api.onrender.com
