@@ -2,7 +2,8 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 
 android { namespace = "com.ayyar.smarttrader"; compileSdk = 34
     defaultConfig { applicationId = "com.ayyar.smarttrader"; minSdk = 23; targetSdk = 34; versionCode = 3; versionName = "0.3.0" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
+    defaultConfig { buildConfigField("String", "API_BASE_URL", "\"https://ayyar-smart-trader-api.onrender.com\"") }
 }
 
 dependencies {
