@@ -1,5 +1,4 @@
-from datetime import datetime, timezone
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from .engine import evaluate
 from .schemas import EvaluateRequest, SignalResponse
 from .market_data import market_snapshot
@@ -8,30 +7,31 @@ from .risk import PositionSizeRequest, calculate_position_size
 
 app = FastAPI(
     title="Ayyar Smart Trader API",
-    version="0.3.1",
-    description="Iran and global gold market data with stale-data protection and conservative signal evaluation.",
+    version="0.4.0",
+    description="Iran and global gold market data with source timestamps, stale-data protection and conservative signal evaluation.",
 )
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "ayyar-smart-trader-api", "version": "0.3.1"}
+    return {"status": "ok", "service": "ayyar-smart-trader-api", "version": "0.4.0"}
 
 
 @app.get("/v1/market/status")
-async def market_status(request: Request):
-    snapshot = await market_snapshot(request.scope.get("env"))
+async def market_status():
+    snapshot = await market_snapshot()
     return {
         "status": snapshot["status"],
         "as_of": snapshot["as_of"],
         "live_quotes": sum(1 for q in snapshot["quotes"] if q["status"] == "LIVE"),
         "total_quotes": len(snapshot["quotes"]),
+        "attribution": snapshot["attribution"],
     }
 
 
 @app.get("/v1/market/quotes")
-async def market_quotes(request: Request):
-    return await market_snapshot(request.scope.get("env"))
+async def market_quotes():
+    return await market_snapshot()
 
 
 @app.get("/v1/risk/policy")
