@@ -1,22 +1,31 @@
-# Gold AI Trader — عیار هوشمند
+# عیار هوشمند | Ayyar Smart Trader
 
-اسکلت اولیه اپلیکیشن اندروید و API بک‌اند. این نسخه هنوز به فید زنده بازار متصل نیست و APK انتشار‌یافته محسوب نمی‌شود.
+این مخزن شامل اسکلت بازسازی‌شده بک‌اند و اپلیکیشن اندروید است.
 
-## Backend
+## بک‌اند
+از مسیر `backend/` اجرا کنید:
+
 ```bash
-cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+PYTHONPATH=. uvicorn app.main:app --reload
 ```
-API docs: http://127.0.0.1:8000/docs
 
-## Android
-پوشه `android/` را با Android Studio باز کنید و Gradle Sync انجام دهید.
+آدرس سلامت: `/health` — مستندات API: `/docs`
 
-## ایمنی داده
-- بدون منبع معتبر، قیمت زنده نمایش داده نمی‌شود.
-- موتور اولیه در نبود داده کافی/تأیید، `NO_TRADE` می‌دهد.
-- هیچ سفارش واقعی یا اتصال بروکری در این نسخه وجود ندارد.
-- کلیدهای API را در مخزن یا APK قرار ندهید.
+## اندروید
+پوشه `android/` را در Android Studio باز کنید و Gradle Sync بزنید. برای ساخت نسخه آزمایشی:
+
+```bash
+gradle assembleDebug
+```
+
+## ساخت خودکار
+Workflow در مسیر `.github/workflows/ci.yml` تست‌های بک‌اند را اجرا می‌کند و APK آزمایشی را به‌عنوان Artifact منتشر می‌کند.
+
+## محدودیت‌های ایمنی و داده
+- هنوز فید زنده و تأییدشده قیمت طلای جهانی/ایران پیکربندی نشده؛ قیمت حدسی نمایش داده نمی‌شود.
+- موتور تحلیل در نبود داده کافی یا تأیید چندزمانه، `NO_TRADE` می‌دهد.
+- سفارش واقعی و اتصال بروکر فعال نیست.
+- کلیدها و توکن‌ها را در مخزن یا APK قرار ندهید؛ از Secrets/Environment Variables استفاده کنید.
