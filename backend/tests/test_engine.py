@@ -20,3 +20,11 @@ def test_stale_data_rejected():
 def test_future_data_rejected():
  now=datetime.now(timezone.utc); req=EvaluateRequest(symbol="XAUUSD",candles=candles(220,1,now+timedelta(minutes=1)))
  assert evaluate(req,now).status=="STALE"
+
+
+def test_analysis_includes_requested_indicators():
+ now=datetime.now(timezone.utc)
+ req=EvaluateRequest(symbol="XAUUSD",candles=candles(220,1,now-timedelta(minutes=219)))
+ out=evaluate(req,now)
+ assert out.action=="NO_TRADE"
+ assert {"ema20","ema50","ema100","ema200","rsi14","macd","bollinger20","atr14","support_resistance","fibonacci"} <= set(out.analysis)
