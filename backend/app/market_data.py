@@ -9,6 +9,18 @@ IRAN_BASE = "https://talasanj.info/api/v1"
 GLOBAL_BASE = "https://api.metals.dev/v1"
 
 
+def _secret(name: str, env: Any = None) -> str | None:
+    """Read a Cloudflare binding first, then process env for local development."""
+    if env is not None:
+        try:
+            value = env.get(name) if isinstance(env, dict) else getattr(env, name, None)
+            if value:
+                return str(value)
+        except Exception:
+            pass
+    return os.getenv(name)
+
+
 def _timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -33,8 +45,8 @@ def _quote(symbol: str, name: str, price: Any, unit: str, source: str,
     }
 
 
-async def get_iran_quotes() -> list[dict]:
-    key = os.getenv("TALASANJ_KEY")
+async def get_iran_quotes(env: Any = None) -> list[dict]:
+    key = _secret("TALASANJ_KEY", env)
     if not key:
         return [_quote("IRAN_PROVIDER", "Iran market data", None, "", "Talasanj", None,
                        {"reason": "TALASANJ_KEY is not configured"})]
@@ -66,8 +78,8 @@ async def get_iran_quotes() -> list[dict]:
                        {"reason": type(exc).__name__})]
 
 
-async def get_global_quote() -> dict:
-    key = os.getenv("METALS_DEV_KEY")
+async def get_global_quote(env: Any = None) -> dict:
+    key = _secret("METALS_DEV_KEY", env)
     if not key:
         return _quote("XAUUSD", "Gold spot", None, "USD/oz", "Metals.Dev", None,
                       {"reason": "METALS_DEV_KEY is not configured"})
@@ -89,8 +101,8 @@ async def get_global_quote() -> dict:
                       {"reason": type(exc).__name__})
 
 
-async def market_snapshot() -> dict:
-    global_quote, iran = await __import__("asyncio").gather(get_global_quote(), get_iran_quotes())
+async def market_snapshot(env: Any = None) -> dict:
+    global_quote, iran = await __import__("asyncio").gather(get_global_quote(env), get_iran_quotes(env))
     iran_global = next((q for q in iran if q["symbol"] == "XAUUSD"), None)
     if global_quote["status"] != "LIVE" and iran_global and iran_global["status"] == "LIVE":
         global_quote = {
