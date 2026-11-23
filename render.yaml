@@ -1,10 +1,20 @@
-
 services:
-  - type: worker
-    name: ayyar-smart-trader
+  - type: web
+    name: ayyar-smart-trader-api
     runtime: python
+    plan: free
+    rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
-      - key: BOT_TOKEN
+      - key: TALASANJ_KEY
         sync: false
+      - key: METALS_DEV_KEY
+        sync: false
+      - key: DEFAULT_RISK_PER_TRADE
+        value: "0.01"
+      - key: MAX_DAILY_LOSS
+        value: "0.03"
+      - key: MAX_DRAWDOWN
+        value: "0.08"
