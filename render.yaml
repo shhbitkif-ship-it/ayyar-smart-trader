@@ -21,7 +21,6 @@ services:
   - type: worker
     name: ayyar-smart-trader-telegram
     runtime: python
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
