@@ -62,7 +62,10 @@ def get_global_quote() -> dict:
 
 def market_snapshot() -> dict:
     global_quote=get_global_quote(); iran=get_iran_quotes()
-    quotes=[global_quote]+[q for q in iran if q["symbol"]!="IRAN_PROVIDER"]
+    iran_global=next((q for q in iran if q["symbol"]=="XAUUSD"), None)
+    if global_quote["status"] != "LIVE" and iran_global and iran_global["status"] == "LIVE":
+        global_quote={**iran_global, "source":"Talasanj (fallback)", "meta":{**iran_global["meta"],"fallback_for":"Metals.Dev"}}
+    quotes=[global_quote]+[q for q in iran if q["symbol"] not in ("IRAN_PROVIDER","XAUUSD")]
     return {"status":"LIVE" if any(q["status"]=="LIVE" for q in quotes) else "UNAVAILABLE",
             "as_of":datetime.now(timezone.utc),"quotes":quotes,
             "notice":"A quote marked STALE or UNAVAILABLE must never be used to generate a trade signal."}
