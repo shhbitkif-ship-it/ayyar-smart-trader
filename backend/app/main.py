@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from .engine import evaluate
 from .schemas import EvaluateRequest, SignalResponse
 from .market_data import market_snapshot
@@ -19,8 +19,8 @@ def health():
 
 
 @app.get("/v1/market/status")
-async def market_status():
-    snapshot = await market_snapshot()
+async def market_status(request: Request):
+    snapshot = await market_snapshot(request.scope.get("env"))
     return {
         "status": snapshot["status"],
         "as_of": snapshot["as_of"],
@@ -30,8 +30,8 @@ async def market_status():
 
 
 @app.get("/v1/market/quotes")
-async def market_quotes():
-    return await market_snapshot()
+async def market_quotes(request: Request):
+    return await market_snapshot(request.scope.get("env"))
 
 
 @app.get("/v1/risk/policy")
