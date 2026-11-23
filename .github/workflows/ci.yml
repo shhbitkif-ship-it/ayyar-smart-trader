@@ -1,7 +1,7 @@
 name: Ayyar Smart Trader CI
 
 concurrency:
-  group: ayyar-ci-\${{ github.ref }}
+  group: ayyar-ci-${{ github.ref }}
   cancel-in-progress: true
 on:
   push:
