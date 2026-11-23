@@ -1,12 +1,12 @@
 [project]
 name = "ayyar-smart-trader-api"
-version = "0.3.0"
+version = "0.3.1"
 description = "Ayyar Smart Trader FastAPI backend for Cloudflare Workers"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi==0.115.6",
-    "httpx==0.28.1",
-    "pydantic==2.10.4",
+    "fastapi",
+    "httpx",
+    "pydantic",
 ]
 
 [dependency-groups]
