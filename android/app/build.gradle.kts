@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 
-android { namespace = "com.ayyar.smarttrader"; compileSdk = 35
-    defaultConfig { applicationId = "com.ayyar.smarttrader"; minSdk = 23; targetSdk = 35; versionCode = 2; versionName = "0.2.0" }
+android { namespace = "com.ayyar.smarttrader"; compileSdk = 34
+    defaultConfig { applicationId = "com.ayyar.smarttrader"; minSdk = 23; targetSdk = 34; versionCode = 2; versionName = "0.2.0" }
     buildFeatures { compose = true }
 }
 
