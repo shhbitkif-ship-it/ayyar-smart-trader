@@ -14,7 +14,7 @@ class Candle(BaseModel):
 
 class EvaluateRequest(BaseModel):
     symbol: str = Field(min_length=1,max_length=32)
-    timeframe: Literal["1m","5m"] = "1m"
+    timeframe: Literal["1m","5m","15m","30m","1h","4h","1d"] = "1m"
     candles: list[Candle] = Field(min_length=1,max_length=5000)
     confirmation_candles: list[Candle] = Field(default_factory=list,max_length=5000)
 
@@ -25,3 +25,4 @@ class SignalResponse(BaseModel):
     reason: str
     evaluated_at: datetime
     entry: float | None = None; stop_loss: float | None = None; take_profit_1: float | None = None; risk_reward: float | None = None
+    analysis: dict = Field(default_factory=dict)
