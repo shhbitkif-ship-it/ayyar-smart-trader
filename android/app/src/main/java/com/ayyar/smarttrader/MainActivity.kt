@@ -36,6 +36,7 @@ data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val ma
 data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String)
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
+data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -48,12 +49,14 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var selectedSymbol by remember { mutableStateOf("gold-18k") }
  var backtestRefresh by remember { mutableIntStateOf(0) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
+ var compareRefresh by remember { mutableIntStateOf(0) }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
+ val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -144,6 +147,29 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       }
       Button(onClick={backtestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(backtestRefresh==0) "اجرای بک‌تست با داده زنده" else "اجرای دوباره بک‌تست")}
    } } }
+   item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+      Text("EMA 9/21 • EMA 12/26 • EMA 20/50",color=Color.White,fontWeight=FontWeight.SemiBold)
+      Text("مقایسه روی کندل‌های واقعی ۱۵، ۳۰ و ۶۰ دقیقه و روزانه؛ سرمایه فرضی و هزینه یکسان",color=muted,fontSize=11.sp)
+      when {
+        compareRefresh==0 -> Text("برای مقایسه عملکرد تاریخی، دکمه اجرا را بزن.",color=muted,fontSize=12.sp)
+        comparison==null -> Text("در حال دریافت داده و اجرای ۱۲ آزمون…",color=muted)
+        comparison!!.isFailure -> Text("مقایسه فعلاً انجام نشد؛ داده معتبر کافی دریافت نشد.",color=Color(0xFFFFB86B),fontSize=12.sp)
+        comparison!!.getOrThrow().isEmpty() -> Text("نتیجه قابل‌مقایسه‌ای موجود نیست.",color=muted)
+        else -> comparison!!.getOrThrow().forEach { row ->
+          Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+              Text("${row.interval} • EMA ${row.fast}/${row.slow}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+              Text(if(row.status=="OK") "${String.format(Locale.US,"%.2f",row.returnPct)}٪" else "ناموجود",color=if(row.returnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+            }
+            if(row.status=="OK") Text("افت سرمایه ${String.format(Locale.US,"%.2f",row.drawdownPct)}٪ • ${row.trades} معامله • موفقیت ${String.format(Locale.US,"%.1f",row.winRate)}٪",color=muted,fontSize=10.sp)
+          }
+          Divider(color=Color(0xFF303746))
+        }
+      }
+      Button(onClick={compareRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("مقایسه استراتژی‌ها")}
+      Text("تعداد کندل‌ها و طول نمونه در تایم‌فریم‌ها متفاوت است؛ این نتایج پیش‌بینی آینده نیستند و اجرای سفارش غیرفعال است.",color=muted,fontSize=10.sp)
+   } } }
    item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { RiskCalculator() }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -202,6 +228,28 @@ private fun formatLocalTimestamp(raw:String):String {
  } catch (_:Exception) { raw }
 }
 
+
+private fun fetchBacktestComparison():List<CompareRow>{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/ema-crossover/compare?symbol=xau").openConnection() as HttpURLConnection
+ connection.requestMethod="GET";connection.connectTimeout=15000;connection.readTimeout=30000
+ try {
+   if(connection.responseCode !in 200..299) throw IllegalStateException("Comparison HTTP "+connection.responseCode)
+   val root=JSONObject(connection.inputStream.bufferedReader().use{it.readText()})
+   val intervals=root.optJSONArray("intervals")?:JSONArray()
+   val rows=mutableListOf<CompareRow>()
+   for(i in 0 until intervals.length()){
+     val interval=intervals.getJSONObject(i)
+     val results=interval.optJSONArray("results")?:JSONArray()
+     for(j in 0 until results.length()){
+       val item=results.getJSONObject(j)
+       rows.add(CompareRow(interval.optString("interval"),item.optInt("fast_period"),item.optInt("slow_period"),
+         item.optDouble("net_return_pct"),item.optDouble("max_drawdown_pct"),item.optInt("closed_trades"),
+         item.optDouble("win_rate_pct"),item.optString("status","UNAVAILABLE")))
+     }
+   }
+   return rows
+ } finally {connection.disconnect()}
+}
 
 private fun fetchSignalHistory():List<SignalHistoryRow>{
  val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/history?limit=50").openConnection() as HttpURLConnection
