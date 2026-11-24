@@ -279,26 +279,45 @@ async function fetchGoldCandles(symbol, interval) {
   const intervalMs = intervalSeconds * 1000;
   const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
   const candles = [];
+  let rejectedCompletedPoints=0;
   for (const point of payload.points) {
     const rawTime = Number(point?.t);
     const time = rawTime > 1e12 ? rawTime : rawTime * 1000;
+    if (!Number.isFinite(time)) { rejectedCompletedPoints++; continue; }
+    if (time >= currentBucket) continue;
     const open=Number(point?.o), high=Number(point?.h);
     const low=Number(point?.l), close=Number(point?.c);
-    if (!Number.isFinite(time) || time >= currentBucket ||
-        ![open,high,low,close].every(v=>Number.isFinite(v)&&v>0&&v<=1e15) ||
-        high < Math.max(open,close,low) || low > Math.min(open,close,high)) continue;
+    if (![open,high,low,close].every(v=>Number.isFinite(v)&&v>0&&v<=1e15) ||
+        high < Math.max(open,close,low) || low > Math.min(open,close,high)) {
+      rejectedCompletedPoints++;
+      continue;
+    }
     candles.push({timestamp:new Date(time).toISOString(),open,high,low,close});
   }
+  if (rejectedCompletedPoints>0)
+    throw new Error("XAUS returned "+rejectedCompletedPoints+" malformed completed OHLC points; data quality check failed");
   candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+  if (candles.some((c,i)=>i>0&&Date.parse(c.timestamp)===Date.parse(candles[i-1].timestamp)))
+    throw new Error("XAUS returned duplicate candle timestamps; data quality check failed");
   const last = candles[candles.length-1];
   if (!last) throw new Error("No completed OHLC candles are available from XAUS");
   const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
   const freshnessLimit=Math.max(600,intervalSeconds*2);
   if (ageSeconds < 0 || ageSeconds > freshnessLimit)
     throw new Error("Latest completed XAUS OHLC candle is stale");
+  const gaps=[];
+  for(let i=1;i<candles.length;i++){
+    const delta=(Date.parse(candles[i].timestamp)-Date.parse(candles[i-1].timestamp))/intervalMs;
+    if(delta>1.01) gaps.push({from:candles[i-1].timestamp,to:candles[i].timestamp,missing_intervals:Math.max(1,Math.round(delta)-1)});
+  }
+  const dataQuality={status:gaps.length?"GAPS_DETECTED":"CLEAN",candle_count:candles.length,
+    duplicate_count:0,rejected_completed_points:0,gap_count:gaps.length,
+    missing_intervals:gaps.reduce((sum,g)=>sum+g.missing_intervals,0),
+    largest_gap_intervals:gaps.reduce((max,g)=>Math.max(max,g.missing_intervals),0),
+    note:"Gaps are reported for transparency and may reflect market closures or provider omissions; they are not silently filled."};
   return {
     symbol, provider:"XAUS", provider_symbol:providerSymbol, source_url:"https://xaus.com/api/v1/chart",
-    interval, interval_seconds:intervalSeconds, status:"LIVE",
+    interval, interval_seconds:intervalSeconds, status:"LIVE",data_quality:dataQuality,
     retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
     age_seconds:Math.round(ageSeconds), candles,
     note:"Completed OHLC candles for global XAU/USD from XAUS chart API. Data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
