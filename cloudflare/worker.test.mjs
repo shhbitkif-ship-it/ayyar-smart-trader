@@ -32,6 +32,53 @@ test("fresh quotes require correct units and timestamps", async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("signal endpoint rejects missing OHLC history", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,400);
+  assert.equal(body.signal,"NO_TRADE");
+  assert.equal(body.execution_enabled,false);
+});
+
+test("signal endpoint blocks stale candles", async () => {
+  const candles=[];
+  for(let i=0;i<80;i++){
+    const close=200+i*0.1;
+    candles.push({timestamp:new Date(Date.UTC(2020,0,1+i)).toISOString(),open:close,high:close+0.2,low:close-0.2,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles,timeframe_minutes:60})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.signal,"NO_TRADE");
+  assert.equal(body.data_status,"STALE");
+  assert.equal(body.execution_enabled,false);
+});
+
+test("signal endpoint computes a bounded technical confluence score from fresh candles", async () => {
+  const candles=[];
+  let close=100;
+  for(let i=0;i<120;i++){
+    const previous=close;
+    close+=i%2===0?0.5:-0.3;
+    if(i===119) close=previous+0.5;
+    candles.push({timestamp:new Date(Date.now()-(119-i)*3600000).toISOString(),
+      open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles,timeframe_minutes:60})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.ok(["BUY","SELL","NO_TRADE"].includes(body.signal));
+  assert.ok(body.confidence>=0&&body.confidence<=100);
+  assert.equal(body.execution_enabled,false);
+  assert.equal(body.confidence_type,"technical_confluence_score_not_probability");
+});
+
 test("signal endpoint fails closed", async () => {
   const response = await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
     method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({})
