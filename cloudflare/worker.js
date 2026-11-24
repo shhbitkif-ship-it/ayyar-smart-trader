@@ -434,7 +434,11 @@ function calculateSignalPerformance(records,candles) {
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
     "content-type":"application/json; charset=utf-8","cache-control":"no-store",
-    "access-control-allow-origin":"*"
+    "access-control-allow-origin":"*",
+    "x-content-type-options":"nosniff",
+    "x-frame-options":"DENY",
+    "referrer-policy":"no-referrer",
+    "permissions-policy":"camera=(), microphone=(), geolocation=()"
   }});
 }
 function parseStamp(v) {
@@ -497,7 +501,12 @@ export default {
     const url=new URL(request.url);
     if(request.method==="OPTIONS") return new Response(null,{headers:{
       "access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS",
-      "access-control-allow-headers":"content-type"}});
+      "access-control-allow-headers":"content-type",
+      "access-control-max-age":"86400",
+      "x-content-type-options":"nosniff",
+      "x-frame-options":"DENY",
+      "referrer-policy":"no-referrer",
+      "permissions-policy":"camera=(), microphone=(), geolocation=()"}});
     if(url.pathname==="/telegram/webhook" && request.method==="POST")
       return handleTelegramWebhook(request, env, snapshot, json);
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
