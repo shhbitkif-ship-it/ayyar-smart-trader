@@ -544,6 +544,24 @@ export default {
     if(url.pathname==="/v1/risk/policy"&&request.method==="GET") return json({
       default_risk_per_trade:0.01,max_daily_loss:0.03,max_drawdown:0.08,execution_enabled:false,
       note:"Policy defaults only. No broker connection or automatic order execution."});
+    if(url.pathname==="/v1/risk/portfolio-check"&&request.method==="POST") {
+      try {
+        const p=await request.json();
+        const equity=Number(p.equity),dayStart=Number(p.day_start_equity),peak=Number(p.peak_equity);
+        const proposedRisk=Number(p.proposed_risk_fraction??0.01),maxOpenRisk=Number(p.max_open_risk_fraction??0.02);
+        const maxPositions=Number(p.max_positions??3),positions=p.open_positions??[];
+        if(![equity,dayStart,peak,proposedRisk,maxOpenRisk,maxPositions].every(Number.isFinite)||equity<=0||dayStart<=0||peak<=0||proposedRisk<=0||proposedRisk>0.01||maxOpenRisk<=0||maxOpenRisk>0.02||!Number.isInteger(maxPositions)||maxPositions<1||maxPositions>10||!Array.isArray(positions)||positions.length>10||positions.some(x=>!Number.isFinite(Number(x?.risk_amount))||Number(x.risk_amount)<0)) return json({error:"Invalid portfolio risk inputs"},400);
+        const dailyLoss=Math.max(0,(dayStart-equity)/dayStart),drawdown=Math.max(0,(peak-equity)/peak);
+        const openRisk=positions.reduce((sum,x)=>sum+Number(x.risk_amount),0),proposedRiskAmount=equity*proposedRisk;
+        const aggregateRisk=openRisk+proposedRiskAmount;
+        let reason="Portfolio risk limits are satisfied for the proposed position.",allowed=true;
+        if(dailyLoss>=0.03){allowed=false;reason="Daily loss limit reached (3%); new positions are blocked.";}
+        else if(drawdown>=0.08){allowed=false;reason="Peak-to-current drawdown limit reached (8%); new positions are blocked.";}
+        else if(positions.length>=maxPositions){allowed=false;reason="Maximum number of concurrent positions reached.";}
+        else if(aggregateRisk>equity*maxOpenRisk+1e-8){allowed=false;reason="Aggregate open plus proposed risk exceeds the portfolio risk cap.";}
+        return json({allowed,reason,equity,daily_loss_fraction:round4(dailyLoss),drawdown_fraction:round4(drawdown),open_positions:positions.length,open_risk_amount:round4(openRisk),proposed_risk_amount:round4(proposedRiskAmount),aggregate_risk_amount:round4(aggregateRisk),aggregate_risk_fraction:round4(aggregateRisk/equity),max_open_risk_fraction:maxOpenRisk,max_positions:maxPositions,execution_enabled:false,note:"Pre-trade portfolio guard only. Supply current equity, day-start equity, peak equity and open-position risk from a trusted account source."});
+      } catch { return json({error:"Request body must be valid JSON"},400); }
+    }
     if(url.pathname==="/v1/risk/position-size"&&request.method==="POST") {
       try {
         const p=await request.json();
