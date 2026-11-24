@@ -420,6 +420,30 @@ export default {
           reason:"Sizing estimate only. Confirm tick value, lot step, margin, spread and broker rules before any order."});
       } catch { return json({error:"Request body must be valid JSON"},400); }
     }
+    if(url.pathname==="/v1/backtest/ema-crossover/live"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const interval=url.searchParams.get("interval")||"60m";
+      const readNumber=(key,fallback)=>url.searchParams.has(key)?Number(url.searchParams.get(key)):fallback;
+      try {
+        const market=await fetchGoldCandles(symbol,interval);
+        const result=runBacktest({
+          candles:market.candles,
+          starting_capital:readNumber("starting_capital",10000),
+          fee_bps:readNumber("fee_bps",10),
+          slippage_bps:readNumber("slippage_bps",5)
+        });
+        return json({...result,market_symbol:symbol,market_provider:market.provider,
+          market_source_url:market.source_url,market_interval:market.interval,
+          market_data_status:market.status,market_retrieved_at:market.retrieved_at,
+          market_last_candle_at:market.last_candle_at,candle_count:market.candles.length,
+          data_note:market.note});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",market_symbol:symbol,market_interval:interval,
+          error:String(e?.message||"Live OHLC backtest unavailable"),
+          execution_enabled:false,
+          note:"A live backtest requires valid completed provider OHLC candles. No synthetic or daily-mean data is substituted."},502);
+      }
+    }
     if(url.pathname==="/v1/backtest/ema-crossover"&&request.method==="POST") {
       try { return json(runBacktest(await request.json())); }
       catch(e) { return json({error:String(e?.message||"Invalid backtest request")},400); }
