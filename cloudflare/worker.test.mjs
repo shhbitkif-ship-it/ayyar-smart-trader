@@ -212,6 +212,50 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.ok(body.warning.startsWith("Research only"));
 });
 
+test("EMA backtest accepts validated strategy periods and reports the selected parameters", async () => {
+  const candles=[];
+  for(let i=0;i<100;i++){
+    const close=i<45?3100-i*2:i<75?3010+(i-45)*4:3130-(i-75)*3;
+    candles.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),open:close,high:close+2,low:close-2,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,fast_period:9,slow_period:21})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.fast_period,9);
+  assert.equal(body.slow_period,21);
+  assert.equal(body.strategy,"EMA9/EMA21 long-only crossover");
+});
+
+test("live comparison evaluates fixed EMA pairs across all supported real intervals", async () => {
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const interval=new URL(String(url)).searchParams.get("interval");
+    const intervalMs=({"15m":900000,"30m":1800000,"60m":3600000,"1d":86400000})[interval];
+    const count=interval==="1d"?80:120;
+    const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    const candles=Array.from({length:count},(_,i)=>{
+      const close=3100+(i<40?-i*1.5:i*0.7);
+      return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
+        open:close-0.2,high:close+1,low:close-1,close};
+    });
+    return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover/compare?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.deepEqual(body.intervals.map(x=>x.interval),["15m","30m","60m","1d"]);
+    assert.ok(body.intervals.every(x=>x.status==="LIVE"));
+    assert.ok(body.intervals.every(x=>x.results.length===3));
+    assert.deepEqual(body.strategies.map(x=>[x.fast_period,x.slow_period]),[[9,21],[12,26],[20,50]]);
+    assert.equal(body.execution_enabled,undefined);
+    assert.ok(body.warning.includes("do not predict future results"));
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("EMA backtest rejects arithmetic overflow instead of returning corrupt metrics", async () => {
   const candles = [];
   for (let i=0;i<80;i++) {
