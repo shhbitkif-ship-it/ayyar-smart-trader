@@ -101,6 +101,8 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.equal(body.cost_model.fee_bps_per_side,10);
   assert.equal(body.cost_model.slippage_bps_per_side,5);
   assert.ok("max_drawdown_pct" in body);
+  assert.equal(body.equity_curve.length,candles.length,"equity must be marked to market on every candle");
+  assert.ok(body.equity_curve.every(point=>Number.isFinite(point.equity) && point.equity>0));
   assert.ok(body.warning.startsWith("Research only"));
 });
 
