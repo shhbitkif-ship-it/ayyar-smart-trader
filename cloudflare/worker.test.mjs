@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import worker from "./worker_core.js";
 
 const originalFetch = globalThis.fetch;
@@ -1063,4 +1064,20 @@ test("paper account trade journal endpoint requires a valid account token",async
   assert.equal(response.status,200);
   assert.deepEqual(body.trades,[]);
   assert.equal(body.execution_enabled,false);
+});
+
+
+test("Wrangler config preserves signal history and declares SQLite paper accounts",()=>{
+  const config=JSON.parse(readFileSync(new URL("./wrangler.jsonc",import.meta.url),"utf8"));
+  assert.equal(config.name,"ayyar-smart-trader-api");
+  assert.equal(config.main,"worker.js");
+  assert.deepEqual(config.kv_namespaces,[{
+    binding:"SIGNAL_HISTORY",id:"e3de061386ae467aae8f4d8da1e0e408"
+  }]);
+  assert.deepEqual(config.durable_objects.bindings,[{
+    name:"PAPER_ACCOUNTS",class_name:"PaperAccount"
+  }]);
+  assert.deepEqual(config.migrations,[{
+    tag:"v1-paper-accounts",new_sqlite_classes:["PaperAccount"]
+  }]);
 });
