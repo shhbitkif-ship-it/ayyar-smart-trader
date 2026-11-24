@@ -177,35 +177,33 @@ function evaluateSignal(payload) {
 }
 
 
-const CANDLE_SYMBOLS = new Map([["xau", "XAUUSD=X"]]);
+const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
 
-async function fetchYahooCandles(symbol, interval) {
-  const yahooSymbol = CANDLE_SYMBOLS.get(symbol);
+async function fetchGoldCandles(symbol, interval) {
+  const providerSymbol = CANDLE_SYMBOLS.get(symbol);
   const intervalSeconds = CANDLE_INTERVALS.get(interval);
-  if (!yahooSymbol || !intervalSeconds) throw new Error("Unsupported candle symbol or interval");
+  if (!providerSymbol || !intervalSeconds) throw new Error("Unsupported candle symbol or interval");
   const range = interval === "1d" ? "3mo" : "5d";
-  const endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/" +
-    encodeURIComponent(yahooSymbol) + "?range=" + range + "&interval=" + interval;
+  const endpoint = "https://xaus.com/api/v1/chart?symbol=" +
+    encodeURIComponent(providerSymbol) + "&range=" + range + "&interval=" + interval;
   const response = await fetch(endpoint, {
-    headers: {accept:"application/json", "user-agent":"Mozilla/5.0 AyyarSmartTrader/1.0"},
+    headers: {accept:"application/json", "user-agent":"AyyarSmartTrader/1.0"},
     signal: AbortSignal.timeout(10000)
   });
-  if (!response.ok) throw new Error("OHLC provider HTTP " + response.status);
+  if (!response.ok) throw new Error("XAUS OHLC provider HTTP " + response.status);
   const payload = await response.json();
-  const result = payload?.chart?.result?.[0];
-  const timestamps = result?.timestamp;
-  const quote = result?.indicators?.quote?.[0];
-  if (!Array.isArray(timestamps) || !quote || !Array.isArray(quote.open) ||
-      !Array.isArray(quote.high) || !Array.isArray(quote.low) || !Array.isArray(quote.close))
-    throw new Error("OHLC provider returned an unexpected chart schema");
+  const state = payload?.data_state?.status;
+  if (state && state !== "fresh") throw new Error("XAUS OHLC provider data state is " + state);
+  if (!Array.isArray(payload?.points)) throw new Error("XAUS OHLC provider returned an unexpected chart schema");
   const intervalMs = intervalSeconds * 1000;
   const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
   const candles = [];
-  for (let i=0; i<timestamps.length; i++) {
-    const time = Number(timestamps[i]) * 1000;
-    const open=Number(quote.open[i]), high=Number(quote.high[i]);
-    const low=Number(quote.low[i]), close=Number(quote.close[i]);
+  for (const point of payload.points) {
+    const rawTime = Number(point?.t);
+    const time = rawTime > 1e12 ? rawTime : rawTime * 1000;
+    const open=Number(point?.o), high=Number(point?.h);
+    const low=Number(point?.l), close=Number(point?.c);
     if (!Number.isFinite(time) || time >= currentBucket ||
         ![open,high,low,close].every(v=>Number.isFinite(v)&&v>0&&v<=1e15) ||
         high < Math.max(open,close,low) || low > Math.min(open,close,high)) continue;
@@ -213,20 +211,19 @@ async function fetchYahooCandles(symbol, interval) {
   }
   candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
   const last = candles[candles.length-1];
-  if (!last) throw new Error("No completed OHLC candles are available");
+  if (!last) throw new Error("No completed OHLC candles are available from XAUS");
   const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
-  const freshnessLimit=intervalSeconds*2+600;
+  const freshnessLimit=Math.max(600,intervalSeconds*2);
   if (ageSeconds < 0 || ageSeconds > freshnessLimit)
-    throw new Error("Latest completed OHLC candle is stale");
+    throw new Error("Latest completed XAUS OHLC candle is stale");
   return {
-    symbol, provider:"Yahoo Finance", provider_symbol:yahooSymbol,
+    symbol, provider:"XAUS", provider_symbol:providerSymbol, source_url:"https://xaus.com/api/v1/chart",
     interval, interval_seconds:intervalSeconds, status:"LIVE",
     retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
     age_seconds:Math.round(ageSeconds), candles,
-    note:"Completed OHLC candles for global spot gold. Yahoo Finance data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
+    note:"Completed OHLC candles for global XAU/USD from XAUS chart API. Data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
   };
 }
-
 function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
@@ -330,7 +327,7 @@ export default {
     if(url.pathname==="/v1/market/candles"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol")||"xau";
       const interval=url.searchParams.get("interval")||"60m";
-      try { return json(await fetchYahooCandles(symbol,interval)); }
+      try { return json(await fetchGoldCandles(symbol,interval)); }
       catch(e) { return json({symbol,interval,status:"UNAVAILABLE",candles:[],
         error:String(e?.message||"OHLC data unavailable"),
         execution_enabled:false,
@@ -340,10 +337,10 @@ export default {
       const symbol=url.searchParams.get("symbol")||"xau";
       const interval=url.searchParams.get("interval")||"60m";
       try {
-        const market=await fetchYahooCandles(symbol,interval);
+        const market=await fetchGoldCandles(symbol,interval);
         const evaluated=evaluateSignal({candles:market.candles,timeframe_minutes:market.interval_seconds/60});
         return json({...evaluated,market_symbol:symbol,market_provider:market.provider,
-          market_provider_symbol:market.provider_symbol,market_last_candle_at:market.last_candle_at,
+          market_provider_symbol:market.provider_symbol,market_source_url:market.source_url,market_last_candle_at:market.last_candle_at,
           market_data_status:market.status,execution_enabled:false});
       } catch(e) {
         return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
