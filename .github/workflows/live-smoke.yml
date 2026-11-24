@@ -20,7 +20,7 @@ jobs:
       - name: Check deployed Worker, market feed, risk guard and backtest
         run: |
           python - <<'PY'
-          import json, math, urllib.request
+          import json, math, urllib.request, urllib.error
           from datetime import datetime, timedelta, timezone
 
           base = "https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev"
@@ -31,8 +31,11 @@ jobs:
                   base + path, data=data, method=method,
                   headers={"User-Agent":"AyyarSmartTrader-Diagnostics/1.1",
                            "Accept":"application/json","Content-Type":"application/json"})
-              with urllib.request.urlopen(req, timeout=25) as response:
-                  return response.status, json.loads(response.read().decode("utf-8"))
+              try:
+                  with urllib.request.urlopen(req, timeout=25) as response:
+                      return response.status, json.loads(response.read().decode("utf-8"))
+              except urllib.error.HTTPError as error:
+                  return error.code, json.loads(error.read().decode("utf-8"))
 
           status, health = request("/health")
           print("WORKER_HEALTH", status, json.dumps(health, ensure_ascii=False))
