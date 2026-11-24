@@ -35,7 +35,7 @@ function runBacktest(payload) {
     if (!Number.isFinite(row.timestamp) || ![row.open,row.high,row.low,row.close].every(Number.isFinite) ||
         row.open<=0 || row.high<=0 || row.low<=0 || row.close<=0 || Math.max(row.open,row.high,row.low,row.close)>1e15 ||
         row.high < Math.max(row.open,row.close,row.low) || row.low > Math.min(row.open,row.close,row.high))
-      throw new Error("Each candle must contain a valid timestamp and consistent positive OHLC prices");
+      throw new Error("Each candle must contain a valid timestamp and consistent positive OHLC prices within the supported numeric range");
     return {...row,iso:new Date(row.timestamp).toISOString()};
   }).sort((a,b)=>a.timestamp-b.timestamp);
   if (candles.some((c,i)=>i>0 && c.timestamp===candles[i-1].timestamp))
