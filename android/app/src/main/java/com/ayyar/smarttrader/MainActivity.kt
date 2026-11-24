@@ -3,6 +3,8 @@ package com.ayyar.smarttrader
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,36 +13,85 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:String,val source:String,val status:String,val timestamp:String)
+data class HistoryPoint(val date:String,val value:Double)
+data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
+private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
+
 class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);setContent { AyyarApp() }} }
 
 @Composable fun AyyarApp(){
  var refresh by remember { mutableIntStateOf(0) }
+ var historyRefresh by remember { mutableIntStateOf(0) }
+ var selectedSymbol by remember { mutableStateOf("gold-18k") }
  LaunchedEffect(Unit) { while (true) { delay(20000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
+ val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.6.0",color=muted,fontSize=12.sp) }
+   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.7.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
-      Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی")}
+      Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
    } } }
    if(snapshot?.isSuccess==true){ items(snapshot!!.getOrThrow()){ q -> QuoteCard(q) } }
+   item { Text("تاریخچه و نمودار روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+      var expanded by remember { mutableStateOf(false) }
+      ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it}) {
+        OutlinedTextField(value=historySymbols.first{it.first==selectedSymbol}.second,onValueChange={},readOnly=true,label={Text("بازار")},modifier=Modifier.fillMaxWidth().menuAnchor())
+        ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) { historySymbols.forEach { (id,label) -> DropdownMenuItem(text={Text(label)},onClick={selectedSymbol=id;expanded=false}) } }
+      }
+      when {
+        history==null -> Text("در حال دریافت تاریخچه…",color=muted)
+        history!!.isFailure -> Text("تاریخچه فعلاً دریافت نشد. اتصال یا پاسخ منبع داده را بررسی می‌کنم.",color=Color(0xFFFFB86B))
+        history!!.getOrThrow().points.isEmpty() -> Text("داده تاریخی قابل‌نمایش در پاسخ منبع پیدا نشد؛ عددی ساخته نشده است.",color=Color(0xFFFFB86B))
+        else -> {
+          val h=history!!.getOrThrow()
+          Text("${h.points.size} نقطه روزانه • ${h.points.first().date} تا ${h.points.last().date}",color=muted,fontSize=11.sp)
+          HistoryChart(h.points)
+          val first=h.points.first().value; val last=h.points.last().value
+          val change=if(first!=0.0) (last-first)/first*100 else 0.0
+          Text("تغییر بازه: ${String.format(Locale.US,"%.2f",change)}٪",color=if(change>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontWeight=FontWeight.Bold)
+          h.points.takeLast(7).reversed().forEach { p -> Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(p.date,color=muted,fontSize=12.sp);Text(String.format(Locale.US,"%,.2f",p.value),color=Color.White,fontSize=12.sp)} }
+          Text(h.note,color=muted,fontSize=10.sp)
+        }
+      }
+      OutlinedButton(onClick={historyRefresh++},modifier=Modifier.fillMaxWidth()){Text("تازه‌سازی تاریخچه")}
+   } } }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
       Text("موتور تحلیل",color=gold,fontWeight=FontWeight.Bold); Text("NO TRADE تا تأیید داده و شرایط معتبر",color=Color.White,fontSize=17.sp); Text("ریسک پیش‌فرض هر معامله حداکثر ۱٪ سرمایه است. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=12.sp)
    } } }
-   item { Text("منابع قیمت و زمان آخرین به‌روزرسانی کنار هر نرخ نمایش داده می‌شود. داده قدیمی برای تولید سیگنال مجاز نیست.",color=muted,fontSize=11.sp) }
+   item { Text("منبع داده: NerkhAra. تاریخچه، میانگین روزانه است و کندل درون‌روزی یا قیمت قابل‌اجرای کارگزاری نیست. این نسخه برای معامله با پول واقعی آماده نیست.",color=muted,fontSize=11.sp) }
  } } }
+}
+
+@Composable private fun HistoryChart(points:List<HistoryPoint>){
+ val values=points.map{it.value}; val low=values.minOrNull()?:0.0; val high=values.maxOrNull()?:1.0
+ Canvas(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFF10141C),RoundedCornerShape(12.dp)).padding(8.dp)){
+   if(points.size>1 && high>low){
+     val path=Path()
+     points.forEachIndexed { i,p ->
+       val x=size.width*i/(points.size-1).toFloat()
+       val y=size.height-((p.value-low)/(high-low)).toFloat()*size.height
+       if(i==0) path.moveTo(x,y) else path.lineTo(x,y)
+     }
+     drawPath(path,color=gold,style=androidx.compose.ui.graphics.drawscope.Stroke(width=3.dp.toPx()))
+   }
+ }
 }
 
 @Composable private fun QuoteCard(q:QuoteUi){
@@ -55,7 +106,40 @@ private fun fetchQuotes():List<QuoteUi>{
  connection.requestMethod="GET"; connection.connectTimeout=7000; connection.readTimeout=7000
  try { if(connection.responseCode !in 200..299) throw IllegalStateException("HTTP " + connection.responseCode)
    val body=connection.inputStream.bufferedReader().use{it.readText()}; val root=JSONObject(body); val arr=root.getJSONArray("quotes"); val result=mutableListOf<QuoteUi>()
-   for(i in 0 until arr.length()){ val o=arr.getJSONObject(i); val p=if(o.isNull("price")) "—" else String.format(java.util.Locale.US,"%,.2f",o.getDouble("price")); result.add(QuoteUi(o.optString("symbol"),o.optString("name"),p,o.optString("unit"),o.optString("source"),o.optString("status"),o.optString("timestamp","—"))) }
+   for(i in 0 until arr.length()){ val o=arr.getJSONObject(i); val p=if(o.isNull("price")) "—" else String.format(Locale.US,"%,.2f",o.getDouble("price")); result.add(QuoteUi(o.optString("symbol"),o.optString("name"),p,o.optString("unit"),o.optString("source"),o.optString("status"),o.optString("timestamp","—"))) }
    return result
  } finally { connection.disconnect() }
+}
+
+private fun fetchHistory(symbol:String):HistoryUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/market/history?symbol="+symbol).openConnection() as HttpURLConnection
+ connection.requestMethod="GET"; connection.connectTimeout=10000; connection.readTimeout=15000
+ try {
+   if(connection.responseCode !in 200..299) throw IllegalStateException("History HTTP "+connection.responseCode)
+   val root=JSONObject(connection.inputStream.bufferedReader().use{it.readText()})
+   val series=root.optJSONObject("series") ?: JSONObject()
+   val points=mutableListOf<HistoryPoint>()
+   collectHistory(series,points)
+   val unique=points.filter{it.value>0 && it.value.isFinite()}.distinctBy{it.date}.sortedBy{it.date}
+   return HistoryUi(symbol,unique,root.optString("note","میانگین روزانه بازار؛ نه کندل OHLC. منبع: NerkhAra"))
+ } finally { connection.disconnect() }
+}
+
+private fun collectHistory(value:Any?,out:MutableList<HistoryPoint>){
+ when(value){
+   is JSONObject -> {
+     val dateKeys=listOf("date","day","day_utc","as_of")
+     val valueKeys=listOf("price","mean","value","average","daily_mean","close")
+     var date:String?=null; var price:Double?=null
+     for(k in dateKeys){val v=value.opt(k);if(v is String){date=v;break}}
+     for(k in valueKeys){val v=value.opt(k);if(v is Number){price=v.toDouble();break}}
+     if(date!=null && price!=null) out.add(HistoryPoint(date!!,price!!))
+     val keys=value.keys()
+     while(keys.hasNext()){val k=keys.next();val child=value.opt(k)
+       if(child is JSONArray || child is JSONObject) collectHistory(child,out)
+       else if(date==null && k.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && child is Number) out.add(HistoryPoint(k,child.toDouble()))
+     }
+   }
+   is JSONArray -> for(i in 0 until value.length()) collectHistory(value.opt(i),out)
+ }
 }
