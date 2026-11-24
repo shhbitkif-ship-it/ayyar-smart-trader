@@ -862,3 +862,15 @@ test("Talasanj rejects stale or malformed per-symbol timestamps", async () => {
     assert.equal(await fetchTalasanj({TALASANJ_API_KEY:"test-only-key"}),null);
   } finally {globalThis.fetch=originalFetch;}
 });
+
+
+test("portfolio risk guard rejects overflow in open exposure aggregation", async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({equity:1e308,day_start_equity:1e308,peak_equity:1e308,
+   proposed_risk_fraction:0.01,max_open_risk_fraction:0.02,
+   open_positions:[{risk_amount:1e308},{risk_amount:1e308}]})
+ }));
+ assert.equal(response.status,400);
+ assert.match((await response.json()).error,/overflow/i);
+});
