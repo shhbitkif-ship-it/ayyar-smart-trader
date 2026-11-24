@@ -143,6 +143,50 @@ test("history endpoint rejects symbols outside the allowlist", async () => {
 
 
 
+test("live OHLC backtest runs from the verified XAUS feed without manual candle upload", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:120},(_,i)=>{
+    const close=i<55?3100-i*2:i<90?2990+(i-55)*5:3165-(i-90)*4;
+    return {timestamp:new Date(lastClosed-(119-i)*intervalMs).toISOString(),
+      open:close,high:close+3,low:close-3,close};
+  });
+  let requested="";
+  globalThis.fetch=async url=>{
+    requested=String(url);
+    return new Response(JSON.stringify(xausChartFixture(candles)),
+      {status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover/live?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.match(requested,/xaus\.com\/api\/v1\/chart/);
+    assert.equal(body.market_provider,"XAUS");
+    assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.market_interval,"60m");
+    assert.equal(body.candle_count,120);
+    assert.ok("net_return_pct" in body && "max_drawdown_pct" in body);
+    assert.equal(body.cost_model.fee_bps_per_side,10);
+    assert.equal(body.cost_model.slippage_bps_per_side,5);
+    assert.equal(body.execution_enabled,undefined);
+    assert.ok(body.warning.startsWith("Research only"));
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("live OHLC backtest fails closed when the provider is unavailable", async () => {
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response("provider unavailable",{status:503});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover/live?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,502);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.execution_enabled,false);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("EMA backtest returns cost-aware metrics from valid OHLC candles", async () => {
   const candles = [];
   for (let i=0;i<150;i++) {
