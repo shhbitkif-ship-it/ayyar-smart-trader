@@ -2,6 +2,7 @@ import { handleTelegramWebhook } from "./telegram.js";
 import { fetchTalasanj } from "./providers.js";
 const SOURCE = "https://nerkhara.com/api/v1/latest.json";
 const MAX_AGE_SECONDS = 660;
+const TALASANJ_MAX_AGE_SECONDS = 90;
 const SYMBOLS = [
   ["GOLD18","طلای ۱۸ عیار","gold-18k","IRT","تومان"],
   ["GOLD24","طلای ۲۴ عیار","gold-24k","IRT","تومان"],
@@ -111,7 +112,8 @@ function normalise(item, def, provider="NerkhAra") {
   const stamp=parseStamp(item?.updated_utc);
   const age=stamp ? (Date.now()-stamp.getTime())/1000 : null;
   const unitValid=item?.unit===expectedUnit;
-  const fresh=Boolean(validPrice && stamp && age>=-30 && age<=MAX_AGE_SECONDS && item?.stale!==true && unitValid);
+  const maxAge=provider==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:MAX_AGE_SECONDS;
+  const fresh=Boolean(validPrice && stamp && age>=-30 && age<=maxAge && item?.stale!==true && unitValid);
   return {
     symbol,name:item?.name?.fa || item?.name?.en || fallbackName,
     price:fresh?price:null,unit:displayUnit,source:provider,
@@ -126,7 +128,7 @@ function normalise(item, def, provider="NerkhAra") {
   };
 }
 async function snapshot(env={}) {
-  if(cached && Date.now()-cachedAt<60000) return cached;
+  if(cached && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) return cached;
   try {
     let payload=await fetchTalasanj(env);
     let provider="Talasanj";
