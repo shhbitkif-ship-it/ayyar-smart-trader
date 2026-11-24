@@ -58,3 +58,9 @@ GitHub Actions تست‌های بک‌اند، تست‌های Worker با Node.
 
 ## محدودیت حجم مطابق بروکر
 API محاسبه حجم، ورودی‌های اختیاری `lot_step`، `min_lot` و `max_lot` را می‌پذیرد. حجم به سمت پایین تا گام مجاز بروکر گرد می‌شود؛ اگر حجم قابل اجرا کمتر از حداقل بروکر باشد، معامله مسدود می‌شود. این قابلیت فقط تخمین ریسک است و سفارش ارسال نمی‌کند.
+
+
+### OHLC data-quality checks
+- XAUS completed-candle ingestion rejects malformed completed OHLC rows and duplicate timestamps instead of silently treating them as valid.
+- Candle gaps are reported with counts and largest missing interval; gaps are never synthetically filled and may reflect market closures.
+- Candle freshness and completed-bucket checks remain enforced. Data-quality metadata is exposed by the candles endpoint; all signal/order execution remains disabled.
