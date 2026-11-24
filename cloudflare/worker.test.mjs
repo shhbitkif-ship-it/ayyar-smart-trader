@@ -95,7 +95,7 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
     body:JSON.stringify({candles})
   }));
   const body=await response.json();
-  assert.equal(response.status,200);
+  assert.equal(response.status,200,JSON.stringify(body));
   assert.equal(body.strategy,"EMA20/EMA50 long-only crossover");
   assert.ok(body.closed_trades>=1);
   assert.equal(body.cost_model.fee_bps_per_side,10);
