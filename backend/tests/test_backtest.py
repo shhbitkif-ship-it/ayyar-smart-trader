@@ -47,3 +47,24 @@ def test_transaction_costs_reduce_result():
 def test_backtest_rejects_insufficient_history():
     with pytest.raises(ValueError):
         run_ema_backtest(sample_candles()[:59])
+
+
+def test_open_position_final_equity_includes_estimated_exit_costs():
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rising = [
+        Candle(
+            timestamp=start + timedelta(days=i),
+            open=100 + i,
+            high=102 + i,
+            low=99 + i,
+            close=101 + i,
+            volume=100,
+        )
+        for i in range(120)
+    ]
+    no_cost = run_ema_backtest(rising, fee_bps=0, slippage_bps=0)
+    with_cost = run_ema_backtest(rising, fee_bps=10, slippage_bps=5)
+    assert no_cost["open_position"] is True
+    assert with_cost["open_position"] is True
+    assert with_cost["final_equity"] < no_cost["final_equity"]
+    assert with_cost["equity_curve"][-1]["equity"] == with_cost["final_equity"]
