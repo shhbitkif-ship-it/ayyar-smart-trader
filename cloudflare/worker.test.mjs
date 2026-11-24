@@ -874,3 +874,35 @@ test("portfolio risk guard rejects overflow in open exposure aggregation", async
  assert.equal(response.status,400);
  assert.match((await response.json()).error,/overflow/i);
 });
+
+
+test("position sizing rejects string and boolean numeric inputs", async()=>{
+ const call=async payload=>worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}));
+ const base={equity:100000,entry:2000,stop_loss:1990,contract_value_per_price_unit:100};
+ for(const payload of [{...base,equity:"100000"},{...base,entry:true},{...base,lot_step:"0.1"}]){
+  const response=await call(payload);assert.equal(response.status,400);
+ }
+});
+
+test("position sizing rounds down to broker maximum and valid lot step", async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({equity:100000,entry:2000,stop_loss:1990,
+   contract_value_per_price_unit:100,lot_step:0.1,min_lot:0.1,max_lot:0.75})
+ }));
+ const body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body));
+ assert.equal(body.allowed,true);
+ assert.equal(body.lots,0.7);
+ assert.ok(body.estimated_loss_at_stop<=body.risk_amount);
+});
+
+test("position sizing rejects broker minimum lot not aligned to step", async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({equity:100000,entry:2000,stop_loss:1990,
+   contract_value_per_price_unit:100,lot_step:0.1,min_lot:0.15,max_lot:1})
+ }));
+ assert.equal(response.status,400);
+});
