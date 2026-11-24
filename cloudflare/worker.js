@@ -129,15 +129,21 @@ function evaluateSignal(payload) {
   const fast=ema(closes,20),slow=ema(closes,50);
   const fastNow=fast[fast.length-1],fastPrev=fast[fast.length-2],slowNow=slow[slow.length-1];
   const trend=fastNow>slowNow?"BULLISH":fastNow<slowNow?"BEARISH":"NEUTRAL";
-  const changes=closes.slice(-15).slice(1).map((v,i)=>v-closes.slice(-15)[i]);
+  const changes=closes.slice(1).map((v,i)=>v-closes[i]);
   const gains=changes.map(v=>Math.max(0,v)),losses=changes.map(v=>Math.max(0,-v));
-  const avgGain=gains.reduce((a,b)=>a+b,0)/14,avgLoss=losses.reduce((a,b)=>a+b,0)/14;
+  let avgGain=gains.slice(0,14).reduce((a,b)=>a+b,0)/14;
+  let avgLoss=losses.slice(0,14).reduce((a,b)=>a+b,0)/14;
+  for(let i=14;i<gains.length;i++){
+    avgGain=(avgGain*13+gains[i])/14;
+    avgLoss=(avgLoss*13+losses[i])/14;
+  }
   const rsi=avgLoss===0?100:avgGain===0?0:100-(100/(1+avgGain/avgLoss));
-  const ranges=candles.slice(-14).map((c,i)=>{
-    const prev=candles[candles.length-15+i]?.close??c.close;
+  const trueRanges=candles.slice(1).map((c,i)=>{
+    const prev=candles[i].close;
     return Math.max(c.high-c.low,Math.abs(c.high-prev),Math.abs(c.low-prev));
   });
-  const atr=ranges.reduce((a,b)=>a+b,0)/ranges.length;
+  let atr=trueRanges.slice(0,14).reduce((a,b)=>a+b,0)/14;
+  for(let i=14;i<trueRanges.length;i++) atr=(atr*13+trueRanges[i])/14;
   const macdFast=ema(closes,12),macdSlow=ema(closes,26);
   const macdLine=macdFast.slice(14).map((v,i)=>v-macdSlow[i]);
   const macdSignal=ema(macdLine,9);
