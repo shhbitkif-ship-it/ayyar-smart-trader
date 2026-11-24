@@ -114,6 +114,9 @@ jobs:
               assert multi.get("entry") and multi.get("stop_loss") and multi.get("take_profit")
               assert multi.get("timeframes",{}).get("15m",{}).get("signal") == multi.get("signal")
               assert multi.get("timeframes",{}).get("60m",{}).get("signal") == multi.get("signal")
+              expected_trend = "BULLISH" if multi.get("signal") == "BUY" else "BEARISH"
+              assert all(multi.get("timeframes",{}).get(tf,{}).get("trend") == expected_trend
+                         for tf in ("15m","60m","1d"))
           print("MULTI_TIMEFRAME_SIGNAL_OK", json.dumps({
               "signal":multi.get("signal"),"confidence":multi.get("confidence"),
               "timeframes":multi.get("timeframes"),"reason":multi.get("reason"),
