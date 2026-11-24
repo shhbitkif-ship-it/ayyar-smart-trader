@@ -28,8 +28,12 @@ function ema(values, period) {
   return out;
 }
 function runBacktest(payload) {
-  if (!payload || !Array.isArray(payload.candles) || payload.candles.length < 60 || payload.candles.length > 5000)
-    throw new Error("candles must contain between 60 and 5000 OHLC records");
+  const fastPeriod=Number(payload?.fast_period??20);
+  const slowPeriod=Number(payload?.slow_period??50);
+  if(!Number.isInteger(fastPeriod)||!Number.isInteger(slowPeriod)||fastPeriod<2||slowPeriod<=fastPeriod||slowPeriod>200)
+    throw new Error("fast_period and slow_period must be integers with 2 <= fast_period < slow_period <= 200");
+  if (!payload || !Array.isArray(payload.candles) || payload.candles.length < Math.max(60,slowPeriod+2) || payload.candles.length > 5000)
+    throw new Error("candles must contain at least max(60, slow_period + 2) and at most 5000 OHLC records");
   const candles = payload.candles.map(c => {
     const row = {timestamp:Date.parse(c?.timestamp),open:Number(c?.open),high:Number(c?.high),low:Number(c?.low),close:Number(c?.close)};
     if (!Number.isFinite(row.timestamp) || ![row.open,row.high,row.low,row.close].every(Number.isFinite) ||
@@ -46,14 +50,14 @@ function runBacktest(payload) {
   if (!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
       !Number.isFinite(slippage)||slippage<0||slippage>500)
     throw new Error("starting_capital must be positive and within the supported numeric range; fee/slippage must be between 0 and 500 bps");
-  const closes=candles.map(c=>c.close), slow=ema(closes,50), fastAligned=ema(closes,20).slice(30);
+  const closes=candles.map(c=>c.close), slow=ema(closes,slowPeriod), fastAligned=ema(closes,fastPeriod).slice(slowPeriod-fastPeriod);
   const cost=(fee+slippage)/10000;
   let cash=starting, quantity=0, entryPrice=null, entryTime=null;
   const trades=[], equityCurve=[{timestamp:candles[0].iso,equity:round2(starting)}];
   // Mark equity at every candle close; this captures intra-trade drawdowns,
   // rather than measuring drawdown only when a trade closes.
   for(let candleIndex=1;candleIndex<candles.length;candleIndex++){
-    const signalIndex=candleIndex-50;
+    const signalIndex=candleIndex-slowPeriod;
     if(signalIndex>=1 && signalIndex<slow.length){
       const prevUp=fastAligned[signalIndex-1]>slow[signalIndex-1];
       const nowUp=fastAligned[signalIndex]>slow[signalIndex];
@@ -89,7 +93,7 @@ function runBacktest(payload) {
   const wins=trades.filter(t=>t.pnl>0).length;
   const profit=trades.filter(t=>t.pnl>0).reduce((a,t)=>a+t.pnl,0);
   const loss=Math.abs(trades.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
-  return {strategy:"EMA20/EMA50 long-only crossover",
+  return {strategy:`EMA${fastPeriod}/EMA${slowPeriod} long-only crossover`,fast_period:fastPeriod,slow_period:slowPeriod,
     execution:"Signal confirmed at candle close; orders filled at next candle open",
     cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
     starting_capital:round2(starting),final_equity:round2(finalEquity),
@@ -476,6 +480,35 @@ export default {
           execution_enabled:false,
           note:"A live backtest requires valid completed provider OHLC candles. No synthetic or daily-mean data is substituted."},502);
       }
+    }
+    if(url.pathname==="/v1/backtest/ema-crossover/compare"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const intervals=["15m","30m","60m","1d"];
+      const strategies=[[9,21],[12,26],[20,50]];
+      const markets=await Promise.all(intervals.map(async interval=>{
+        try {
+          const market=await fetchGoldCandles(symbol,interval);
+          const results=strategies.map(([fast,slow])=>{
+            try {
+              const result=runBacktest({candles:market.candles,fast_period:fast,slow_period:slow,
+                starting_capital:10000,fee_bps:10,slippage_bps:5});
+              return {fast_period:fast,slow_period:slow,status:"OK",net_return_pct:result.net_return_pct,
+                max_drawdown_pct:result.max_drawdown_pct,closed_trades:result.closed_trades,
+                win_rate_pct:result.win_rate_pct,profit_factor:result.profit_factor,
+                final_equity:result.final_equity,open_position:result.open_position};
+            } catch(e) {
+              return {fast_period:fast,slow_period:slow,status:"INSUFFICIENT_DATA",error:String(e?.message||"Backtest unavailable")};
+            }
+          });
+          return {interval,status:"LIVE",provider:market.provider,last_candle_at:market.last_candle_at,
+            candle_count:market.candles.length,results};
+        } catch(e) {
+          return {interval,status:"UNAVAILABLE",error:String(e?.message||"OHLC data unavailable"),results:[]};
+        }
+      }));
+      return json({symbol,strategies:strategies.map(([fast,slow])=>({fast_period:fast,slow_period:slow})),
+        intervals:markets,starting_capital:10000,cost_model:{fee_bps_per_side:10,slippage_bps_per_side:5},
+        warning:"Research comparison only. Different intervals have different sample lengths; metrics are not directly equivalent and do not predict future results. Long-only simulation; no broker execution."});
     }
     if(url.pathname==="/v1/backtest/ema-crossover"&&request.method==="POST") {
       try { return json(runBacktest(await request.json())); }
