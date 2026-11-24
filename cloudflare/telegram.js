@@ -17,7 +17,7 @@ export async function handleTelegramWebhook(request, env, snapshot, json) {
   if (text === "/start" || text === "/help") {
     reply = "سلام! به عیار هوشمند خوش آمدید.\n/gold اونس جهانی\n/iran قیمت‌های ایران\n/market همه نرخ‌ها\nقیمت‌ها شاخصی هستند و توصیه معاملاتی یا قیمت اجرایی بروکر نیستند.";
   } else if (["/gold", "/iran", "/market"].includes(text)) {
-    const data = await snapshot();
+    const data = await snapshot(env);
     const rows = Array.isArray(data?.quotes) ? data.quotes : [];
     const selected = text === "/gold" ? rows.filter(q => q.symbol === "XAUUSD")
       : text === "/iran" ? rows.filter(q => ["GOLD18","GOLD24","MESGHAL","COIN_EMAMI","COIN_HALF","COIN_QUARTER","USD_IRT"].includes(q.symbol))
@@ -29,8 +29,11 @@ export async function handleTelegramWebhook(request, env, snapshot, json) {
         : "قیمت معتبر/تازه موجود نیست";
       return (labels[q.symbol] || q.name) + ": " + price + " [" + q.status + "]";
     });
+    const provider = rows[0]?.source || "منبع بازار";
+    const attribution = provider === "Talasanj" ? "قیمت‌ها از طلاسنج: https://talasanj.info" : "منبع: NerkhAra";
+    const interval = provider === "Talasanj" ? "به‌روزرسانی تقریبی هر ۲۰ ثانیه" : "به‌روزرسانی تقریبی هر ۱۰ دقیقه";
     reply = (lines.length ? lines.join("\n") : "داده بازار در دسترس نیست.")
-      + "\nمنبع: NerkhAra | به‌روزرسانی تقریبی هر ۱۰ دقیقه"
+      + "\n" + attribution + " | " + interval
       + "\nاین داده شاخصی است؛ سیگنال خرید/فروش صادر نمی‌شود.";
   } else {
     return json({ ok: true, ignored: true });
