@@ -33,7 +33,7 @@ data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:S
 data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
-data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String)
+data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -95,14 +95,15 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
    item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { RiskCalculator() }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-      Text("موتور تحلیل اونس جهانی طلا • تایم‌فریم یک‌ساعته",color=gold,fontWeight=FontWeight.Bold)
+      Text("موتور تحلیل اونس جهانی طلا • هم‌ترازی چندتایم‌فریمی",color=gold,fontWeight=FontWeight.Bold)
       when {
         signal==null -> Text("در حال دریافت کندل‌های واقعی و ارزیابی بازار…",color=muted)
         signal!!.isFailure -> Text("دریافت سیگنال ناموفق بود؛ تا دریافت داده معتبر معامله‌ای پیشنهاد نمی‌شود.",color=Color(0xFFFFB86B))
         else -> {
           val s=signal!!.getOrThrow()
           Text(when(s.signal){"BUY"->"سیگنال خرید";"SELL"->"سیگنال فروش";else->"بدون معامله"},color=when(s.signal){"BUY"->Color(0xFF8FD6A8);"SELL"->Color(0xFFFF8D8D);else->Color(0xFFFFB86B)},fontSize=22.sp,fontWeight=FontWeight.Bold)
-          Text("وضعیت داده: ${s.status}  •  روند: ${s.trend}  •  امتیاز همگرایی: ${s.confidence}/100",color=muted,fontSize=11.sp)
+          Text("وضعیت داده: ${s.status}  •  روند ۶۰ دقیقه: ${s.trend}  •  امتیاز هم‌ترازی: ${s.confidence}/100",color=muted,fontSize=11.sp)
+          Text("۱۵ دقیقه: ${s.timeframes} ",color=muted,fontSize=11.sp)
           if(s.signal!="NO_TRADE"){
             IndicatorRow("نقطه ورود",s.entry.toDoubleOrNull()?:Double.NaN,2)
             IndicatorRow("حد ضرر",s.stop.toDoubleOrNull()?:Double.NaN,2)
@@ -151,7 +152,7 @@ private fun formatLocalTimestamp(raw:String):String {
 
 
 private fun fetchLatestSignal():SignalUi{
- val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/latest?symbol=xau&interval=60m").openConnection() as HttpURLConnection
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/multi-timeframe?symbol=xau").openConnection() as HttpURLConnection
  connection.requestMethod="GET"; connection.connectTimeout=12000; connection.readTimeout=15000
  try {
    val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
@@ -160,10 +161,16 @@ private fun fetchLatestSignal():SignalUi{
    val reason=if(root.has("reason") && !root.isNull("reason")) root.optString("reason") else
      (0 until reasons.length()).joinToString(" • "){reasons.optString(it)}
    fun number(key:String):String = if(root.isNull(key) || !root.has(key)) "—" else String.format(Locale.US,"%.2f",root.optDouble(key))
+   val timeframes=root.optJSONObject("timeframes") ?: JSONObject()
+   val short=timeframes.optJSONObject("15m")?.optString("signal","—") ?: "—"
+   val hourly=timeframes.optJSONObject("60m")?.optString("signal","—") ?: "—"
+   val daily=timeframes.optJSONObject("1d")?.optString("trend","—") ?: "—"
    return SignalUi(root.optString("signal","NO_TRADE"),root.optInt("confidence",0),
      root.optString("trend","UNKNOWN"),number("entry"),number("stop_loss"),number("take_profit"),
-     root.optString("market_last_candle_at",root.optString("last_candle_at","")),
-     root.optString("market_data_status",root.optString("data_status","UNKNOWN")),reason.ifBlank{"شرایط ورود کامل نیست؛ فعلاً معامله نکن."})
+     root.optString("last_candle_at",""),
+     root.optString("market_data_status",root.optString("data_status","UNKNOWN")),
+     reason.ifBlank{"شرایط ورود کامل نیست؛ فعلاً معامله نکن."},
+     "15m: $short  •  60m: $hourly  •  1D: $daily")
  } finally { connection.disconnect() }
 }
 
