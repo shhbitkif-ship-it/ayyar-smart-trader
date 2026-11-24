@@ -816,3 +816,24 @@ test("SELL signal performance reports non-negative favorable and adverse excursi
     assert.equal(body.execution_enabled,false);
   } finally { globalThis.fetch=originalFetch; }
 });
+
+
+test("API responses include baseline browser security headers", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/health"));
+  assert.equal(response.headers.get("x-content-type-options"),"nosniff");
+  assert.equal(response.headers.get("x-frame-options"),"DENY");
+  assert.equal(response.headers.get("referrer-policy"),"no-referrer");
+  assert.equal(response.headers.get("permissions-policy"),"camera=(), microphone=(), geolocation=()");
+  assert.equal(response.headers.get("cache-control"),"no-store");
+});
+
+test("CORS preflight advertises only the API methods and content type header", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/health",{
+    method:"OPTIONS",headers:{origin:"https://example.test","access-control-request-method":"POST"}
+  }));
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("access-control-allow-methods"),"GET,POST,OPTIONS");
+  assert.equal(response.headers.get("access-control-allow-headers"),"content-type");
+  assert.equal(response.headers.get("access-control-max-age"),"86400");
+  assert.equal(response.headers.get("x-frame-options"),"DENY");
+});
