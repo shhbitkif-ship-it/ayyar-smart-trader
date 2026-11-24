@@ -49,6 +49,7 @@ jobs:
               symbol = q.get("symbol")
               assert symbol in expected, "Unknown market symbol: " + str(symbol)
               assert q.get("unit") == expected[symbol], "Unexpected display unit for " + symbol
+              assert q.get("status") in {"LIVE","STALE","UNAVAILABLE"}, "Unknown quote status"
               if q.get("status") == "LIVE":
                   live += 1
                   assert isinstance(q.get("price"), (int,float)) and q["price"] > 0
@@ -58,7 +59,8 @@ jobs:
               print("QUOTE", symbol, q.get("status"), q.get("price"), q.get("timestamp"), q.get("age_seconds"))
           print("QUOTE_SUMMARY", json.dumps({"live":live,"total":len(expected),
                 "provider":payload.get("attribution"),"notice":payload.get("notice")}, ensure_ascii=False))
-          assert live > 0, "Provider currently supplies no fresh quotes"
+          if live == 0:
+              print("WARNING: provider currently has no fresh quotes; fail-closed behavior is expected")
 
           status, policy = request("/v1/risk/policy")
           assert status == 200 and policy.get("execution_enabled") is False
