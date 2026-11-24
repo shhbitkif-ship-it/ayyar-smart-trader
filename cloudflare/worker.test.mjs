@@ -56,3 +56,25 @@ test("position sizing blocks daily loss limit", async () => {
   assert.equal(body.allowed,false);
   assert.equal(body.lots,0);
 });
+
+
+test("daily history endpoint proxies and labels daily mean data", async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id:"gold-18k",
+    data:[{date:"2026-11-23",price:27000000},{date:"2026-11-22",price:26800000}]
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response = await worker.fetch(new Request("https://unit.test/v1/market/history?symbol=gold-18k"));
+    const body = await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.symbol,"gold-18k");
+    assert.equal(body.granularity,"1d");
+    assert.equal(body.value_type,"daily_mean");
+    assert.equal(body.series.data.length,2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("history endpoint rejects symbols outside the allowlist", async () => {
+  const response = await worker.fetch(new Request("https://unit.test/v1/market/history?symbol=../../secrets"));
+  assert.equal(response.status,400);
+});
