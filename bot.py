@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://ayyar-smart-trader-api.onrender.com").rstrip("/")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev").rstrip("/")
 logging.basicConfig(level=logging.INFO)
 
 SYMBOLS_IRAN = {"GOLD18": "طلای ۱۸ عیار", "GOLD24": "طلای ۲۴ عیار", "MESGHAL": "مظنه آبشده",
@@ -14,7 +14,8 @@ SYMBOLS_IRAN = {"GOLD18": "طلای ۱۸ عیار", "GOLD24": "طلای ۲۴ ع�
 def market_quotes():
     response = requests.get(f"{API_BASE_URL}/v1/market/quotes", timeout=10)
     response.raise_for_status()
-    return response.json().get("quotes", [])
+    payload = response.json()
+    return payload.get("quotes", []) if isinstance(payload, dict) else []
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
