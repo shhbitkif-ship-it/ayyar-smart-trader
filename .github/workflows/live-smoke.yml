@@ -75,6 +75,24 @@ jobs:
           assert signal.get("execution_enabled") is False
           print("SIGNAL_GUARD_OK", json.dumps(signal, ensure_ascii=False))
 
+          candle_status, candle_feed = request("/v1/market/candles?symbol=xau&interval=60m")
+          assert candle_status in {200, 502}, "Unexpected OHLC provider HTTP status"
+          if candle_status == 200:
+              assert candle_feed.get("status") == "LIVE"
+              assert isinstance(candle_feed.get("candles"), list) and len(candle_feed["candles"]) >= 60
+              for candle in candle_feed["candles"]:
+                  assert all(math.isfinite(candle.get(k, float("nan"))) and candle[k] > 0
+                             for k in ("open","high","low","close"))
+                  assert candle["high"] >= max(candle["open"],candle["low"],candle["close"])
+                  assert candle["low"] <= min(candle["open"],candle["high"],candle["close"])
+          else:
+              assert candle_feed.get("status") == "UNAVAILABLE"
+              assert candle_feed.get("candles") == []
+          print("OHLC_FEED_OK", json.dumps({
+              "http_status":candle_status,"status":candle_feed.get("status"),
+              "provider":candle_feed.get("provider"),"count":len(candle_feed.get("candles",[])),
+              "reason":candle_feed.get("error")}, ensure_ascii=False))
+
           status, latest = request("/v1/signals/latest?symbol=xau&interval=60m")
           assert status == 200, "Latest global gold signal endpoint failed"
           assert latest.get("signal") in {"BUY","SELL","NO_TRADE"}, "Unknown latest signal"
