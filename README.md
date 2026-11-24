@@ -52,3 +52,7 @@ GitHub Actions تست‌های بک‌اند، تست‌های Worker با Node.
 - برای فعال‌سازی، در Cloudflare Worker با نام `ayyar-smart-trader-api` دو Secret با نام‌های `BOT_TOKEN` و `TELEGRAM_WEBHOOK_SECRET` ثبت کنید. مقدار Secret دوم باید یک رشته تصادفی امن باشد.
 - سپس Webhook تلگرام را با آدرس `https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev/telegram/webhook` و همان مقدار `secret_token` ثبت کنید. بدون هر دو Secret، مسیر عمداً با خطای 503 پاسخ می‌دهد.
 - توکن ربات را در GitHub، کد برنامه یا پیام‌های عمومی قرار ندهید. این مسیر Webhook جایگزین اجرای دائمی polling و سرویس میزبانی پولی است.
+
+
+## محدودیت حجم مطابق بروکر
+API محاسبه حجم، ورودی‌های اختیاری `lot_step`، `min_lot` و `max_lot` را می‌پذیرد. حجم به سمت پایین تا گام مجاز بروکر گرد می‌شود؛ اگر حجم قابل اجرا کمتر از حداقل بروکر باشد، معامله مسدود می‌شود. این قابلیت فقط تخمین ریسک است و سفارش ارسال نمی‌کند.
