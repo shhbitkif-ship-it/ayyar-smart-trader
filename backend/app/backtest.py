@@ -87,10 +87,16 @@ def run_ema_backtest(
             "equity": round(equity, 2),
         })
 
-    final_equity = cash if quantity == 0 else quantity * float(ordered[-1].close)
-    if quantity > 0 and entry_price is not None:
+    # Report open positions at estimated net liquidation value, including the
+    # exit-side fee and slippage that would be paid to close at the final close.
+    if quantity > 0:
+        liquidation_price = float(ordered[-1].close) * (1.0 - cost_rate)
+        final_equity = quantity * liquidation_price
+        if equity_curve:
+            equity_curve[-1]["equity"] = round(final_equity, 2)
         unrealized = final_equity - quantity * entry_price
     else:
+        final_equity = cash
         unrealized = 0.0
     returns = [t["return_pct"] for t in trades]
     wins = sum(1 for t in trades if t["pnl"] > 0)
