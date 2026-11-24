@@ -465,22 +465,30 @@ export default {
         const equity=Number(p.equity),entry=Number(p.entry),stop=Number(p.stop_loss);
         const contract=Number(p.contract_value_per_price_unit);
         const risk=Number(p.risk_fraction??0.01),daily=Number(p.daily_loss_fraction??0),drawdown=Number(p.drawdown_fraction??0);
-        if(![equity,entry,stop,contract,risk,daily,drawdown].every(Number.isFinite) ||
-           equity<=0||entry<=0||stop<=0||contract<=0||risk<=0||risk>0.01||daily<0||daily>1||drawdown<0||drawdown>1||entry===stop)
+        const lotStep=Number(p.lot_step??0.01),minLot=Number(p.min_lot??lotStep);
+        const maxLot=p.max_lot===undefined?Number.MAX_SAFE_INTEGER:Number(p.max_lot);
+        if(![equity,entry,stop,contract,risk,daily,drawdown,lotStep,minLot,maxLot].every(Number.isFinite) ||
+           equity<=0||entry<=0||stop<=0||contract<=0||risk<=0||risk>0.01||daily<0||daily>1||drawdown<0||drawdown>1||entry===stop||
+           lotStep<=0||lotStep>1000||minLot<=0||maxLot<minLot)
           return json({error:"Invalid position sizing inputs"},400);
         if(daily>=0.03) return json({allowed:false,lots:0,reason:"Daily loss limit reached; trading is blocked."});
         if(drawdown>=0.08) return json({allowed:false,lots:0,reason:"Maximum drawdown limit reached; trading is blocked."});
         const effectiveRisk=Math.min(risk,0.01),riskAmount=equity*effectiveRisk;
         const stopDistance=Math.abs(entry-stop),lossPerLot=stopDistance*contract;
-        const lots=riskAmount/lossPerLot;
-        if(!Number.isFinite(riskAmount)||!Number.isFinite(stopDistance)||!Number.isFinite(lossPerLot)||lossPerLot<=0||!Number.isFinite(lots)||lots<=0)
+        const rawLots=riskAmount/lossPerLot;
+        if(!Number.isFinite(riskAmount)||!Number.isFinite(stopDistance)||!Number.isFinite(lossPerLot)||lossPerLot<=0||!Number.isFinite(rawLots)||rawLots<=0)
           return json({error:"Position sizing overflow or underflow; review equity, stop distance, and contract value."},400);
+        const lots=Math.min(maxLot,Math.floor((rawLots+lotStep*1e-10)/lotStep)*lotStep);
+        if(!Number.isFinite(lots)||lots<minLot)
+          return json({allowed:false,lots:0,raw_lots:rawLots,risk_amount:riskAmount,
+            reason:"Calculated size is below the broker minimum lot after rounding down; trade is blocked."});
         const estimatedLoss=lots*lossPerLot;
-        if(!Number.isFinite(estimatedLoss)||estimatedLoss<=0)
-          return json({error:"Estimated loss is outside the supported numeric range."},400);
-        return json({allowed:true,lots,risk_amount:riskAmount,risk_fraction:effectiveRisk,
-          stop_distance:stopDistance,estimated_loss_at_stop:estimatedLoss,
-          reason:"Sizing estimate only. Confirm tick value, lot step, margin, spread and broker rules before any order."});
+        if(!Number.isFinite(estimatedLoss)||estimatedLoss<=0||estimatedLoss>riskAmount*(1+1e-9))
+          return json({error:"Rounded position size exceeds the configured risk budget."},400);
+        return json({allowed:true,lots,raw_lots:rawLots,lot_step:lotStep,min_lot:minLot,max_lot:maxLot,
+          risk_amount:riskAmount,risk_fraction:effectiveRisk,stop_distance:stopDistance,
+          estimated_loss_at_stop:estimatedLoss,unused_risk_budget:Math.max(0,riskAmount-estimatedLoss),
+          reason:"Sizing estimate only. Lots are rounded down to the broker step; confirm tick value, margin, spread and broker rules before any order."});
       } catch { return json({error:"Request body must be valid JSON"},400); }
     }
     if(url.pathname==="/v1/backtest/ema-crossover/live"&&request.method==="GET") {
