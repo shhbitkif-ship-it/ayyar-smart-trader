@@ -14,6 +14,25 @@ SOURCE_URL = "https://nerkhara.com/api/v1/latest.json"
 CACHE_SECONDS = 60
 MAX_AGE_SECONDS = 660
 
+
+def _index_rows(rows: list) -> dict:
+    """Index provider rows while excluding duplicate IDs as ambiguous input."""
+    indexed = {}
+    duplicates = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source_id = row.get("id")
+        if not isinstance(source_id, str) or not source_id:
+            continue
+        if source_id in indexed:
+            duplicates.add(source_id)
+        else:
+            indexed[source_id] = row
+    for source_id in duplicates:
+        indexed.pop(source_id, None)
+    return indexed
+
 SYMBOLS = [
     ("GOLD18", "طلای ۱۸ عیار", "gold-18k"),
     ("GOLD24", "طلای ۲۴ عیار", "gold-24k"),
@@ -114,7 +133,7 @@ async def market_snapshot() -> dict:
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
             raise ValueError("Unexpected NerkhAra response schema: expected an items array")
         rows = payload["items"]
-        by_id = {row.get("id"): row for row in rows if isinstance(row, dict)}
+        by_id = _index_rows(rows)
         quotes = [_normalise(by_id.get(source_id), symbol, name, source_id)
                   for symbol, name, source_id in SYMBOLS]
         live = sum(1 for quote in quotes if quote["status"] == "LIVE")
