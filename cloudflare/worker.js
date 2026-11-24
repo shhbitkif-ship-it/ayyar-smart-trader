@@ -150,9 +150,9 @@ function evaluateSignal(payload) {
   const score=side==="BUY"?longScore:side==="SELL"?shortScore:Math.max(longScore,shortScore);
   const confidence=score*20;
   const stopDistance=atr*1.5;
+  const entry=last.close;
   if(!Number.isFinite(atr)||atr<=0||!Number.isFinite(stopDistance)||stopDistance<=0||(side==="BUY"&&entry-stopDistance<=0)||(side==="SELL"&&entry-stopDistance*2<=0))
     throw new Error("ATR calculation is outside the supported numeric range");
-  const entry=last.close;
   const stop=side==="BUY"?entry-stopDistance:side==="SELL"?entry+stopDistance:null;
   const target=side==="BUY"?entry+stopDistance*2:side==="SELL"?entry-stopDistance*2:null;
   const reasons=[];
