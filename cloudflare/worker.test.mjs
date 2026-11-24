@@ -351,6 +351,29 @@ function xausChartFixture(candles) {
       o:c.open,h:c.high,l:c.low,c:c.close,v:null}))};
 }
 
+test("OHLC feed rejects duplicate completed candle timestamps", async () => {
+  const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{const close=2600+i*.1;return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),open:close,high:close+1,low:close-1,close};});
+  candles[40]={...candles[39]};
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();assert.equal(response.status,502);assert.match(body.error,/duplicate candle timestamps/i);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("OHLC endpoint reports missing intervals without fabricating candles", async () => {
+  const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{const close=2600+i*.1;return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),open:close,high:close+1,low:close-1,close};});
+  candles.splice(35,1);
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();assert.equal(response.status,200);assert.equal(body.data_quality.status,"GAPS_DETECTED");
+    assert.equal(body.data_quality.missing_intervals,1);assert.equal(body.candles.length,79);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
 test("global gold candle endpoint returns only completed validated OHLC candles", async () => {
   const originalFetch=globalThis.fetch;
   const intervalMs=3600000;
