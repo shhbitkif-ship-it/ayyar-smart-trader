@@ -520,9 +520,13 @@ export default {
       "permissions-policy":"camera=(), microphone=(), geolocation=()"}});
     if(url.pathname==="/v1/paper/accounts"&&request.method==="POST") {
       try {
+        const contentLength=Number(request.headers.get("content-length")||0);
+        if(contentLength>2048) return json({error:"Account creation payload is too large"},413);
         const payload=await request.json();
-        const startingCapital=payload?.starting_capital??10000;
-        const currency=payload?.currency??"USD";
+        if(!payload||typeof payload!=="object"||Array.isArray(payload))
+          return json({error:"Request body must be a JSON object"},400);
+        const startingCapital=payload.starting_capital??10000;
+        const currency=payload.currency??"USD";
         if(typeof startingCapital!=="number"||!Number.isFinite(startingCapital)||
           startingCapital<=0||startingCapital>1_000_000_000||
           !["USD","IRT"].includes(currency))
