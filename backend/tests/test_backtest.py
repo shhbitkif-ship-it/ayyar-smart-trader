@@ -68,3 +68,11 @@ def test_open_position_final_equity_includes_estimated_exit_costs():
     assert with_cost["open_position"] is True
     assert with_cost["final_equity"] < no_cost["final_equity"]
     assert with_cost["equity_curve"][-1]["equity"] == with_cost["final_equity"]
+
+
+def test_equity_curve_marks_every_candle_for_drawdown_accuracy():
+    candles = sample_candles()
+    result = run_ema_backtest(candles)
+    assert len(result["equity_curve"]) == len(candles)
+    assert result["equity_curve"][0]["timestamp"] == candles[0].timestamp.isoformat()
+    assert result["equity_curve"][-1]["timestamp"] == candles[-1].timestamp.isoformat()
