@@ -392,10 +392,12 @@ function calculateSignalPerformance(records,candles) {
       }
       const direction=record.signal==="BUY"?1:-1;
       const returnPct=direction*(exit/entry-1)*100;
-      const favorablePct=direction===1?(Math.max(...window.map(c=>c.high))/entry-1)*100:
-        (1-Math.min(...window.map(c=>c.low))/entry)*100;
-      const adversePct=direction===1?(1-Math.min(...window.map(c=>c.low))/entry)*100:
-        (Math.max(...window.map(c=>c.high))/entry-1)*100;
+      const favorablePct=Math.max(0,direction===1?
+        (Math.max(...window.map(c=>c.high))/entry-1)*100:
+        (1-Math.min(...window.map(c=>c.low))/entry)*100);
+      const adversePct=Math.max(0,direction===1?
+        (1-Math.min(...window.map(c=>c.low))/entry)*100:
+        (Math.max(...window.map(c=>c.high))/entry-1)*100);
       const metric=stats[horizon];
       metric.scored++;
       if(returnPct>0) metric.wins++; else if(returnPct<0) metric.losses++; else metric.flats++;
