@@ -78,3 +78,37 @@ test("history endpoint rejects symbols outside the allowlist", async () => {
   const response = await worker.fetch(new Request("https://unit.test/v1/market/history?symbol=../../secrets"));
   assert.equal(response.status,400);
 });
+
+
+
+test("EMA backtest returns cost-aware metrics from valid OHLC candles", async () => {
+  const candles = [];
+  for (let i=0;i<150;i++) {
+    const close = i<70 ? 3100-i*2 : i<110 ? 2960+(i-70)*5 : 3160-(i-110)*5;
+    candles.push({
+      timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+3,low:close-3,close
+    });
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.strategy,"EMA20/EMA50 long-only crossover");
+  assert.ok(body.closed_trades>=1);
+  assert.equal(body.cost_model.fee_bps_per_side,10);
+  assert.equal(body.cost_model.slippage_bps_per_side,5);
+  assert.ok("max_drawdown_pct" in body);
+  assert.ok(body.warning.startsWith("Research only"));
+});
+
+test("EMA backtest rejects incomplete or invalid OHLC input", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles:[]})
+  }));
+  assert.equal(response.status,400);
+  assert.ok((await response.json()).error);
+});
