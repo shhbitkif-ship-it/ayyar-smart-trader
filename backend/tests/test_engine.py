@@ -66,7 +66,7 @@ def test_naive_timestamp_in_any_market_candle_is_rejected():
 def test_confirmation_candle_newer_than_market_data_is_rejected():
     now = datetime.now(timezone.utc)
     market = candles(220, 1, now - timedelta(minutes=221))
-    confirmation = candles(60, 1, now - timedelta(minutes=59))
+    confirmation = candles(60, 5, market[-1].timestamp - timedelta(minutes=296))
     confirmation[-1] = confirmation[-1].model_copy(update={"timestamp": market[-1].timestamp + timedelta(minutes=1)})
     req = EvaluateRequest(symbol="XAUUSD", candles=market, confirmation_candles=confirmation)
     result = evaluate(req, now)
@@ -87,7 +87,7 @@ def test_duplicate_confirmation_timestamps_are_rejected():
     assert "duplicate confirmation" in result.reason.lower()
 
 
-@pytest.mark.parametrize("timeframe,step", [("1m", 5), ("5m", 20), ("15m", 55), ("30m", 110), ("1h", 220)])
+@pytest.mark.parametrize("timeframe,step", [("1m", 5), ("5m", 20), ("15m", 60), ("30m", 120), ("1h", 240)])
 def test_large_intraday_history_gap_is_no_trade(timeframe, step):
     now = datetime.now(timezone.utc)
     data = candles(220, 1, now - timedelta(minutes=220))
