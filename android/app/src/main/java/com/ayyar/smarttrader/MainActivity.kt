@@ -34,6 +34,7 @@ private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-2
 
 class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);setContent { AyyarApp() }} }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun AyyarApp(){
  var refresh by remember { mutableIntStateOf(0) }
  var historyRefresh by remember { mutableIntStateOf(0) }
