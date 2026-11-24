@@ -6,9 +6,13 @@ TIMEFRAME_AGE={"1m":3,"5m":10,"15m":30,"30m":60,"1h":120,"4h":480,"1d":2880}
 
 def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalResponse:
     now=now or datetime.now(timezone.utc)
-    candles=sorted(request.candles,key=lambda x:x.timestamp); latest=candles[-1]
     base=dict(symbol=request.symbol.upper(),evaluated_at=now,entry=None,stop_loss=None,take_profit_1=None,risk_reward=None,analysis={})
-    if latest.timestamp.tzinfo is None: return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Timestamp must include a timezone.")
+    if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in request.candles):
+        return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Every market candle timestamp must include a timezone.")
+    candles=sorted(request.candles,key=lambda x:x.timestamp)
+    if any(candles[i].timestamp == candles[i + 1].timestamp for i in range(len(candles)-1)):
+        return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Duplicate market candle timestamps detected.")
+    latest=candles[-1]
     latest_time=latest.timestamp.astimezone(timezone.utc); max_age=TIMEFRAME_AGE[request.timeframe]
     if latest_time > now+timedelta(seconds=30) or now-latest_time>timedelta(minutes=max_age):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Latest market candle is stale or future-dated.")
@@ -21,12 +25,15 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
               "vwap":vwap(highs,lows,closes,volumes),"support_resistance":support_resistance(highs,lows),
               "fibonacci":fibonacci_levels(highs,lows)}
     base["analysis"]=analysis
+    if not request.confirmation_candles: return SignalResponse(**base,action="NO_TRADE",status="NO_SETUP",reason="Higher-timeframe confirmation data is not available.")
+    if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in request.confirmation_candles):
+        return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Every confirmation candle timestamp must include a timezone.")
     confirm=sorted(request.confirmation_candles,key=lambda x:x.timestamp)
-    if not confirm: return SignalResponse(**base,action="NO_TRADE",status="NO_SETUP",reason="Higher-timeframe confirmation data is not available.")
+    if any(confirm[i].timestamp == confirm[i + 1].timestamp for i in range(len(confirm)-1)):
+        return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Duplicate confirmation candle timestamps detected.")
     confirm_time=confirm[-1].timestamp
-    if confirm_time.tzinfo is None: return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Confirmation candle timestamp must include a timezone.")
     confirm_time=confirm_time.astimezone(timezone.utc)
-    if confirm_time>now+timedelta(seconds=30) or now-confirm_time>timedelta(minutes=max_age*2):
+    if confirm_time>now+timedelta(seconds=30) or confirm_time>latest_time+timedelta(seconds=30) or now-confirm_time>timedelta(minutes=max_age*2):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Higher-timeframe confirmation data is stale or future-dated.")
     cc=[c.close for c in confirm]; cf,cs=ema(cc,20),ema(cc,50)
     if not cf or not cs: return SignalResponse(**base,action="NO_TRADE",status="INSUFFICIENT_DATA",reason="At least 50 confirmation candles are required.")
