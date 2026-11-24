@@ -166,6 +166,11 @@ jobs:
               assert performance.get("execution_enabled") is False
               assert isinstance(performance.get("horizons"), list)
               assert [h.get("horizon_candles") for h in performance["horizons"]] == [1,4,24]
+              quality = performance.get("sample_quality", {})
+              assert quality.get("minimum_context_samples") == 30
+              assert quality.get("status") in {"BELOW_CONTEXT_THRESHOLD","AT_OR_ABOVE_CONTEXT_THRESHOLD"}
+              assert quality.get("maximum_scored_samples") == max(
+                  [h.get("scored",0) for h in performance["horizons"]], default=0)
           else:
               assert performance.get("status") == "UNAVAILABLE"
               assert performance.get("execution_enabled") is False
@@ -174,6 +179,7 @@ jobs:
               "record_count":performance.get("record_count"),
               "directional_signals":performance.get("directional_signals"),
               "horizons":performance.get("horizons",[]),
+              "sample_quality":performance.get("sample_quality"),
               "error":performance.get("error")}, ensure_ascii=False))
 
           wf_candles = []
