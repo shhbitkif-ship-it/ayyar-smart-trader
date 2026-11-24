@@ -26,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
@@ -64,44 +64,3 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
-
-  deploy-cloudflare:
-    name: Deploy API to Cloudflare Workers (free tier)
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    steps:
-      - name: Check deployment credentials
-        id: credentials
-        shell: bash
-        run: |
-          if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Cloudflare deployment skipped: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as GitHub Actions secrets."
-          fi
-      - name: Checkout source
-        if: steps.credentials.outputs.ready == 'true'
-        uses: actions/checkout@v4
-      - name: Install uv
-        if: steps.credentials.outputs.ready == 'true'
-        uses: astral-sh/setup-uv@v5
-      - name: Set up Node.js
-        if: steps.credentials.outputs.ready == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install Python 3.13
-        if: steps.credentials.outputs.ready == 'true'
-        run: uv python install 3.13
-      - name: Install Worker dependencies
-        if: steps.credentials.outputs.ready == 'true'
-        working-directory: backend
-        run: uv sync --all-groups
-      - name: Deploy Worker
-        if: steps.credentials.outputs.ready == 'true'
-        working-directory: backend
-        run: uv run pywrangler deploy
