@@ -132,7 +132,7 @@ fun RiskCalculator() {
             }
             HorizontalDivider(color = Color(0xFF343B49))
             Text("کنترل ریسک کل پرتفوی", color = gold, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("برای محاسبه دقیق، ارقام واقعی حساب و مجموع ریسک باز را وارد کن.", color = muted, fontSize = 11.sp)
+            Text("اطلاعات واردشده دستی و تأییدنشده است؛ تا اتصال امن منبع حساب/کارگزاری، نتیجه فقط نمایشی است و مجوز معامله صادر نمی‌شود.", color = Color(0xFFFFB86B), fontSize = 11.sp)
             RiskInput("سرمایه ابتدای روز", dayStartEquity, { dayStartEquity = it }, "موجودی ابتدای روز")
             RiskInput("بالاترین سرمایه ثبت‌شده", peakEquity, { peakEquity = it }, "اوج سرمایه حساب")
             RiskInput("مجموع ریسک مبلغی معاملات باز", openRiskAmount, { openRiskAmount = it }, "مجموع زیان احتمالی تا حد ضرر")
