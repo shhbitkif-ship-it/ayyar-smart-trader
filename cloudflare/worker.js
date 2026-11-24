@@ -50,13 +50,17 @@ function runBacktest(payload) {
   if (!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
       !Number.isFinite(slippage)||slippage<0||slippage>500)
     throw new Error("starting_capital must be positive and within the supported numeric range; fee/slippage must be between 0 and 500 bps");
+  const evaluationStart=Number(payload.evaluation_start_index??0);
+  if(!Number.isInteger(evaluationStart)||evaluationStart<0||evaluationStart>candles.length-2||
+     (evaluationStart>0&&evaluationStart<slowPeriod+1))
+    throw new Error("evaluation_start_index must be zero or at least slow_period + 1 and leave at least one evaluation candle");
   const closes=candles.map(c=>c.close), slow=ema(closes,slowPeriod), fastAligned=ema(closes,fastPeriod).slice(slowPeriod-fastPeriod);
   const cost=(fee+slippage)/10000;
   let cash=starting, quantity=0, entryPrice=null, entryTime=null;
-  const trades=[], equityCurve=[{timestamp:candles[0].iso,equity:round2(starting)}];
-  // Mark equity at every candle close; this captures intra-trade drawdowns,
-  // rather than measuring drawdown only when a trade closes.
-  for(let candleIndex=1;candleIndex<candles.length;candleIndex++){
+  const trades=[], equityCurve=[{timestamp:candles[evaluationStart].iso,equity:round2(starting)}];
+  // Indicators use only candles available before each decision. In walk-forward
+  // mode, pre-test candles warm the indicators but are excluded from test P&L.
+  for(let candleIndex=evaluationStart+1;candleIndex<candles.length;candleIndex++){
     const signalIndex=candleIndex-slowPeriod;
     if(signalIndex>=1 && signalIndex<slow.length){
       const prevUp=fastAligned[signalIndex-1]>slow[signalIndex-1];
@@ -95,6 +99,7 @@ function runBacktest(payload) {
   const loss=Math.abs(trades.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
   return {strategy:`EMA${fastPeriod}/EMA${slowPeriod} long-only crossover`,fast_period:fastPeriod,slow_period:slowPeriod,
     execution:"Signal confirmed at candle close; orders filled at next candle open",
+    evaluation_start_index:evaluationStart,evaluation_start_at:candles[evaluationStart].iso,
     cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
     starting_capital:round2(starting),final_equity:round2(finalEquity),
     net_return_pct:round4((finalEquity/starting-1)*100),
@@ -105,6 +110,58 @@ function runBacktest(payload) {
     unrealized_pnl:round2(quantity>0?finalEquity-quantity*entryPrice:0),
     trades,equity_curve:equityCurve,
     warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
+}
+
+function runWalkForward(payload) {
+  if(!payload||!Array.isArray(payload.candles)||payload.candles.length<180||payload.candles.length>5000)
+    throw new Error("Walk-forward evaluation requires 180 to 5000 OHLC candles");
+  const candles=[...payload.candles].sort((a,b)=>Date.parse(a?.timestamp)-Date.parse(b?.timestamp));
+  const candidates=[[9,21],[12,26],[20,50]];
+  const starting=Number(payload.starting_capital??10000);
+  const fee=Number(payload.fee_bps??10),slippage=Number(payload.slippage_bps??5);
+  if(!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
+     !Number.isFinite(slippage)||slippage<0||slippage>500)
+    throw new Error("Invalid starting capital or transaction costs");
+  const n=candles.length;
+  const boundaries=[Math.floor(n*0.55),Math.floor(n*0.70),Math.floor(n*0.85)];
+  let compounded=1,totalTrades=0,weightedWins=0,maxDrawdown=0;
+  const folds=[];
+  for(let i=0;i<boundaries.length;i++){
+    const trainEnd=boundaries[i],testEnd=i+1<boundaries.length?boundaries[i+1]:n;
+    let best=null;
+    for(const [fast,slow] of candidates){
+      const train=runBacktest({candles:candles.slice(0,trainEnd),fast_period:fast,slow_period:slow,
+        starting_capital:starting,fee_bps:fee,slippage_bps:slippage});
+      const score=train.net_return_pct-0.5*train.max_drawdown_pct;
+      if(!best||score>best.selection_score)
+        best={fast_period:fast,slow_period:slow,selection_score:round4(score),
+          training_return_pct:train.net_return_pct,training_drawdown_pct:train.max_drawdown_pct};
+    }
+    const test=runBacktest({candles:candles.slice(0,testEnd),fast_period:best.fast_period,
+      slow_period:best.slow_period,starting_capital:starting,fee_bps:fee,slippage_bps:slippage,
+      evaluation_start_index:trainEnd});
+    compounded*=test.final_equity/starting;
+    totalTrades+=test.closed_trades;
+    weightedWins+=test.closed_trades*test.win_rate_pct/100;
+    maxDrawdown=Math.max(maxDrawdown,test.max_drawdown_pct);
+    folds.push({fold:i+1,training_start:candles[0].timestamp,training_end:candles[trainEnd-1].timestamp,
+      test_start:candles[trainEnd].timestamp,test_end:candles[testEnd-1].timestamp,
+      selected_strategy:`EMA${best.fast_period}/EMA${best.slow_period}`,
+      selected_parameters:{fast_period:best.fast_period,slow_period:best.slow_period},
+      training_selection_score:best.selection_score,training_return_pct:best.training_return_pct,
+      training_drawdown_pct:best.training_drawdown_pct,
+      out_of_sample_return_pct:test.net_return_pct,out_of_sample_drawdown_pct:test.max_drawdown_pct,
+      out_of_sample_trades:test.closed_trades,out_of_sample_win_rate_pct:test.win_rate_pct,
+      out_of_sample_profit_factor:test.profit_factor});
+  }
+  return {method:"expanding-window walk-forward; each fold selects among EMA 9/21, 12/26, 20/50 using past data only",
+    folds,fold_count:folds.length,starting_capital:round2(starting),
+    compounded_out_of_sample_return_pct:round4((compounded-1)*100),
+    worst_fold_drawdown_pct:round4(maxDrawdown),total_out_of_sample_trades:totalTrades,
+    aggregate_out_of_sample_win_rate_pct:totalTrades?round2(weightedWins/totalTrades*100):0,
+    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
+    execution_enabled:false,
+    warning:"Research only. Parameters are selected on each training window and evaluated only on the following unseen window. Small samples, provider quality, spread changes, market impact and broker execution can materially change results; this is not a prediction or trading recommendation."};
 }
 
 function evaluateSignal(payload) {
@@ -545,6 +602,28 @@ export default {
       return json({symbol,strategies:strategies.map(([fast,slow])=>({fast_period:fast,slow_period:slow})),
         intervals:markets,starting_capital:10000,cost_model:{fee_bps_per_side:10,slippage_bps_per_side:5},
         warning:"Research comparison only. Different intervals have different sample lengths; metrics are not directly equivalent and do not predict future results. Long-only simulation; no broker execution."});
+    }
+    if(url.pathname==="/v1/backtest/walk-forward"&&request.method==="POST") {
+      try { return json(runWalkForward(await request.json())); }
+      catch(e) { return json({error:String(e?.message||"Invalid walk-forward request"),execution_enabled:false},400); }
+    }
+    if(url.pathname==="/v1/backtest/walk-forward/live"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const interval=url.searchParams.get("interval")||"60m";
+      try {
+        const market=await fetchGoldCandles(symbol,interval);
+        const result=runWalkForward({candles:market.candles,
+          starting_capital:url.searchParams.has("starting_capital")?Number(url.searchParams.get("starting_capital")):10000,
+          fee_bps:url.searchParams.has("fee_bps")?Number(url.searchParams.get("fee_bps")):10,
+          slippage_bps:url.searchParams.has("slippage_bps")?Number(url.searchParams.get("slippage_bps")):5});
+        return json({...result,market_symbol:symbol,market_provider:market.provider,
+          market_interval:market.interval,market_data_status:market.status,
+          market_last_candle_at:market.last_candle_at,candle_count:market.candles.length,
+          data_note:market.note});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",market_symbol:symbol,market_interval:interval,
+          error:String(e?.message||"Walk-forward data unavailable"),execution_enabled:false},502);
+      }
     }
     if(url.pathname==="/v1/backtest/ema-crossover"&&request.method==="POST") {
       try { return json(runBacktest(await request.json())); }
