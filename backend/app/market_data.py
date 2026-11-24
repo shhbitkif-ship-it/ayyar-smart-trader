@@ -62,17 +62,25 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
     age = (now - stamp.astimezone(timezone.utc)).total_seconds() if stamp else None
     stale_flag = item.get("stale") is True
     status = "LIVE" if valid and stamp and not stale_flag and -30 <= age <= MAX_AGE_SECONDS else "STALE" if valid else "UNAVAILABLE"
-    unit = "USD/oz" if item.get("unit") == "USD" else "تومان"
+    source_unit = item.get("unit")
+    expected_unit = "USD" if source_id == "xau" else "IRT"
+    unit_valid = source_unit == expected_unit
+    if not unit_valid:
+        status = "UNAVAILABLE"
+    unit = "USD/oz" if source_unit == "USD" else "تومان" if source_unit == "IRT" else "نامشخص"
     name_data = item.get("name") or {}
     display_name = name_data.get("fa") or name_data.get("en") or name
     meta = {
         "provider_id": source_id,
+        "source_unit": source_unit,
+        "unit_valid": unit_valid,
+        "updated_utc": item.get("updated_utc"),
         "change_pct": item.get("change_pct"),
         "sources": item.get("sources"),
         "spread_pct": item.get("spread_pct"),
         "method": item.get("method"),
         "stale": stale_flag,
-        "reason": None if valid else "Symbol is missing from the public provider feed",
+        "reason": None if valid and unit_valid else "Symbol is missing or its unit does not match the expected market unit",
     }
     return {
         "symbol": symbol, "name": display_name, "price": price if valid else None,
@@ -89,7 +97,9 @@ async def market_snapshot() -> dict:
         return _cache
     try:
         payload = await _fetch_provider_json()
-        rows = payload.get("items") or []
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise ValueError("Unexpected NerkhAra response schema: expected an items array")
+        rows = payload["items"]
         by_id = {row.get("id"): row for row in rows if isinstance(row, dict)}
         quotes = [_normalise(by_id.get(source_id), symbol, name, source_id)
                   for symbol, name, source_id in SYMBOLS]
