@@ -1,0 +1,1 @@
+{"name":"ayyar-smart-trader-worker","private":true,"type":"module","scripts":{"test":"node --test worker.test.mjs"}}
