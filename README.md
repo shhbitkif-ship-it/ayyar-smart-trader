@@ -22,6 +22,7 @@
 - محاسبه حجم: POST /v1/risk/position-size
 - ارزیابی سیگنال: POST `/v1/signals/evaluate` با بدنه JSON شامل `timeframe_minutes` و آرایه `candles`؛ هر کندل باید `timestamp`, `open`, `high`, `low`, `close` معتبر داشته باشد (حداقل ۶۰ کندل). داده آخر باید تازه باشد. خروجی شامل BUY/SELL/NO_TRADE، امتیاز هم‌جهتی، RSI، MACD، ATR و سطوح پیشنهادی ورود/حدضرر/هدف است؛ اجرای سفارش غیرفعال است.
 - بک‌تست آزمایشی EMA20/EMA50: POST `/v1/backtest/ema-crossover` (روی Worker رایگان و API بک‌اند؛ ورودی شامل حداقل ۶۰ کندل OHLC است)
+- بک‌تست یک‌کلیکی با کندل‌های واقعی و بسته‌شده XAUS: GET `/v1/backtest/ema-crossover/live?symbol=xau&interval=60m`؛ بازه‌های مجاز 15m، 30m، 60m و 1d هستند. سرمایه اولیه، کارمزد و لغزش با پارامترهای `starting_capital`، `fee_bps` و `slippage_bps` قابل تنظیم‌اند. در نبود داده معتبر، پاسخ UNAVAILABLE می‌دهد و داده ساختگی جایگزین نمی‌کند.
 
 کد Worker در `cloudflare/worker.js` است. هیچ کلید API یا راز دسترسی در اپلیکیشن یا مخزن ذخیره نشده است.
 
