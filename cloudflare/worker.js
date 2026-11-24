@@ -230,7 +230,10 @@ function round6(v){return Math.round(v*1000000)/1000000;}
 
 async function archiveSignal(env,symbol,result) {
   if(!env?.SIGNAL_HISTORY || !result?.last_candle_at || result.market_data_status!=="LIVE") return false;
-  const key=symbol+":multi:"+result.last_candle_at.replace(/[^0-9A-Za-z_-]/g,"_");
+  const candleTime=Date.parse(result.last_candle_at);
+  if(!Number.isFinite(candleTime)) return false;
+  const reverseTime=String(9999999999999-candleTime).padStart(13,"0");
+  const key=symbol+":latest:"+reverseTime;
   const record={...result,symbol,recorded_at:new Date().toISOString(),
     archive_key:key,archive_source:"XAUS completed OHLC multi-timeframe evaluation",
     execution_enabled:false};
@@ -391,7 +394,7 @@ export default {
       const requested=Number(url.searchParams.get("limit")||50);
       const limit=Number.isInteger(requested)?Math.max(1,Math.min(100,requested)):50;
       try {
-        const listed=await env.SIGNAL_HISTORY.list({prefix:"xau:multi:",limit});
+        const listed=await env.SIGNAL_HISTORY.list({prefix:"xau:latest:",limit});
         const records=await Promise.all(listed.keys.map(async item=>{
           const value=await env.SIGNAL_HISTORY.get(item.name,"json");
           return value&&typeof value==="object"?value:null;
