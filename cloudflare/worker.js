@@ -1,4 +1,5 @@
 import { handleTelegramWebhook } from "./telegram.js";
+import { fetchTalasanj } from "./providers.js";
 const SOURCE = "https://nerkhara.com/api/v1/latest.json";
 const MAX_AGE_SECONDS = 660;
 const SYMBOLS = [
@@ -103,7 +104,7 @@ function parseStamp(v) {
   const d = new Date(normalized);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-function normalise(item, def) {
+function normalise(item, def, provider="NerkhAra") {
   const [symbol,fallbackName,id,expectedUnit,displayUnit] = def;
   const price=item?.price;
   const validPrice=typeof price==="number" && Number.isFinite(price) && price>0;
@@ -113,7 +114,7 @@ function normalise(item, def) {
   const fresh=Boolean(validPrice && stamp && age>=-30 && age<=MAX_AGE_SECONDS && item?.stale!==true && unitValid);
   return {
     symbol,name:item?.name?.fa || item?.name?.en || fallbackName,
-    price:fresh?price:null,unit:displayUnit,source:"NerkhAra",
+    price:fresh?price:null,unit:displayUnit,source:provider,
     timestamp:stamp?stamp.toISOString():null,
     age_seconds:age===null?null:Math.round(age*10)/10,
     status:fresh?"LIVE":validPrice&&unitValid?"STALE":"UNAVAILABLE",
@@ -124,19 +125,24 @@ function normalise(item, def) {
       reason:fresh?null:"Quote is missing, stale, invalid, or has an unexpected unit"}
   };
 }
-async function snapshot() {
+async function snapshot(env={}) {
   if(cached && Date.now()-cachedAt<60000) return cached;
   try {
-    const response=await fetch(SOURCE,{headers:{accept:"application/json"},cf:{cacheTtl:60,cacheEverything:true}});
-    if(!response.ok) throw new Error("Provider HTTP "+response.status);
-    const payload=await response.json();
+    let payload=await fetchTalasanj(env);
+    let provider="Talasanj";
+    if(!payload) {
+      const response=await fetch(SOURCE,{headers:{accept:"application/json"},cf:{cacheTtl:60,cacheEverything:true}});
+      if(!response.ok) throw new Error("Provider HTTP "+response.status);
+      payload=await response.json();
+      provider="NerkhAra";
+    }
     if(!payload || !Array.isArray(payload.items)) throw new Error("Unexpected provider schema");
     const byId=new Map(payload.items.filter(x=>x&&typeof x==="object").map(x=>[x.id,x]));
-    const quotes=SYMBOLS.map(def=>normalise(byId.get(def[2]),def));
+    const quotes=SYMBOLS.map(def=>normalise(byId.get(def[2]),def,provider));
     cached={status:quotes.some(q=>q.status==="LIVE")?"LIVE":"UNAVAILABLE",
       as_of:new Date().toISOString(),provider_generated_at:parseStamp(payload.generated_utc)?.toISOString()??null,
-      quotes,notice:"NerkhAra refreshes its snapshot every ten minutes. Indicative market data only, not broker execution quotes. Stale or unavailable prices never produce signals.",
-      attribution:"NerkhAra — https://nerkhara.com"};
+      quotes,notice:provider==="Talasanj"?"Talasanj indicative market data refreshes about every 20 seconds; not broker execution quotes. Stale or unavailable prices never produce signals.":"NerkhAra refreshes its snapshot every ten minutes. Indicative market data only, not broker execution quotes. Stale or unavailable prices never produce signals.",
+      attribution:provider==="Talasanj"?"قیمت‌ها از طلاسنج — https://talasanj.info":"NerkhAra — https://nerkhara.com"};
   } catch(e) {
     cached={status:"UNAVAILABLE",as_of:new Date().toISOString(),provider_generated_at:null,
       quotes:SYMBOLS.map(def=>normalise(null,def)),
@@ -155,7 +161,7 @@ export default {
     if(url.pathname==="/telegram/webhook" && request.method==="POST")
       return handleTelegramWebhook(request, env, snapshot, json);
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
-    if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot());
+    if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
     if(url.pathname==="/v1/market/history"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol") || "gold-18k";
       if(!HISTORY_IDS.has(symbol)) return json({error:"Unsupported symbol",allowed_symbols:[...HISTORY_IDS]},400);
@@ -181,7 +187,7 @@ export default {
       }
     }
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
-      const s=await snapshot();
+      const s=await snapshot(env);
       return json({status:s.status,as_of:s.as_of,live_quotes:s.quotes.filter(q=>q.status==="LIVE").length,
         total_quotes:s.quotes.length,attribution:s.attribution});
     }
