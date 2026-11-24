@@ -16,6 +16,80 @@ const HISTORY_IDS = new Set(SYMBOLS.map(x => x[2]));
 const historyCache = new Map();
 const HISTORY_TTL_MS = 60 * 60 * 1000;
 
+
+function ema(values, period) {
+  if (values.length < period) return [];
+  const alpha = 2 / (period + 1);
+  const out = [values.slice(0, period).reduce((a,b)=>a+b,0) / period];
+  for (const value of values.slice(period)) out.push(alpha*value + (1-alpha)*out[out.length-1]);
+  return out;
+}
+function runBacktest(payload) {
+  if (!payload || !Array.isArray(payload.candles) || payload.candles.length < 60 || payload.candles.length > 5000)
+    throw new Error("candles must contain between 60 and 5000 OHLC records");
+  const candles = payload.candles.map(c => {
+    const row = {timestamp:Date.parse(c?.timestamp),open:Number(c?.open),high:Number(c?.high),low:Number(c?.low),close:Number(c?.close)};
+    if (!Number.isFinite(row.timestamp) || ![row.open,row.high,row.low,row.close].every(Number.isFinite) ||
+        row.open<=0 || row.high<=0 || row.low<=0 || row.close<=0 ||
+        row.high < Math.max(row.open,row.close,row.low) || row.low > Math.min(row.open,row.close,row.high))
+      throw new Error("Each candle must contain a valid timestamp and consistent positive OHLC prices");
+    return {...row,iso:new Date(row.timestamp).toISOString()};
+  }).sort((a,b)=>a.timestamp-b.timestamp);
+  if (candles.some((c,i)=>i>0 && c.timestamp===candles[i-1].timestamp))
+    throw new Error("Candle timestamps must be unique");
+  const starting = Number(payload.starting_capital ?? 10000);
+  const fee = Number(payload.fee_bps ?? 10);
+  const slippage = Number(payload.slippage_bps ?? 5);
+  if (!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
+      !Number.isFinite(slippage)||slippage<0||slippage>500)
+    throw new Error("starting_capital must be positive and fee/slippage must be between 0 and 500 bps");
+  const closes=candles.map(c=>c.close), slow=ema(closes,50), fastAligned=ema(closes,20).slice(30);
+  const cost=(fee+slippage)/10000;
+  let cash=starting, quantity=0, entryPrice=null, entryTime=null;
+  const trades=[], equityCurve=[{timestamp:candles[0].iso,equity:round2(starting)}];
+  for(let i=1;i<slow.length;i++){
+    const prevUp=fastAligned[i-1]>slow[i-1], nowUp=fastAligned[i]>slow[i];
+    const up=!prevUp&&nowUp, down=prevUp&&!nowUp;
+    const fillIndex=i+50;
+    if(fillIndex>=candles.length) break;
+    const fill=candles[fillIndex].open;
+    if(down&&quantity>0){
+      const exitPrice=fill*(1-cost), proceeds=quantity*exitPrice;
+      const pnl=proceeds-quantity*entryPrice;
+      cash=proceeds;
+      trades.push({entry_time:entryTime,exit_time:candles[fillIndex].iso,
+        entry_price:round6(entryPrice),exit_price:round6(exitPrice),pnl:round2(pnl),
+        return_pct:round4((exitPrice/entryPrice-1)*100)});
+      quantity=0;entryPrice=null;entryTime=null;
+    } else if(up&&quantity===0){
+      entryPrice=fill*(1+cost);quantity=cash/entryPrice;cash=0;entryTime=candles[fillIndex].iso;
+    }
+    const equity=quantity===0?cash:quantity*candles[fillIndex].close;
+    equityCurve.push({timestamp:candles[fillIndex].iso,equity:round2(equity)});
+  }
+  const finalEquity=quantity===0?cash:quantity*candles[candles.length-1].close;
+  let peak=starting,maxDrawdown=0;
+  for(const point of equityCurve){peak=Math.max(peak,point.equity);if(peak>0)maxDrawdown=Math.max(maxDrawdown,(peak-point.equity)/peak);}
+  const wins=trades.filter(t=>t.pnl>0).length;
+  const profit=trades.filter(t=>t.pnl>0).reduce((a,t)=>a+t.pnl,0);
+  const loss=Math.abs(trades.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
+  return {strategy:"EMA20/EMA50 long-only crossover",
+    execution:"Signal confirmed at candle close; orders filled at next candle open",
+    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
+    starting_capital:round2(starting),final_equity:round2(finalEquity),
+    net_return_pct:round4((finalEquity/starting-1)*100),
+    max_drawdown_pct:round4(maxDrawdown*100),closed_trades:trades.length,
+    win_rate_pct:trades.length?round2(wins/trades.length*100):0,
+    profit_factor:loss>0?round4(profit/loss):profit>0?"infinity":null,
+    open_position:quantity>0,
+    unrealized_pnl:round2(quantity>0?finalEquity-quantity*entryPrice:0),
+    trades,equity_curve,
+    warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
+}
+function round2(v){return Math.round(v*100)/100;}
+function round4(v){return Math.round(v*10000)/10000;}
+function round6(v){return Math.round(v*1000000)/1000000;}
+
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
     "content-type":"application/json; charset=utf-8","cache-control":"no-store",
@@ -129,6 +203,10 @@ export default {
           stop_distance:stopDistance,estimated_loss_at_stop:lots*lossPerLot,
           reason:"Sizing estimate only. Confirm tick value, lot step, margin, spread and broker rules before any order."});
       } catch { return json({error:"Request body must be valid JSON"},400); }
+    }
+    if(url.pathname==="/v1/backtest/ema-crossover"&&request.method==="POST") {
+      try { return json(runBacktest(await request.json())); }
+      catch(e) { return json({error:String(e?.message||"Invalid backtest request")},400); }
     }
     if(url.pathname==="/v1/signals/evaluate"&&request.method==="POST") return json({
       signal:"NO_TRADE",confidence:0,
