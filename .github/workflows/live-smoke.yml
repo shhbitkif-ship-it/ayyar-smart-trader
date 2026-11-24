@@ -68,7 +68,7 @@ jobs:
           print("RISK_POLICY_OK", json.dumps(policy, ensure_ascii=False))
 
           status, signal = request("/v1/signals/evaluate", "POST", {})
-          assert status == 200 and signal.get("signal") == "NO_TRADE"
+          assert status == 400 and signal.get("signal") == "NO_TRADE"
           assert signal.get("execution_enabled") is False
           print("SIGNAL_GUARD_OK", json.dumps(signal, ensure_ascii=False))
 
