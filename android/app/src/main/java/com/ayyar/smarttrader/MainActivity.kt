@@ -32,7 +32,7 @@ import java.util.Locale
 data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:String,val source:String,val status:String,val timestamp:String)
 data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
-data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
+data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)\ndata class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -44,7 +44,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var historyRefresh by remember { mutableIntStateOf(0) }
  var selectedSymbol by remember { mutableStateOf("gold-18k") }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
- val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
+ val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }\n val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
@@ -92,8 +92,25 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
    } } }
    item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { RiskCalculator() }
-   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
-      Text("موتور تحلیل",color=gold,fontWeight=FontWeight.Bold); Text("در انتظار کندل‌های واقعی OHLC؛ فعلاً NO TRADE",color=Color.White,fontSize=17.sp); Text("موتور تحلیل تکنیکال در API آماده است، اما منبع فعلی فقط میانگین روزانه می‌دهد و برای سیگنال درون‌روزی کافی نیست. تا اتصال فید کندلی معتبر، سیگنال زنده صادر نمی‌شود. ریسک هر معامله حداکثر ۱٪؛ اجرای سفارش غیرفعال است.",color=muted,fontSize=12.sp)
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+      Text("موتور تحلیل اونس جهانی طلا • تایم‌فریم یک‌ساعته",color=gold,fontWeight=FontWeight.Bold)
+      when {
+        signal==null -> Text("در حال دریافت کندل‌های واقعی و ارزیابی بازار…",color=muted)
+        signal!!.isFailure -> Text("دریافت سیگنال ناموفق بود؛ تا دریافت داده معتبر معامله‌ای پیشنهاد نمی‌شود.",color=Color(0xFFFFB86B))
+        else -> {
+          val s=signal!!.getOrThrow()
+          Text(when(s.signal){"BUY"->"سیگنال خرید";"SELL"->"سیگنال فروش";else->"بدون معامله"},color=when(s.signal){"BUY"->Color(0xFF8FD6A8);"SELL"->Color(0xFFFF8D8D);else->Color(0xFFFFB86B)},fontSize=22.sp,fontWeight=FontWeight.Bold)
+          Text("وضعیت داده: ${s.status}  •  روند: ${s.trend}  •  امتیاز همگرایی: ${s.confidence}/100",color=muted,fontSize=11.sp)
+          if(s.signal!="NO_TRADE"){
+            IndicatorRow("نقطه ورود",s.entry.toDoubleOrNull()?:Double.NaN,2)
+            IndicatorRow("حد ضرر",s.stop.toDoubleOrNull()?:Double.NaN,2)
+            IndicatorRow("حد سود",s.target.toDoubleOrNull()?:Double.NaN,2)
+          }
+          Text(s.reason,color=muted,fontSize=11.sp)
+          Text("آخرین کندل بسته‌شده: ${formatLocalTimestamp(s.lastCandle)}",color=muted,fontSize=10.sp)
+        }
+      }
+      Text("منبع کندل: Yahoo Finance (XAUUSD=X). فقط اونس جهانی؛ برای طلای ۱۸ عیار و سکه ایران هنوز فید OHLC مستقل و معتبر متصل نشده است. امتیاز همگرایی احتمال موفقیت نیست. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=11.sp)
    } } }
    item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
  } } }
@@ -128,6 +145,24 @@ private fun formatLocalTimestamp(raw:String):String {
      .withZone(ZoneId.systemDefault())
    formatter.format(Instant.parse(raw))
  } catch (_:Exception) { raw }
+}
+
+
+private fun fetchLatestSignal():SignalUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/latest?symbol=xau&interval=60m").openConnection() as HttpURLConnection
+ connection.requestMethod="GET"; connection.connectTimeout=12000; connection.readTimeout=15000
+ try {
+   val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+   val root=JSONObject(stream.bufferedReader().use{it.readText()})
+   val reasons=root.optJSONArray("reasons") ?: JSONArray()
+   val reason=if(root.has("reason") && !root.isNull("reason")) root.optString("reason") else
+     (0 until reasons.length()).joinToString(" • "){reasons.optString(it)}
+   fun number(key:String):String = if(root.isNull(key) || !root.has(key)) "—" else String.format(Locale.US,"%.2f",root.optDouble(key))
+   return SignalUi(root.optString("signal","NO_TRADE"),root.optInt("confidence",0),
+     root.optString("trend","UNKNOWN"),number("entry"),number("stop_loss"),number("take_profit"),
+     root.optString("market_last_candle_at",root.optString("last_candle_at","")),
+     root.optString("market_data_status",root.optString("data_status","UNKNOWN")),reason.ifBlank{"شرایط ورود کامل نیست؛ فعلاً معامله نکن."})
+ } finally { connection.disconnect() }
 }
 
 private fun fetchQuotes():List<QuoteUi>{
