@@ -93,7 +93,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
       Text("موتور تحلیل",color=gold,fontWeight=FontWeight.Bold); Text("NO TRADE تا تأیید داده و شرایط معتبر",color=Color.White,fontSize=17.sp); Text("ریسک پیش‌فرض هر معامله حداکثر ۱٪ سرمایه است. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=12.sp)
    } } }
-   item { Text("منبع داده: NerkhAra. تاریخچه، میانگین روزانه است و کندل درون‌روزی یا قیمت قابل‌اجرای کارگزاری نیست. این نسخه برای معامله با پول واقعی آماده نیست.",color=muted,fontSize=11.sp) }
+   item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
  } } }
 }
 
