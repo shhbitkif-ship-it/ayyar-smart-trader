@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "./worker.js";
+import worker from "./worker_core.js";
 
 const originalFetch = globalThis.fetch;
 const freshItems = [
@@ -963,4 +963,104 @@ test("paper trade journal reports bounded risk, fees and supported exit reasons"
  assert.deepEqual(body.cost_model,{fee_bps_per_side:2,slippage_bps_per_side:1});
  assert.ok(body.trades.every(t=>t.quantity>0&&Number.isFinite(t.fees)&&
   ["STOP_LOSS","STOP_GAP","TAKE_PROFIT","TAKE_PROFIT_GAP"].includes(t.exit_reason)));
+});
+
+
+function paperAccountEnv({allow=true}={}) {
+  const accounts=new Map();
+  return {
+    PAPER_ACCOUNTS:{
+      getByName(name) {
+        if(name==="__paper_bootstrap_guard__") return {allowCreation:async()=>allow};
+        return {
+          createAccount:async(accountId,tokenHash,currency,capital,createdAt)=>{
+            accounts.set(accountId,{tokenHash,currency,capital,createdAt});
+            return {account_id:accountId,currency,starting_capital:capital,
+              balance:capital,created_at:createdAt,trading_enabled:false};
+          },
+          getSummary:async(tokenHash)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            return {account_id:name,currency:a.currency,starting_capital:a.capital,
+              balance:a.capital,realized_pnl:0,total_trades:0,open_trades:0,
+              closed_trades:0,ledger_events:0,created_at:a.createdAt,
+              trading_enabled:false,execution_enabled:false};
+          },
+          listTrades:async(tokenHash)=>{
+            const a=accounts.get(name);
+            return !a||a.tokenHash!==tokenHash?null:[];
+          }
+        };
+      }
+    }
+  };
+}
+
+test("paper account creation returns a one-time bearer token and virtual balance",async()=>{
+  const env=paperAccountEnv();
+  const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.10"},
+    body:JSON.stringify({starting_capital:12500,currency:"USD"})
+  }),env);
+  const body=await response.json();
+  assert.equal(response.status,201);
+  assert.equal(body.starting_capital,12500);
+  assert.equal(body.balance,12500);
+  assert.equal(body.currency,"USD");
+  assert.equal(body.execution_enabled,false);
+  assert.equal(body.trading_enabled,false);
+  assert.equal(body.token_type,"Bearer");
+  assert.equal(body.access_token.length,64);
+  const summary=await worker.fetch(new Request(
+    "https://unit.test/v1/paper/accounts/"+body.account_id,
+    {headers:{authorization:"Bearer "+body.access_token}}
+  ),env);
+  const account=await summary.json();
+  assert.equal(summary.status,200);
+  assert.equal(account.account_id,body.account_id);
+  assert.equal(account.balance,12500);
+});
+
+test("paper account endpoints reject missing and invalid bearer tokens",async()=>{
+  const env=paperAccountEnv();
+  const missing=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+"a".repeat(32)),env);
+  assert.equal(missing.status,401);
+  const invalid=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+"a".repeat(32),
+    {headers:{authorization:"Bearer "+"x".repeat(40)}}),env);
+  assert.equal(invalid.status,404);
+});
+
+test("paper account creation validates JSON number types, currency and per-network limits",async()=>{
+  const invalidCapital=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.11"},
+    body:JSON.stringify({starting_capital:"10000"})
+  }),paperAccountEnv());
+  assert.equal(invalidCapital.status,400);
+  const invalidCurrency=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.12"},
+    body:JSON.stringify({currency:"EUR"})
+  }),paperAccountEnv());
+  assert.equal(invalidCurrency.status,400);
+  const limited=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.13"},
+    body:JSON.stringify({})
+  }),paperAccountEnv({allow:false}));
+  assert.equal(limited.status,429);
+});
+
+test("paper account trade journal endpoint requires a valid account token",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.14"},
+    body:JSON.stringify({})
+  }),env);
+  const account=await created.json();
+  const response=await worker.fetch(new Request(
+    "https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",
+    {headers:{authorization:"Bearer "+account.access_token}}
+  ),env);
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.deepEqual(body.trades,[]);
+  assert.equal(body.execution_enabled,false);
 });
