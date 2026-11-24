@@ -103,7 +103,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
           val s=signal!!.getOrThrow()
           Text(when(s.signal){"BUY"->"سیگنال خرید";"SELL"->"سیگنال فروش";else->"بدون معامله"},color=when(s.signal){"BUY"->Color(0xFF8FD6A8);"SELL"->Color(0xFFFF8D8D);else->Color(0xFFFFB86B)},fontSize=22.sp,fontWeight=FontWeight.Bold)
           Text("وضعیت داده: ${s.status}  •  روند ۶۰ دقیقه: ${s.trend}  •  امتیاز هم‌ترازی: ${s.confidence}/100",color=muted,fontSize=11.sp)
-          Text("۱۵ دقیقه: ${s.timeframes} ",color=muted,fontSize=11.sp)
+          Text("وضعیت تایم‌فریم‌ها: ${s.timeframes}",color=muted,fontSize=11.sp)
           if(s.signal!="NO_TRADE"){
             IndicatorRow("نقطه ورود",s.entry.toDoubleOrNull()?:Double.NaN,2)
             IndicatorRow("حد ضرر",s.stop.toDoubleOrNull()?:Double.NaN,2)
