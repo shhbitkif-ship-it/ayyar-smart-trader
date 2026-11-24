@@ -255,3 +255,97 @@ test("Talasanj provider fails closed when credentials or valid provider data are
     globalThis.fetch = originalFetch;
   }
 });
+
+
+function yahooChartFixture(candles) {
+  return {chart:{result:[{
+    timestamp:candles.map(c=>Math.floor(Date.parse(c.timestamp)/1000)),
+    indicators:{quote:[{
+      open:candles.map(c=>c.open),high:candles.map(c=>c.high),
+      low:candles.map(c=>c.low),close:candles.map(c=>c.close)
+    }]}
+  }],error:null}};
+}
+
+test("global gold candle endpoint returns only completed validated OHLC candles", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{
+    const close=2600+i*0.2;
+    return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),
+      open:close-0.05,high:close+0.3,low:close-0.2,close};
+  });
+  let requested="";
+  globalThis.fetch=async url=>{
+    requested=String(url);
+    return new Response(JSON.stringify(yahooChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.match(requested,/XAUUSD%3DX/);
+    assert.equal(body.provider,"Yahoo Finance");
+    assert.equal(body.provider_symbol,"XAUUSD=X");
+    assert.equal(body.status,"LIVE");
+    assert.equal(body.candles.length,80);
+    assert.equal(body.candles.at(-1).timestamp,candles.at(-1).timestamp);
+    assert.equal(body.candles.at(-1).close,candles.at(-1).close);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("global gold candle endpoint rejects stale upstream OHLC data", async () => {
+  const originalFetch=globalThis.fetch;
+  const old=Date.now()-24*3600000;
+  const candles=Array.from({length:80},(_,i)=>{
+    const close=2600+i;
+    return {timestamp:new Date(old-(79-i)*3600000).toISOString(),open:close,high:close+1,low:close-1,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(yahooChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,502);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.deepEqual(body.candles,[]);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("latest signal endpoint evaluates real provider OHLC and never enables execution", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  let close=2600;
+  const candles=Array.from({length:120},(_,i)=>{
+    const previous=close;
+    close+=i%2===0?0.5:-0.3;
+    if(i===119) close=previous+0.5;
+    return {timestamp:new Date(lastClosed-(119-i)*intervalMs).toISOString(),
+      open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(yahooChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.market_provider_symbol,"XAUUSD=X");
+    assert.equal(body.signal,"BUY");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.risk_reward_ratio,2);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("latest signal endpoint fails closed when the provider is unavailable", async () => {
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response("provider down",{status:503});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.data_status,"UNAVAILABLE");
+    assert.equal(body.execution_enabled,false);
+  } finally { globalThis.fetch=originalFetch; }
+});
