@@ -214,6 +214,8 @@ export default {
         const effectiveRisk=Math.min(risk,0.01),riskAmount=equity*effectiveRisk;
         const stopDistance=Math.abs(entry-stop),lossPerLot=stopDistance*contract;
         const lots=riskAmount/lossPerLot;
+        if(!Number.isFinite(riskAmount)||!Number.isFinite(stopDistance)||!Number.isFinite(lossPerLot)||lossPerLot<=0||!Number.isFinite(lots)||lots<=0)
+          return json({error:"Position sizing overflow or underflow; review equity, stop distance, and contract value."},400);
         return json({allowed:true,lots,risk_amount:riskAmount,risk_fraction:effectiveRisk,
           stop_distance:stopDistance,estimated_loss_at_stop:lots*lossPerLot,
           reason:"Sizing estimate only. Confirm tick value, lot step, margin, spread and broker rules before any order."});
