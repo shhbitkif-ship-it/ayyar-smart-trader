@@ -5,6 +5,7 @@ market readings, not executable broker quotes. We preserve source timestamps,
 stale flags, source count and spread metadata.
 """
 from __future__ import annotations
+import math
 import time
 from datetime import datetime, timezone
 import httpx
@@ -29,7 +30,8 @@ _cache_at = 0.0
 
 
 def _timestamp(value: str | None) -> datetime | None:
-    if not value:
+    # Provider fields are external input: reject non-strings without raising.
+    if not isinstance(value, str) or not value:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -54,22 +56,34 @@ async def _fetch_provider_json() -> dict:
 
 
 def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dict:
-    item = item or {}
+    item = item if isinstance(item, dict) else {}
     price = item.get("price")
+    valid = (
+        isinstance(price, (int, float))
+        and not isinstance(price, bool)
+        and math.isfinite(price)
+        and price > 0
+    )
     stamp = _timestamp(item.get("updated_utc"))
     now = datetime.now(timezone.utc)
-    valid = isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0
     age = (now - stamp.astimezone(timezone.utc)).total_seconds() if stamp else None
     stale_flag = item.get("stale") is True
-    status = "LIVE" if valid and stamp and not stale_flag and -30 <= age <= MAX_AGE_SECONDS else "STALE" if valid else "UNAVAILABLE"
+    status = (
+        "LIVE" if valid and stamp and not stale_flag and -30 <= age <= MAX_AGE_SECONDS
+        else "STALE" if valid
+        else "UNAVAILABLE"
+    )
     source_unit = item.get("unit")
     expected_unit = "USD" if source_id == "xau" else "IRT"
     unit_valid = source_unit == expected_unit
     if not unit_valid:
         status = "UNAVAILABLE"
     unit = "USD/oz" if source_unit == "USD" else "تومان" if source_unit == "IRT" else "نامشخص"
-    name_data = item.get("name") or {}
-    display_name = name_data.get("fa") or name_data.get("en") or name
+    name_data = item.get("name")
+    if isinstance(name_data, dict):
+        display_name = name_data.get("fa") or name_data.get("en") or name
+    else:
+        display_name = name
     meta = {
         "provider_id": source_id,
         "source_unit": source_unit,
@@ -80,7 +94,7 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
         "spread_pct": item.get("spread_pct"),
         "method": item.get("method"),
         "stale": stale_flag,
-        "reason": None if valid and unit_valid else "Symbol is missing or its unit does not match the expected market unit",
+        "reason": None if valid and unit_valid else "Symbol is missing, price is invalid, or its unit does not match the expected market unit",
     }
     return {
         "symbol": symbol, "name": display_name, "price": price if valid and unit_valid else None,
