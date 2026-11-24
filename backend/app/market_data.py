@@ -83,7 +83,7 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
         "reason": None if valid and unit_valid else "Symbol is missing or its unit does not match the expected market unit",
     }
     return {
-        "symbol": symbol, "name": display_name, "price": price if valid else None,
+        "symbol": symbol, "name": display_name, "price": price if valid and unit_valid else None,
         "unit": unit, "source": "NerkhAra", "timestamp": stamp,
         "age_seconds": round(age, 1) if age is not None else None,
         "status": status, "meta": meta,
