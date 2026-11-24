@@ -62,19 +62,28 @@ function runBacktest(payload) {
       if(down&&quantity>0){
         const exitPrice=fill*(1-cost), proceeds=quantity*exitPrice;
         const pnl=proceeds-quantity*entryPrice;
+        if(!Number.isFinite(exitPrice)||exitPrice<=0||!Number.isFinite(proceeds)||!Number.isFinite(pnl))
+          throw new Error("Backtest exit value is outside the supported numeric range");
         cash=proceeds;
         trades.push({entry_time:entryTime,exit_time:candles[candleIndex].iso,
           entry_price:round6(entryPrice),exit_price:round6(exitPrice),pnl:round2(pnl),
           return_pct:round4((exitPrice/entryPrice-1)*100)});
         quantity=0;entryPrice=null;entryTime=null;
       } else if(up&&quantity===0){
-        entryPrice=fill*(1+cost);quantity=cash/entryPrice;cash=0;entryTime=candles[candleIndex].iso;
+        entryPrice=fill*(1+cost);quantity=cash/entryPrice;
+        if(!Number.isFinite(entryPrice)||entryPrice<=0||!Number.isFinite(quantity)||quantity<=0)
+          throw new Error("Backtest position size is outside the supported numeric range");
+        cash=0;entryTime=candles[candleIndex].iso;
       }
     }
     const equity=quantity===0?cash:quantity*candles[candleIndex].close;
+    if(!Number.isFinite(equity)||equity<=0)
+      throw new Error("Backtest equity is outside the supported numeric range");
     equityCurve.push({timestamp:candles[candleIndex].iso,equity:round2(equity)});
   }
   const finalEquity=quantity===0?cash:quantity*candles[candles.length-1].close;
+  if(!Number.isFinite(finalEquity)||finalEquity<=0)
+    throw new Error("Final backtest equity is outside the supported numeric range");
   let peak=starting,maxDrawdown=0;
   for(const point of equityCurve){peak=Math.max(peak,point.equity);if(peak>0)maxDrawdown=Math.max(maxDrawdown,(peak-point.equity)/peak);}
   const wins=trades.filter(t=>t.pnl>0).length;
@@ -216,8 +225,11 @@ export default {
         const lots=riskAmount/lossPerLot;
         if(!Number.isFinite(riskAmount)||!Number.isFinite(stopDistance)||!Number.isFinite(lossPerLot)||lossPerLot<=0||!Number.isFinite(lots)||lots<=0)
           return json({error:"Position sizing overflow or underflow; review equity, stop distance, and contract value."},400);
+        const estimatedLoss=lots*lossPerLot;
+        if(!Number.isFinite(estimatedLoss)||estimatedLoss<=0)
+          return json({error:"Estimated loss is outside the supported numeric range."},400);
         return json({allowed:true,lots,risk_amount:riskAmount,risk_fraction:effectiveRisk,
-          stop_distance:stopDistance,estimated_loss_at_stop:lots*lossPerLot,
+          stop_distance:stopDistance,estimated_loss_at_stop:estimatedLoss,
           reason:"Sizing estimate only. Confirm tick value, lot step, margin, spread and broker rules before any order."});
       } catch { return json({error:"Request body must be valid JSON"},400); }
     }
