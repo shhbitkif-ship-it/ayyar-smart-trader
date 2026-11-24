@@ -1,5 +1,6 @@
 import { handleTelegramWebhook } from "./telegram.js";
 import { fetchTalasanj } from "./providers.js";
+import { simulatePaperTrading } from "./paper.js";
 const SOURCE = "https://nerkhara.com/api/v1/latest.json";
 const MAX_AGE_SECONDS = 660;
 const TALASANJ_MAX_AGE_SECONDS = 90;
@@ -510,6 +511,15 @@ export default {
     if(url.pathname==="/telegram/webhook" && request.method==="POST")
       return handleTelegramWebhook(request, env, snapshot, json);
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
+    if(url.pathname==="/v1/paper-trading/simulate"&&request.method==="POST") {
+      try {
+        const payload=await request.json();
+        return json(simulatePaperTrading(payload));
+      } catch(e) {
+        return json({error:String(e?.message||"Paper simulation failed"),mode:"PAPER_ONLY",
+          execution_enabled:false},400);
+      }
+    }
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
     if(url.pathname==="/v1/market/history"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol") || "gold-18k";
