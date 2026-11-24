@@ -228,6 +228,16 @@ function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
 
+async function archiveSignal(env,symbol,result) {
+  if(!env?.SIGNAL_HISTORY || !result?.last_candle_at || result.market_data_status!=="LIVE") return false;
+  const key=symbol+":multi:"+result.last_candle_at.replace(/[^0-9A-Za-z_-]/g,"_");
+  const record={...result,symbol,recorded_at:new Date().toISOString(),
+    archive_key:key,archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    execution_enabled:false};
+  await env.SIGNAL_HISTORY.put(key,JSON.stringify(record),{expirationTtl:90*24*60*60});
+  return true;
+}
+
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
     "content-type":"application/json; charset=utf-8","cache-control":"no-store",
@@ -352,7 +362,7 @@ export default {
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
         const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned;
         const base=analyses[1];
-        return json({
+        const result={
           signal:aligned?intraday:"NO_TRADE",
           confidence:aligned?Math.min(analyses[0].confidence,analyses[1].confidence,analyses[2].confidence):0,
           confidence_type:"multi_timeframe_alignment_score_not_probability",
@@ -365,12 +375,31 @@ export default {
           reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","Entry levels use the 60m candle"]:["Signal or EMA trend is not aligned across 15m, 60m and daily charts; wait for confirmation."],
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
-        });
+        };
+        await archiveSignal(env,symbol,result);
+        return json(result);
       } catch(e) {
         return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
           reason:String(e?.message||"Multi-timeframe OHLC data unavailable"),
           execution_enabled:false,
           warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."});
+      }
+    }
+    if(url.pathname==="/v1/signals/history"&&request.method==="GET") {
+      if(!env?.SIGNAL_HISTORY) return json({status:"UNAVAILABLE",records:[],error:"Signal history storage is not configured"},503);
+      const requested=Number(url.searchParams.get("limit")||50);
+      const limit=Number.isInteger(requested)?Math.max(1,Math.min(100,requested)):50;
+      try {
+        const listed=await env.SIGNAL_HISTORY.list({prefix:"xau:multi:",limit});
+        const records=await Promise.all(listed.keys.map(async item=>{
+          const value=await env.SIGNAL_HISTORY.get(item.name,"json");
+          return value&&typeof value==="object"?value:null;
+        }));
+        const valid=records.filter(Boolean).sort((a,b)=>Date.parse(b.recorded_at)-Date.parse(a.recorded_at));
+        return json({status:"OK",symbol:"xau",count:valid.length,records:valid,
+          retention_days:90,execution_enabled:false});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",records:[],error:String(e?.message||"Signal history read failed")},503);
       }
     }
     if(url.pathname==="/v1/signals/latest"&&request.method==="GET") {
