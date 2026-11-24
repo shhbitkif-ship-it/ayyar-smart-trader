@@ -601,3 +601,40 @@ test("multi-timeframe endpoint fails closed if any timeframe is unavailable", as
     assert.equal(body.execution_enabled,false);
   } finally { globalThis.fetch=originalFetch; }
 });
+
+
+test("position sizing rounds down to broker lot step and stays within risk budget", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({equity:100000,entry:2000,stop_loss:1990,
+      contract_value_per_price_unit:100,lot_step:0.3,min_lot:0.3,max_lot:5})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.allowed,true);
+  assert.equal(body.lots,0.9);
+  assert.ok(body.estimated_loss_at_stop<=body.risk_amount);
+  assert.equal(body.lot_step,0.3);
+});
+
+test("position sizing blocks a size below broker minimum after rounding", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({equity:10000,entry:2000,stop_loss:1990,
+      contract_value_per_price_unit:100,lot_step:0.1,min_lot:0.2,max_lot:5})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.allowed,false);
+  assert.equal(body.lots,0);
+  assert.match(body.reason,/below the broker minimum/i);
+});
+
+test("position sizing rejects invalid broker lot constraints", async () => {
+  const response=await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({equity:100000,entry:2000,stop_loss:1990,
+      contract_value_per_price_unit:100,lot_step:0,min_lot:0.01})
+  }));
+  assert.equal(response.status,400);
+});
