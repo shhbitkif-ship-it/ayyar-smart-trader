@@ -546,7 +546,9 @@ test("signal performance uses next candle open, completed horizons and refuses c
       open,high:open+2,low:open-1,close:open+1};
   });
   const signalTime=candles[10].timestamp;
-  store.set("xau:latest:sample",{signal:"BUY",last_candle_at:signalTime,recorded_at:signalTime});
+  // Equivalent UTC offset notation must match the same candle timestamp.
+  const signalTimeWithOffset=signalTime.replace("Z","+00:00");
+  store.set("xau:latest:sample",{signal:"BUY",last_candle_at:signalTimeWithOffset,recorded_at:signalTimeWithOffset});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)||null;}};
   globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(candles)),
