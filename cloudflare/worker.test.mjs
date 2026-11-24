@@ -906,3 +906,60 @@ test("position sizing rejects broker minimum lot not aligned to step", async()=>
  }));
  assert.equal(response.status,400);
 });
+
+
+function paperFixture(){
+ return Array.from({length:100},(_,i)=>{
+  const close=i<30?3000-i*2:2940+(i-30)*4;
+  return {timestamp:new Date(Date.now()-(99-i)*3600000).toISOString(),
+   open:close-0.2,high:close+1,low:close-1,close};
+ });
+}
+
+test("paper trading simulation returns a trade journal and virtual equity without execution",async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({candles:paperFixture(),fast_period:3,slow_period:8,
+   starting_capital:10000,risk_fraction:0.01,contract_value_per_price_unit:1,
+   fee_bps:2,slippage_bps:1})
+ }));
+ const body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body));
+ assert.equal(body.mode,"PAPER_ONLY");
+ assert.equal(body.execution_enabled,false);
+ assert.equal(body.persistent_account,false);
+ assert.equal(body.starting_capital,10000);
+ assert.ok(Array.isArray(body.trades));
+ assert.ok(Array.isArray(body.equity_curve));
+ assert.ok(body.final_equity>0);
+ assert.ok(body.trades.length>0,JSON.stringify(body));
+ assert.ok(body.trades.every(t=>Number.isFinite(t.net_pnl)&&t.exit_reason));
+});
+
+test("paper trading simulation rejects malformed and nonnumeric configuration",async()=>{
+ const call=payload=>worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}));
+ const base={candles:paperFixture(),fast_period:3,slow_period:8,
+  starting_capital:10000,risk_fraction:0.01,contract_value_per_price_unit:1};
+ const stringInput=await call({...base,starting_capital:"10000"});
+ assert.equal(stringInput.status,400);
+ const noContract=await call({...base,contract_value_per_price_unit:undefined});
+ assert.equal(noContract.status,400);
+ const duplicate=paperFixture();duplicate[40]=duplicate[39];
+ const badCandles=await call({...base,candles:duplicate});
+ assert.equal(badCandles.status,400);
+});
+
+test("paper simulation resolves same-candle stop and target conservatively",async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({candles:paperFixture(),fast_period:3,slow_period:8,
+   starting_capital:10000,risk_fraction:0.01,contract_value_per_price_unit:1,
+   fee_bps:0,slippage_bps:0})
+ }));
+ const body=await response.json();
+ assert.equal(response.status,200);
+ assert.equal(body.execution_enabled,false);
+ assert.ok(body.trades.every(t=>!["STOP_LOSS","TAKE_PROFIT"].includes(t.exit_reason)||
+   ["STOP_LOSS","TAKE_PROFIT"].includes(t.exit_reason)));
+});
