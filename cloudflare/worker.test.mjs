@@ -950,16 +950,17 @@ test("paper trading simulation rejects malformed and nonnumeric configuration",a
  assert.equal(badCandles.status,400);
 });
 
-test("paper simulation resolves same-candle stop and target conservatively",async()=>{
+test("paper trade journal reports bounded risk, fees and supported exit reasons",async()=>{
  const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
   method:"POST",headers:{"content-type":"application/json"},
   body:JSON.stringify({candles:paperFixture(),fast_period:3,slow_period:8,
    starting_capital:10000,risk_fraction:0.01,contract_value_per_price_unit:1,
-   fee_bps:0,slippage_bps:0})
+   fee_bps:2,slippage_bps:1})
  }));
  const body=await response.json();
  assert.equal(response.status,200);
  assert.equal(body.execution_enabled,false);
- assert.ok(body.trades.every(t=>!["STOP_LOSS","TAKE_PROFIT"].includes(t.exit_reason)||
-   ["STOP_LOSS","TAKE_PROFIT"].includes(t.exit_reason)));
+ assert.deepEqual(body.cost_model,{fee_bps_per_side:2,slippage_bps_per_side:1});
+ assert.ok(body.trades.every(t=>t.quantity>0&&Number.isFinite(t.fees)&&
+  ["STOP_LOSS","STOP_GAP","TAKE_PROFIT","TAKE_PROFIT_GAP"].includes(t.exit_reason)));
 });
