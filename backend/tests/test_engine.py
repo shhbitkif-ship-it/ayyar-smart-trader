@@ -1,4 +1,6 @@
 from datetime import datetime,timedelta,timezone
+import pytest
+from pydantic import ValidationError
 from app.engine import evaluate
 from app.schemas import Candle,EvaluateRequest
 
@@ -28,3 +30,12 @@ def test_analysis_includes_requested_indicators():
  out=evaluate(req,now)
  assert out.action=="NO_TRADE"
  assert {"ema20","ema50","ema100","ema200","rsi14","macd","bollinger20","atr14","support_resistance","fibonacci"} <= set(out.analysis)
+
+
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+def test_candle_rejects_non_finite_market_values(field, bad_value):
+    values = dict(timestamp=datetime.now(timezone.utc), open=100, high=101, low=99, close=100, volume=10)
+    values[field] = bad_value
+    with pytest.raises(ValidationError):
+        Candle(**values)
