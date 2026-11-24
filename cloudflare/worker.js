@@ -333,6 +333,46 @@ export default {
         execution_enabled:false,
         note:"No synthetic candles are generated. Signals remain disabled when real completed OHLC data is unavailable."},502); }
     }
+    if(url.pathname==="/v1/signals/multi-timeframe"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const intervals=["15m","60m","1d"];
+      try {
+        const markets=await Promise.all(intervals.map(interval=>fetchGoldCandles(symbol,interval)));
+        const analyses=markets.map((market,i)=>evaluateSignal({
+          candles:market.candles,timeframe_minutes:market.interval_seconds/60
+        }));
+        const byInterval=Object.fromEntries(intervals.map((interval,i)=>[interval,{
+          signal:analyses[i].signal,trend:analyses[i].trend,
+          confidence:analyses[i].confidence,last_candle_at:markets[i].last_candle_at,
+          data_status:markets[i].status
+        }]));
+        const intraday=analyses[1].signal;
+        const shortAligned=analyses[0].signal===intraday;
+        const dailyAligned=(intraday==="BUY"&&analyses[2].trend==="BULLISH")||
+          (intraday==="SELL"&&analyses[2].trend==="BEARISH");
+        const aligned=intraday!=="NO_TRADE"&&shortAligned&&dailyAligned;
+        const base=analyses[1];
+        return json({
+          signal:aligned?intraday:"NO_TRADE",
+          confidence:aligned?Math.min(analyses[0].confidence,analyses[1].confidence,analyses[2].confidence):0,
+          confidence_type:"multi_timeframe_alignment_score_not_probability",
+          trend:base.trend,rsi_14:base.rsi_14,macd_histogram:base.macd_histogram,atr_14:base.atr_14,
+          entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
+          take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
+          timeframes:byInterval,market_data_status:"LIVE",
+          market_provider:"XAUS",market_source_url:"https://xaus.com/api/v1/chart",
+          last_candle_at:markets[1].last_candle_at,
+          reasons:aligned?["15m and 60m signals agree","Daily trend confirms direction","Entry levels use the 60m candle"]:["15m, 60m and daily trend are not fully aligned; wait for confirmation."],
+          execution_enabled:false,
+          warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
+        });
+      } catch(e) {
+        return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
+          reason:String(e?.message||"Multi-timeframe OHLC data unavailable"),
+          execution_enabled:false,
+          warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."});
+      }
+    }
     if(url.pathname==="/v1/signals/latest"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol")||"xau";
       const interval=url.searchParams.get("interval")||"60m";
