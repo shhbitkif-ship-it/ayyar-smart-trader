@@ -45,7 +45,7 @@ function runBacktest(payload) {
   const slippage = Number(payload.slippage_bps ?? 5);
   if (!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
       !Number.isFinite(slippage)||slippage<0||slippage>500)
-    throw new Error("starting_capital must be positive and fee/slippage must be between 0 and 500 bps");
+    throw new Error("starting_capital must be positive and within the supported numeric range; fee/slippage must be between 0 and 500 bps");
   const closes=candles.map(c=>c.close), slow=ema(closes,50), fastAligned=ema(closes,20).slice(30);
   const cost=(fee+slippage)/10000;
   let cash=starting, quantity=0, entryPrice=null, entryTime=null;
@@ -150,7 +150,7 @@ function evaluateSignal(payload) {
   const score=side==="BUY"?longScore:side==="SELL"?shortScore:Math.max(longScore,shortScore);
   const confidence=score*20;
   const stopDistance=atr*1.5;
-  if(!Number.isFinite(atr)||atr<=0||!Number.isFinite(stopDistance)||stopDistance<=0)
+  if(!Number.isFinite(atr)||atr<=0||!Number.isFinite(stopDistance)||stopDistance<=0||(side==="BUY"&&entry-stopDistance<=0)||(side==="SELL"&&entry-stopDistance*2<=0))
     throw new Error("ATR calculation is outside the supported numeric range");
   const entry=last.close;
   const stop=side==="BUY"?entry-stopDistance:side==="SELL"?entry+stopDistance:null;
