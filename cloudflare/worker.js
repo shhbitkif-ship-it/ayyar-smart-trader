@@ -664,6 +664,8 @@ export default {
         const dailyLoss=Math.max(0,(dayStart-equity)/dayStart),drawdown=Math.max(0,(peak-equity)/peak);
         const openRisk=positions.reduce((sum,x)=>sum+Number(x.risk_amount),0),proposedRiskAmount=equity*proposedRisk;
         const aggregateRisk=openRisk+proposedRiskAmount;
+        if(![openRisk,proposedRiskAmount,aggregateRisk,equity*maxOpenRisk].every(Number.isFinite))
+          return json({error:"Portfolio risk calculation overflow; verify account and exposure values."},400);
         let reason="Account figures are manually supplied and are not authenticated by a broker; new positions remain blocked.";
         if(dailyLoss>=0.03) reason="Daily loss limit reached (3%); new positions are blocked.";
         else if(drawdown>=0.08) reason="Peak-to-current drawdown limit reached (8%); new positions are blocked.";
