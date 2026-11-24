@@ -17,7 +17,7 @@
 - سلامت: GET /health
 - قیمت‌ها: GET /v1/market/quotes
 - تاریخچه روزانه: GET /v1/market/history?symbol=gold-18k (نمادهای مجاز از فهرست قیمت‌ها)
-- وضعیت بازار: GET /v1/market/status\n- کندل‌های بسته‌شده اونس جهانی: GET `/v1/market/candles?symbol=xau&interval=60m`؛ داده از API عمومی XAUS دریافت، OHLC اعتبارسنجی و کندل جاریِ ناقص حذف می‌شود. بازه‌های مجاز: 15m، 30m، 60m و 1d.\n- سیگنال آخر اونس جهانی: GET `/v1/signals/latest?symbol=xau&interval=60m`؛ تحلیل تک‌تایم‌فریمی ۶۰ دقیقه‌ای.\n- سیگنال چندتایم‌فریمی: GET `/v1/signals/multi-timeframe?symbol=xau`؛ صدور BUY/SELL فقط با توافق ۱۵ دقیقه و ۶۰ دقیقه و تأیید جهت روند روزانه. در صورت نبود حتی یکی از سه فید یا نبود هم‌جهتی، `NO_TRADE` برمی‌گرداند.
+- وضعیت بازار: GET /v1/market/status\n- کندل‌های بسته‌شده اونس جهانی: GET `/v1/market/candles?symbol=xau&interval=60m`؛ داده از API عمومی XAUS دریافت، OHLC اعتبارسنجی و کندل جاریِ ناقص حذف می‌شود. بازه‌های مجاز: 15m، 30m، 60m و 1d.\n- سیگنال آخر اونس جهانی: GET `/v1/signals/latest?symbol=xau&interval=60m`؛ تحلیل تک‌تایم‌فریمی ۶۰ دقیقه‌ای.\n- سیگنال چندتایم‌فریمی: GET `/v1/signals/multi-timeframe?symbol=xau`؛ صدور BUY/SELL فقط با توافق سیگنال ۱۵ و ۶۰ دقیقه و هم‌جهتی EMA در هر سه بازه ۱۵ دقیقه، ۶۰ دقیقه و روزانه. در صورت نبود حتی یکی از سه فید یا نبود هم‌جهتی، `NO_TRADE` برمی‌گرداند.
 - سیاست ریسک: GET /v1/risk/policy
 - محاسبه حجم: POST /v1/risk/position-size
 - ارزیابی سیگنال: POST `/v1/signals/evaluate` با بدنه JSON شامل `timeframe_minutes` و آرایه `candles`؛ هر کندل باید `timestamp`, `open`, `high`, `low`, `close` معتبر داشته باشد (حداقل ۶۰ کندل). داده آخر باید تازه باشد. خروجی شامل BUY/SELL/NO_TRADE، امتیاز هم‌جهتی، RSI، MACD، ATR و سطوح پیشنهادی ورود/حدضرر/هدف است؛ اجرای سفارش غیرفعال است.
