@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from typing import Sequence
+from pydantic import BaseModel, Field
 from .schemas import Candle
 from .indicators import ema
+
+
+class BacktestRequest(BaseModel):
+    candles: list[Candle] = Field(min_length=60, max_length=5000)
+    starting_capital: float = Field(default=10000.0, gt=0)
+    fee_bps: float = Field(default=10.0, ge=0, le=500)
+    slippage_bps: float = Field(default=5.0, ge=0, le=500)
+
 
 
 def run_ema_backtest(
@@ -112,3 +121,7 @@ def run_ema_backtest(
         "equity_curve": equity_curve,
         "warning": "Research only. Results depend on candle quality and assumptions; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation.",
     }
+
+
+def backtest(payload: BacktestRequest) -> dict:
+    return run_ema_backtest(payload.candles, starting_capital=payload.starting_capital, fee_bps=payload.fee_bps, slippage_bps=payload.slippage_bps)
