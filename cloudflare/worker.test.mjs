@@ -346,3 +346,63 @@ test("latest signal endpoint fails closed when the provider is unavailable", asy
     assert.equal(body.execution_enabled,false);
   } finally { globalThis.fetch=originalFetch; }
 });
+
+
+test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", async () => {
+  const originalFetch=globalThis.fetch;
+  const candlesByInterval={};
+  for (const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]) {
+    const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    let close=2600;
+    candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
+      const previous=close;
+      close+=i%2===0?0.5:-0.3;
+      if(i===count-1) close=previous+0.5;
+      return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
+        open:previous,high:Math.max(previous,close)+0.2,
+        low:Math.min(previous,close)-0.2,close};
+    });
+  }
+  globalThis.fetch=async url=>{
+    const interval=new URL(String(url)).searchParams.get("interval");
+    return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
+      {status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.market_provider,"XAUS");
+    assert.equal(body.timeframes["15m"].signal,"BUY");
+    assert.equal(body.timeframes["60m"].signal,"BUY");
+    assert.equal(body.timeframes["1d"].trend,"BULLISH");
+    assert.equal(body.signal,"BUY");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.risk_reward_ratio,2);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("multi-timeframe endpoint fails closed if any timeframe is unavailable", async () => {
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const interval=new URL(String(url)).searchParams.get("interval");
+    if(interval==="15m") return new Response("upstream down",{status:503});
+    const intervalMs=interval==="1d"?86400000:3600000;
+    const count=80,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    const candles=Array.from({length:count},(_,i)=>{
+      const close=2600+i*0.2;
+      return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
+        open:close-0.1,high:close+0.2,low:close-0.2,close};
+    });
+    return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.data_status,"UNAVAILABLE");
+    assert.equal(body.execution_enabled,false);
+  } finally { globalThis.fetch=originalFetch; }
+});
