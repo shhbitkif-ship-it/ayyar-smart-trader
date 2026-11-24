@@ -24,6 +24,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:String,val source:String,val status:String,val timestamp:String)
@@ -112,8 +115,17 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
 @Composable private fun QuoteCard(q:QuoteUi){
  Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(16.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){
    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){ Text(q.name,color=Color.White,fontWeight=FontWeight.SemiBold); Text(q.status,color=if(q.status=="LIVE") Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontSize=11.sp) }
-   Text(q.price,color=gold,fontSize=23.sp,fontWeight=FontWeight.Bold); Text(q.symbol + "  •  " + q.unit + "  •  " + q.source,color=muted,fontSize=11.sp); Text("آخرین به‌روزرسانی: " + q.timestamp,color=muted,fontSize=10.sp)
+   Text(q.price,color=gold,fontSize=23.sp,fontWeight=FontWeight.Bold); Text(q.symbol + "  •  " + q.unit + "  •  " + q.source,color=muted,fontSize=11.sp); Text("آخرین به‌روزرسانی به وقت گوشی: " + formatLocalTimestamp(q.timestamp),color=muted,fontSize=10.sp)
  } }
+}
+
+private fun formatLocalTimestamp(raw:String):String {
+ if(raw.isBlank() || raw=="—") return "نامشخص"
+ return try {
+   val formatter=DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")
+     .withZone(ZoneId.systemDefault())
+   formatter.format(Instant.parse(raw))
+ } catch (_:Exception) { raw }
 }
 
 private fun fetchQuotes():List<QuoteUi>{
