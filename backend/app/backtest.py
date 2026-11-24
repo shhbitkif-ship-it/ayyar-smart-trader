@@ -48,43 +48,45 @@ def run_ema_backtest(
     trades = []
     equity_curve = [{"timestamp": ordered[0].timestamp.isoformat(), "equity": round(cash, 2)}]
 
-    for i in range(1, len(slow)):
-        prev_up = fast_aligned[i - 1] > slow[i - 1]
-        now_up = fast_aligned[i] > slow[i]
-        crossed_up = not prev_up and now_up
-        crossed_down = prev_up and not now_up
-        fill_index = i + 50  # slow[0] corresponds to candle index 49; i is current close index.
-        if fill_index >= len(ordered):
-            break
-        fill = float(ordered[fill_index].open)
+    # Process each next-candle open and mark equity at every candle close.
+    # EMA20/EMA50 values are only consulted after their signal candle has closed.
+    for fill_index in range(1, len(ordered)):
+        signal_index = fill_index - 1
+        if signal_index >= 50:
+            ema_index = signal_index - 49
+            if ema_index >= 1:
+                prev_up = fast_aligned[ema_index - 1] > slow[ema_index - 1]
+                now_up = fast_aligned[ema_index] > slow[ema_index]
+                crossed_up = not prev_up and now_up
+                crossed_down = prev_up and not now_up
+                fill = float(ordered[fill_index].open)
 
-        if crossed_down and quantity > 0:
-            exit_price = fill * (1.0 - cost_rate)
-            proceeds = quantity * exit_price
-            pnl = proceeds - (quantity * entry_price)
-            cash = proceeds
-            trades.append({
-                "entry_time": entry_time,
-                "exit_time": ordered[fill_index].timestamp.isoformat(),
-                "entry_price": round(entry_price, 6),
-                "exit_price": round(exit_price, 6),
-                "pnl": round(pnl, 2),
-                "return_pct": round((exit_price / entry_price - 1.0) * 100.0, 4),
-            })
-            quantity = 0.0
-            entry_price = None
-            entry_time = None
-        elif crossed_up and quantity == 0:
-            entry_price = fill * (1.0 + cost_rate)
-            quantity = cash / entry_price
-            cash = 0.0
-            entry_time = ordered[fill_index].timestamp.isoformat()
+                if crossed_down and quantity > 0:
+                    exit_price = fill * (1.0 - cost_rate)
+                    proceeds = quantity * exit_price
+                    pnl = proceeds - (quantity * entry_price)
+                    cash = proceeds
+                    trades.append({
+                        "entry_time": entry_time,
+                        "exit_time": ordered[fill_index].timestamp.isoformat(),
+                        "entry_price": round(entry_price, 6),
+                        "exit_price": round(exit_price, 6),
+                        "pnl": round(pnl, 2),
+                        "return_pct": round((exit_price / entry_price - 1.0) * 100.0, 4),
+                    })
+                    quantity = 0.0
+                    entry_price = None
+                    entry_time = None
+                elif crossed_up and quantity == 0:
+                    entry_price = fill * (1.0 + cost_rate)
+                    quantity = cash / entry_price
+                    cash = 0.0
+                    entry_time = ordered[fill_index].timestamp.isoformat()
 
-        mark_index = min(fill_index, len(ordered) - 1)
-        equity = cash if quantity == 0 else quantity * float(ordered[mark_index].close)
+        marked_equity = cash if quantity == 0 else quantity * float(ordered[fill_index].close)
         equity_curve.append({
-            "timestamp": ordered[mark_index].timestamp.isoformat(),
-            "equity": round(equity, 2),
+            "timestamp": ordered[fill_index].timestamp.isoformat(),
+            "equity": round(marked_equity, 2),
         })
 
     # Report open positions at estimated net liquidation value, including the
