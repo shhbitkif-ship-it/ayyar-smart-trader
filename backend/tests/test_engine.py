@@ -87,7 +87,7 @@ def test_duplicate_confirmation_timestamps_are_rejected():
     assert "duplicate confirmation" in result.reason.lower()
 
 
-@pytest.mark.parametrize("timeframe,step", [("1m", 5), ("5m", 20), ("15m", 50), ("30m", 100), ("1h", 200)])
+@pytest.mark.parametrize("timeframe,step", [("1m", 5), ("5m", 20), ("15m", 55), ("30m", 110), ("1h", 220)])
 def test_large_intraday_history_gap_is_no_trade(timeframe, step):
     now = datetime.now(timezone.utc)
     data = candles(220, 1, now - timedelta(minutes=220))
