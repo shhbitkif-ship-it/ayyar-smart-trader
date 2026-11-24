@@ -33,7 +33,7 @@ data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:S
 data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
-data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String)
+data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String,val regime:String,val regimeReason:String)
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
@@ -212,6 +212,8 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
           val s=signal!!.getOrThrow()
           Text(when(s.signal){"BUY"->"سیگنال خرید";"SELL"->"سیگنال فروش";else->"بدون معامله"},color=when(s.signal){"BUY"->Color(0xFF8FD6A8);"SELL"->Color(0xFFFF8D8D);else->Color(0xFFFFB86B)},fontSize=22.sp,fontWeight=FontWeight.Bold)
           Text("وضعیت داده: ${s.status}  •  روند ۶۰ دقیقه: ${s.trend}  •  امتیاز هم‌ترازی: ${s.confidence}/100",color=muted,fontSize=11.sp)
+          Text("رژیم بازار: ${s.regime}",color=if(s.regime=="TRENDING") Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+          Text(s.regimeReason,color=muted,fontSize=10.sp)
           Text("وضعیت تایم‌فریم‌ها: ${s.timeframes}",color=muted,fontSize=11.sp)
           if(s.signal!="NO_TRADE"){
             IndicatorRow("نقطه ورود",s.entry.toDoubleOrNull()?:Double.NaN,2)
@@ -354,7 +356,9 @@ private fun fetchLatestSignal():SignalUi{
      root.optString("last_candle_at",""),
      root.optString("market_data_status",root.optString("data_status","UNKNOWN")),
      reason.ifBlank{"شرایط ورود کامل نیست؛ فعلاً معامله نکن."},
-     "15m: $short  •  60m: $hourly  •  1D: $daily")
+     "15m: $short  •  60m: $hourly  •  1D: $daily",
+     root.optJSONObject("market_regime")?.optString("status","UNKNOWN") ?: "UNKNOWN",
+     root.optJSONObject("market_regime")?.optString("reason","رژیم بازار مشخص نیست؛ احتیاط کنید.") ?: "رژیم بازار مشخص نیست؛ احتیاط کنید.")
  } finally { connection.disconnect() }
 }
 
