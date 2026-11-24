@@ -12,6 +12,9 @@ const SYMBOLS = [
 ];
 let cached = null;
 let cachedAt = 0;
+const HISTORY_IDS = new Set(SYMBOLS.map(x => x[2]));
+const historyCache = new Map();
+const HISTORY_TTL_MS = 60 * 60 * 1000;
 
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
@@ -76,6 +79,30 @@ export default {
       "access-control-allow-headers":"content-type"}});
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot());
+    if(url.pathname==="/v1/market/history"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol") || "gold-18k";
+      if(!HISTORY_IDS.has(symbol)) return json({error:"Unsupported symbol",allowed_symbols:[...HISTORY_IDS]},400);
+      const hit=historyCache.get(symbol);
+      if(hit && Date.now()-hit.at<HISTORY_TTL_MS) return json(hit.body);
+      try {
+        const upstream=await fetch(`https://nerkhara.com/api/v1/history/${encodeURIComponent(symbol)}.json`,{
+          headers:{accept:"application/json"},cf:{cacheTtl:3600,cacheEverything:true}
+        });
+        if(!upstream.ok) throw new Error("History provider HTTP "+upstream.status);
+        const series=await upstream.json();
+        if(!series || typeof series!=="object" || Array.isArray(series) || Object.keys(series).length===0)
+          throw new Error("Unexpected history response");
+        const body={symbol,source:"NerkhAra",source_url:`https://nerkhara.com/api/v1/history/${symbol}.json`,
+          granularity:"1d",value_type:"daily_mean",retrieved_at:new Date().toISOString(),
+          note:"Daily mean observations, not intraday OHLC candles or executable prices.",series,
+          attribution:"NerkhAra — https://nerkhara.com"};
+        historyCache.set(symbol,{at:Date.now(),body});
+        return json(body);
+      } catch(e) {
+        return json({symbol,status:"UNAVAILABLE",error:String(e?.message||"History unavailable"),
+          note:"Historical data could not be retrieved; no values have been fabricated."},502);
+      }
+    }
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
       const s=await snapshot();
       return json({status:s.status,as_of:s.as_of,live_quotes:s.quotes.filter(q=>q.status==="LIVE").length,
