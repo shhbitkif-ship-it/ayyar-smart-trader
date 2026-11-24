@@ -176,6 +176,57 @@ function evaluateSignal(payload) {
     warning:"Analysis only. Requires genuine, correctly timestamped OHLC candles. Confidence is a confluence score, not a probability. No broker orders are placed."};
 }
 
+
+const CANDLE_SYMBOLS = new Map([["xau", "XAUUSD=X"]]);
+const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
+
+async function fetchYahooCandles(symbol, interval) {
+  const yahooSymbol = CANDLE_SYMBOLS.get(symbol);
+  const intervalSeconds = CANDLE_INTERVALS.get(interval);
+  if (!yahooSymbol || !intervalSeconds) throw new Error("Unsupported candle symbol or interval");
+  const range = interval === "1d" ? "3mo" : "5d";
+  const endpoint = "https://query1.finance.yahoo.com/v8/finance/chart/" +
+    encodeURIComponent(yahooSymbol) + "?range=" + range + "&interval=" + interval;
+  const response = await fetch(endpoint, {
+    headers: {accept:"application/json", "user-agent":"Mozilla/5.0 AyyarSmartTrader/1.0"},
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!response.ok) throw new Error("OHLC provider HTTP " + response.status);
+  const payload = await response.json();
+  const result = payload?.chart?.result?.[0];
+  const timestamps = result?.timestamp;
+  const quote = result?.indicators?.quote?.[0];
+  if (!Array.isArray(timestamps) || !quote || !Array.isArray(quote.open) ||
+      !Array.isArray(quote.high) || !Array.isArray(quote.low) || !Array.isArray(quote.close))
+    throw new Error("OHLC provider returned an unexpected chart schema");
+  const intervalMs = intervalSeconds * 1000;
+  const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
+  const candles = [];
+  for (let i=0; i<timestamps.length; i++) {
+    const time = Number(timestamps[i]) * 1000;
+    const open=Number(quote.open[i]), high=Number(quote.high[i]);
+    const low=Number(quote.low[i]), close=Number(quote.close[i]);
+    if (!Number.isFinite(time) || time >= currentBucket ||
+        ![open,high,low,close].every(v=>Number.isFinite(v)&&v>0&&v<=1e15) ||
+        high < Math.max(open,close,low) || low > Math.min(open,close,high)) continue;
+    candles.push({timestamp:new Date(time).toISOString(),open,high,low,close});
+  }
+  candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+  const last = candles[candles.length-1];
+  if (!last) throw new Error("No completed OHLC candles are available");
+  const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
+  const freshnessLimit=intervalSeconds*2+600;
+  if (ageSeconds < 0 || ageSeconds > freshnessLimit)
+    throw new Error("Latest completed OHLC candle is stale");
+  return {
+    symbol, provider:"Yahoo Finance", provider_symbol:yahooSymbol,
+    interval, interval_seconds:intervalSeconds, status:"LIVE",
+    retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
+    age_seconds:Math.round(ageSeconds), candles,
+    note:"Completed OHLC candles for global spot gold. Yahoo Finance data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
+  };
+}
+
 function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
@@ -273,6 +324,31 @@ export default {
       } catch(e) {
         return json({symbol,status:"UNAVAILABLE",error:String(e?.message||"History unavailable"),
           note:"Historical data could not be retrieved; no values have been fabricated."},502);
+      }
+    }
+
+    if(url.pathname==="/v1/market/candles"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const interval=url.searchParams.get("interval")||"60m";
+      try { return json(await fetchYahooCandles(symbol,interval)); }
+      catch(e) { return json({symbol,interval,status:"UNAVAILABLE",candles:[],
+        error:String(e?.message||"OHLC data unavailable"),
+        execution_enabled:false,
+        note:"No synthetic candles are generated. Signals remain disabled when real completed OHLC data is unavailable."},502); }
+    }
+    if(url.pathname==="/v1/signals/latest"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const interval=url.searchParams.get("interval")||"60m";
+      try {
+        const market=await fetchYahooCandles(symbol,interval);
+        const evaluated=evaluateSignal({candles:market.candles,timeframe_minutes:market.interval_seconds/60});
+        return json({...evaluated,market_symbol:symbol,market_provider:market.provider,
+          market_provider_symbol:market.provider_symbol,market_last_candle_at:market.last_candle_at,
+          market_data_status:market.status,execution_enabled:false});
+      } catch(e) {
+        return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
+          reason:String(e?.message||"OHLC data unavailable"),execution_enabled:false,
+          warning:"No valid completed OHLC feed. No signal or order is produced."});
       }
     }
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
