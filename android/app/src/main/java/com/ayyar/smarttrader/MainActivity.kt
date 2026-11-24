@@ -90,6 +90,8 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       }
       OutlinedButton(onClick={historyRefresh++},modifier=Modifier.fillMaxWidth()){Text("تازه‌سازی تاریخچه")}
    } } }
+   item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { RiskCalculator() }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
       Text("موتور تحلیل",color=gold,fontWeight=FontWeight.Bold); Text("NO TRADE تا تأیید داده و شرایط معتبر",color=Color.White,fontSize=17.sp); Text("ریسک پیش‌فرض هر معامله حداکثر ۱٪ سرمایه است. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=12.sp)
    } } }
