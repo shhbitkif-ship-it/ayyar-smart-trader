@@ -834,7 +834,7 @@ test("CORS preflight advertises only the API methods and content type header", a
   }));
   assert.equal(response.status,200);
   assert.equal(response.headers.get("access-control-allow-methods"),"GET,POST,OPTIONS");
-  assert.equal(response.headers.get("access-control-allow-headers"),"content-type");
+  assert.equal(response.headers.get("access-control-allow-headers"),"content-type,authorization");
   assert.equal(response.headers.get("access-control-max-age"),"86400");
   assert.equal(response.headers.get("x-frame-options"),"DENY");
 });
