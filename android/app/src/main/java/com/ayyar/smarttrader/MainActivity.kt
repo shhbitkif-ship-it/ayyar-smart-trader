@@ -39,6 +39,7 @@ data class SignalHistoryRow(val signal:String,val trend:String,val confidence:In
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
 data class WalkForwardUi(val totalReturnPct:Double,val worstDrawdownPct:Double,val totalTrades:Int,val winRate:Double,val folds:List<WalkForwardFold>)
+data class MarketDataHealthUi(val status:String,val quality:String,val provider:String,val interval:String,val candleCount:Int,val ageSeconds:Long,val gapCount:Int,val missingIntervals:Int,val largestGap:Int,val lastCandle:String,val note:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -55,6 +56,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var walkForwardRefresh by remember { mutableIntStateOf(0) }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
+ val marketHealth by produceState<Result<MarketDataHealthUi>?>(null, refresh) { value=runCatching { withContext(Dispatchers.IO) { fetchMarketDataHealth() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
@@ -67,6 +69,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
    } } }
+   item { MarketDataHealthCard(marketHealth) }
    if(snapshot?.isSuccess==true){ items(snapshot!!.getOrThrow()){ q -> QuoteCard(q) } }
    item { Text("تاریخچه و نمودار روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
@@ -360,6 +363,52 @@ private fun fetchLatestSignal():SignalUi{
      root.optJSONObject("market_regime")?.optString("status","UNKNOWN") ?: "UNKNOWN",
      root.optJSONObject("market_regime")?.optString("reason","رژیم بازار مشخص نیست؛ احتیاط کنید.") ?: "رژیم بازار مشخص نیست؛ احتیاط کنید.")
  } finally { connection.disconnect() }
+}
+
+
+@Composable private fun MarketDataHealthCard(result:Result<MarketDataHealthUi>?){
+ Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){
+  Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+   Text("سلامت داده‌های تحلیلی اونس",color=gold,fontWeight=FontWeight.Bold)
+   when {
+    result==null -> Text("در حال بررسی تازگی و کیفیت کندل‌ها…",color=muted,fontSize=12.sp)
+    result.isFailure -> {
+     Text("داده OHLC معتبر در دسترس نیست؛ تحلیل قابل اتکا نیست.",color=Color(0xFFFFB86B),fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+     Text(result.exceptionOrNull()?.message ?: "خطای دریافت اطلاعات",color=muted,fontSize=10.sp)
+    }
+    else -> {
+     val h=result.getOrThrow()
+     val clean=h.status=="LIVE" && h.quality=="CLEAN"
+     Text(if(clean) "داده تازه و بدون شکاف شناسایی‌شده" else if(h.quality=="GAPS_DETECTED") "هشدار: در توالی کندل‌ها شکاف وجود دارد" else "وضعیت داده نیازمند بررسی",color=if(clean) Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("منبع / بازه",color=muted,fontSize=11.sp);Text(h.provider+" • "+h.interval,color=Color.White,fontSize=11.sp)}
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("تعداد کندل معتبر",color=muted,fontSize=11.sp);Text(h.candleCount.toString(),color=Color.White,fontSize=11.sp)}
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("سن آخرین کندل",color=muted,fontSize=11.sp);Text(if(h.ageSeconds<60) h.ageSeconds.toString()+" ثانیه" else (h.ageSeconds/60).toString()+" دقیقه",color=Color.White,fontSize=11.sp)}
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("شکاف / بازه ازدست‌رفته",color=muted,fontSize=11.sp);Text(h.gapCount.toString()+" / "+h.missingIntervals.toString(),color=if(h.gapCount==0) Color.White else Color(0xFFFFB86B),fontSize=11.sp)}
+     if(h.largestGap>0) Text("بزرگ‌ترین شکاف: "+h.largestGap+" بازه",color=Color(0xFFFFB86B),fontSize=10.sp)
+     Text("آخرین کندل بسته‌شده: "+formatLocalTimestamp(h.lastCandle),color=muted,fontSize=10.sp)
+     Text(h.note,color=muted,fontSize=10.sp)
+    }
+   }
+  }
+ }
+}
+
+private fun fetchMarketDataHealth():MarketDataHealthUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/market/candles?symbol=xau&interval=60m").openConnection() as HttpURLConnection
+ connection.requestMethod="GET";connection.connectTimeout=10000;connection.readTimeout=15000
+ try {
+  val code=connection.responseCode
+  val stream=if(code in 200..299) connection.inputStream else connection.errorStream
+  val root=JSONObject(stream.bufferedReader().use{it.readText()})
+  if(code !in 200..299) throw IllegalStateException(root.optString("error","OHLC unavailable"))
+  val quality=root.optJSONObject("data_quality")?:JSONObject()
+  return MarketDataHealthUi(root.optString("status","UNKNOWN"),quality.optString("status","UNKNOWN"),
+   root.optString("provider","—"),root.optString("interval","60m"),
+   quality.optInt("candle_count",root.optJSONArray("candles")?.length()?:0),
+   root.optLong("age_seconds",-1L),quality.optInt("gap_count",0),quality.optInt("missing_intervals",0),
+   quality.optInt("largest_gap_intervals",0),root.optString("last_candle_at",""),
+   quality.optString("note",root.optString("note","گزارش کیفیت از سرویس داده دریافت شد.")))
+ } finally {connection.disconnect()}
 }
 
 private fun fetchQuotes():List<QuoteUi>{
