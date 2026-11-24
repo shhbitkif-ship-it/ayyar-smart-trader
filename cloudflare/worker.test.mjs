@@ -676,3 +676,14 @@ test("walk-forward backtest rejects short history instead of reporting misleadin
   assert.equal(response.status,400);
   assert.match(body.error,/180 to 5000/i);
 });
+
+test("market regime identifies trend and blocks range and high volatility", async () => {
+  const make=(mode)=>{let close=2500;return Array.from({length:120},(_,i)=>{const prev=close;close+=mode==="trend"?0.9:mode==="range"?(i%2===0?0.12:-0.12):(i%2===0?25:-25);return {timestamp:new Date(Date.now()-(119-i)*3600000).toISOString(),open:prev,high:Math.max(prev,close)+(mode==="volatile"?10:0.2),low:Math.min(prev,close)-(mode==="volatile"?10:0.2),close};});};
+  const original=globalThis.fetch;let mode="trend";
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(make(mode))),{status:200,headers:{"content-type":"application/json"}});
+  try { const get=async()=>(await worker.fetch(new Request("https://unit.test/v1/market/regime?symbol=xau&interval=60m"))).json();
+    let body=await get();assert.equal(body.status,"TRENDING");assert.equal(body.tradeable,true);
+    mode="range";body=await get();assert.equal(body.status,"RANGE");assert.equal(body.tradeable,false);
+    mode="volatile";body=await get();assert.equal(body.status,"HIGH_VOLATILITY");assert.equal(body.tradeable,false);assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=original;}
+});
