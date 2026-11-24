@@ -34,6 +34,7 @@ data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
 data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String)
+data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -44,10 +45,12 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var refresh by remember { mutableIntStateOf(0) }
  var historyRefresh by remember { mutableIntStateOf(0) }
  var selectedSymbol by remember { mutableStateOf("gold-18k") }
+ var backtestRefresh by remember { mutableIntStateOf(0) }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
+ val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -91,6 +94,29 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
         }
       }
       OutlinedButton(onClick={historyRefresh++},modifier=Modifier.fillMaxWidth()){Text("تازه‌سازی تاریخچه")}
+   } } }
+   item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+      Text("بک‌تست EMA20/EMA50 روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
+      Text("بازه پیش‌فرض ۶۰ دقیقه • سرمایه فرضی ۱۰٬۰۰۰ واحد • کارمزد و لغزش در هر سمت لحاظ می‌شود",color=muted,fontSize=11.sp)
+      when {
+        backtestRefresh==0 -> Text("برای دریافت داده واقعی و اجرای آزمون، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
+        backtest==null -> Text("در حال دریافت کندل‌ها و اجرای بک‌تست…",color=muted)
+        backtest!!.isFailure -> Text("بک‌تست انجام نشد؛ منبع OHLC در دسترس نیست یا داده معتبر کافی ندارد.",color=Color(0xFFFFB86B),fontSize=12.sp)
+        else -> {
+          val b=backtest!!.getOrThrow()
+          Text("بازده خالص: ${String.format(Locale.US,"%.2f",b.netReturnPct)}٪",color=if(b.netReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=22.sp,fontWeight=FontWeight.Bold)
+          IndicatorRow("سرمایه اولیه",b.startingCapital)
+          IndicatorRow("ارزش نهایی",b.finalEquity)
+          IndicatorRow("حداکثر افت سرمایه",b.maxDrawdownPct)
+          IndicatorRow("تعداد معاملات بسته‌شده",b.closedTrades.toDouble(),0)
+          IndicatorRow("درصد معاملات موفق",b.winRatePct)
+          Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Profit Factor",color=muted,fontSize=12.sp);Text(b.profitFactor,color=Color.White,fontSize=12.sp)}
+          Text("${b.candleCount} کندل • XAUS • ${b.interval} • آخرین کندل: ${formatLocalTimestamp(b.lastCandle)}",color=muted,fontSize=10.sp)
+          Text(b.warning,color=muted,fontSize=10.sp)
+        }
+      }
+      Button(onClick={backtestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(backtestRefresh==0) "اجرای بک‌تست با داده زنده" else "اجرای دوباره بک‌تست")}
    } } }
    item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { RiskCalculator() }
@@ -150,6 +176,22 @@ private fun formatLocalTimestamp(raw:String):String {
  } catch (_:Exception) { raw }
 }
 
+
+private fun fetchLiveBacktest():BacktestUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/ema-crossover/live?symbol=xau&interval=60m").openConnection() as HttpURLConnection
+ connection.requestMethod="GET"; connection.connectTimeout=12000; connection.readTimeout=25000
+ try {
+   val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+   val root=JSONObject(stream.bufferedReader().use{it.readText()})
+   if(connection.responseCode !in 200..299) throw IllegalStateException(root.optString("error","Backtest unavailable"))
+   val profitFactor=if(root.isNull("profit_factor")) "نامشخص" else root.optString("profit_factor")
+   return BacktestUi(root.optString("market_interval","60m"),root.optInt("candle_count"),
+     root.optDouble("starting_capital"),root.optDouble("final_equity"),
+     root.optDouble("net_return_pct"),root.optDouble("max_drawdown_pct"),
+     root.optInt("closed_trades"),root.optDouble("win_rate_pct"),profitFactor,
+     root.optString("market_last_candle_at",""),root.optString("warning","آزمون پژوهشی؛ نتیجه تضمین‌کننده عملکرد آینده نیست."))
+ } finally { connection.disconnect() }
+}
 
 private fun fetchLatestSignal():SignalUi{
  val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/multi-timeframe?symbol=xau").openConnection() as HttpURLConnection
