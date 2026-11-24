@@ -83,7 +83,7 @@ function runBacktest(payload) {
     profit_factor:loss>0?round4(profit/loss):profit>0?"infinity":null,
     open_position:quantity>0,
     unrealized_pnl:round2(quantity>0?finalEquity-quantity*entryPrice:0),
-    trades,equity_curve,
+    trades,equity_curve:equityCurve,
     warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
 }
 function round2(v){return Math.round(v*100)/100;}
