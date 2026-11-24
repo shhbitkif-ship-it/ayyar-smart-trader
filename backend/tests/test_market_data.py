@@ -99,3 +99,31 @@ def test_unique_provider_ids_are_preserved():
     from app.market_data import _index_rows
     rows = [{"id": "xau", "price": 2300}, {"id": "usd", "price": 70000}]
     assert set(_index_rows(rows)) == {"xau", "usd"}
+
+
+def test_snapshot_status_distinguishes_partial_from_full_availability(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+
+    async def fake_provider():
+        now = datetime.now(timezone.utc).isoformat()
+        return {"generated_utc": now, "items": [{"id": "xau", "price": 2300, "unit": "USD", "updated_utc": now, "stale": False}]}
+
+    monkeypatch.setattr(market_data, "_fetch_provider_json", fake_provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    result = asyncio.run(market_data.market_snapshot())
+    assert result["status"] == "PARTIAL"
+    assert sum(q["status"] == "LIVE" for q in result["quotes"]) == 1
+
+
+def test_snapshot_marks_no_live_quotes_unavailable(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+
+    async def fake_provider():
+        return {"generated_utc": None, "items": []}
+
+    monkeypatch.setattr(market_data, "_fetch_provider_json", fake_provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    result = asyncio.run(market_data.market_snapshot())
+    assert result["status"] == "UNAVAILABLE"
