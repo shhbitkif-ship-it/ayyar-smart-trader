@@ -238,6 +238,25 @@ function evaluateSignal(payload) {
 }
 
 
+function classifyMarketRegime(candles) {
+  if(!Array.isArray(candles)||candles.length<60) return {status:"INSUFFICIENT_DATA",tradeable:false,reason:"At least 60 completed candles are required."};
+  const closes=candles.map(c=>Number(c.close)),fast=ema(closes,20),slow=ema(closes,50);
+  const last=candles[candles.length-1],fastNow=fast.at(-1),fastPrev=fast.at(-2),slowNow=slow.at(-1);
+  const ranges=candles.slice(-15).map((c,i)=>{const prev=candles[candles.length-16+i].close;return Math.max(c.high-c.low,Math.abs(c.high-prev),Math.abs(c.low-prev));});
+  const atr=ranges.reduce((s,v)=>s+v,0)/ranges.length,atrPct=atr/last.close*100;
+  const spreadPct=Math.abs(fastNow-slowNow)/last.close*100,slopePct=(fastNow-fastPrev)/last.close*100;
+  const trend=fastNow>slowNow?"BULLISH":fastNow<slowNow?"BEARISH":"NEUTRAL";
+  if(![atrPct,spreadPct,slopePct].every(Number.isFinite)||atrPct<=0) return {status:"UNAVAILABLE",tradeable:false,reason:"Regime indicators could not be calculated."};
+  let status,reason;
+  if(atrPct>1.5){status="HIGH_VOLATILITY";reason="ATR is above 1.5% of price; volatility filter blocks entries.";}
+  else if(spreadPct<0.08&&Math.abs(slopePct)<0.02){status="RANGE";reason="EMA spread and slope are too small; sideways market filter blocks entries.";}
+  else if(spreadPct>=0.08&&((trend==="BULLISH"&&slopePct>0)||(trend==="BEARISH"&&slopePct<0))){status="TRENDING";reason="EMA spread and slope confirm directional movement.";}
+  else {status="TRANSITIONAL";reason="Trend structure is not sufficiently consistent; wait for confirmation.";}
+  return {status,tradeable:status==="TRENDING",trend,atr_pct:round4(atrPct),ema_spread_pct:round4(spreadPct),ema20_slope_pct:round4(slopePct),reason,
+    thresholds:{high_volatility_atr_pct:1.5,range_ema_spread_pct:0.08,range_abs_slope_pct:0.02}};
+}
+
+
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
 
@@ -421,6 +440,11 @@ export default {
       }
     }
 
+    if(url.pathname==="/v1/market/regime"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau",interval=url.searchParams.get("interval")||"60m";
+      try { const market=await fetchGoldCandles(symbol,interval); return json({...classifyMarketRegime(market.candles),symbol,interval,provider:market.provider,last_candle_at:market.last_candle_at,execution_enabled:false}); }
+      catch(e) { return json({status:"UNAVAILABLE",tradeable:false,symbol,interval,reason:String(e?.message||"Market regime unavailable"),execution_enabled:false},502); }
+    }
     if(url.pathname==="/v1/market/candles"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol")||"xau";
       const interval=url.searchParams.get("interval")||"60m";
@@ -443,11 +467,14 @@ export default {
           confidence:analyses[i].confidence,last_candle_at:markets[i].last_candle_at,
           data_status:markets[i].status
         }]));
+        const regimes=markets.map(market=>classifyMarketRegime(market.candles));
+        for(let i=0;i<intervals.length;i++) byInterval[intervals[i]].regime=regimes[i];
         const intraday=analyses[1].signal;
         const shortAligned=analyses[0].signal===intraday;
+        const regimeAllowsTrade=regimes[1].tradeable&&regimes[1].trend===(intraday==="BUY"?"BULLISH":"BEARISH");
         const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
-        const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned;
+        const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade;
         const base=analyses[1];
         const result={
           signal:aligned?intraday:"NO_TRADE",
@@ -459,7 +486,8 @@ export default {
           timeframes:byInterval,market_data_status:"LIVE",
           market_provider:"XAUS",market_source_url:"https://xaus.com/api/v1/chart",
           last_candle_at:markets[1].last_candle_at,
-          reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","Entry levels use the 60m candle"]:["Signal or EMA trend is not aligned across 15m, 60m and daily charts; wait for confirmation."],
+          market_regime:regimes[1],
+          reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","60m market regime is trending and volatility is within limits","Entry levels use the 60m candle"]:[!regimes[1].tradeable?regimes[1].reason:"Signal or EMA trend is not aligned across 15m, 60m and daily charts; wait for confirmation."],
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
         };
