@@ -1,0 +1,53 @@
+name: Live API diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/live-smoke.yml"
+      - "cloudflare/worker.js"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployed Worker and provider feed
+        run: |
+          python - <<'PY'
+          import json, urllib.request, urllib.error
+
+          base = "https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev"
+
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "AyyarSmartTrader-Diagnostics/1.0", "Accept": "application/json"})
+              with urllib.request.urlopen(req, timeout=25) as response:
+                  return response.status, json.loads(response.read().decode("utf-8"))
+
+          status, health = get(base + "/health")
+          print("WORKER_HEALTH", status, json.dumps(health, ensure_ascii=False))
+          if status != 200 or health.get("status") != "ok":
+              raise SystemExit("Worker health check failed")
+
+          status, payload = get(base + "/v1/market/quotes")
+          print("QUOTES_HTTP", status)
+          if status != 200 or not isinstance(payload.get("quotes"), list):
+              raise SystemExit("Quotes endpoint failed or returned an unexpected schema")
+
+          live = 0
+          for q in payload["quotes"]:
+              state = q.get("status")
+              live += state == "LIVE"
+              print("QUOTE", q.get("symbol"), "status=", state, "price=", q.get("price"),
+                    "unit=", q.get("unit"), "timestamp=", q.get("timestamp"),
+                    "age_seconds=", q.get("age_seconds"), "reason=", (q.get("meta") or {}).get("reason"))
+          print("SUMMARY", json.dumps({"overall": payload.get("status"), "live_quotes": live,
+                                      "total_quotes": len(payload["quotes"]),
+                                      "provider_generated_at": payload.get("provider_generated_at"),
+                                      "notice": payload.get("notice")}, ensure_ascii=False))
+          if live == 0:
+              raise SystemExit("Worker is reachable, but provider currently supplies no valid fresh quotes")
+          PY
