@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 
 val apiBaseUrl = providers.gradleProperty("API_BASE_URL")
     .orElse(providers.environmentVariable("API_BASE_URL"))
-    .orElse("https://ayyar-smart-trader.vercel.app")
+    .orElse("https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev")
     .get()
     .trimEnd('/')
 
@@ -13,8 +13,8 @@ android {
         applicationId = "com.ayyar.smarttrader"
         minSdk = 23
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
     }
     buildFeatures { compose = true; buildConfig = true }
