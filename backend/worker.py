@@ -143,13 +143,19 @@ class PaperAccount(DurableObject):
         if self._authorized_account(token_hash) is None:
             return None
         limit = max(1, min(int(limit), 100))
-        return self.sql.exec(
+        rows = self.sql.exec(
             """SELECT trade_id, symbol, side, quantity, entry_price, stop_loss,
                       take_profit, status, opened_at, closed_at, exit_price,
                       realized_pnl, fees
                FROM paper_trades ORDER BY opened_at DESC LIMIT ?""",
             limit,
         ).toArray()
+        columns = (
+            "trade_id", "symbol", "side", "quantity", "entry_price", "stop_loss",
+            "take_profit", "status", "opened_at", "closed_at", "exit_price",
+            "realized_pnl", "fees",
+        )
+        return [{column: row[column] for column in columns} for row in rows]
 
 
 class Default(WorkerEntrypoint):
