@@ -233,16 +233,39 @@ function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
 
 async function archiveSignal(env,symbol,result) {
-  if(!env?.SIGNAL_HISTORY || !result?.last_candle_at || result.market_data_status!=="LIVE") return false;
+  if(!env?.SIGNAL_HISTORY || !result?.last_candle_at || result.market_data_status!=="LIVE")
+    return {saved:false,alert_status:"NOT_CONFIGURED"};
   const candleTime=Date.parse(result.last_candle_at);
-  if(!Number.isFinite(candleTime)) return false;
+  if(!Number.isFinite(candleTime)) return {saved:false,alert_status:"INVALID_CANDLE"};
   const reverseTime=String(9999999999999-candleTime).padStart(13,"0");
   const key=symbol+":latest:"+reverseTime;
+  const existing=await env.SIGNAL_HISTORY.get(key,"json");
+  if(existing) return {saved:true,alert_status:existing.alert_status||"ALREADY_ARCHIVED"};
+  const previousKeys=await env.SIGNAL_HISTORY.list({prefix:symbol+":latest:",limit:1});
+  const previous=previousKeys.keys?.[0]
+    ? await env.SIGNAL_HISTORY.get(previousKeys.keys[0].name,"json") : null;
+  let alertStatus="NOT_CONFIGURED";
+  if(env.BOT_TOKEN && env.SIGNAL_ALERT_CHAT_ID && ["BUY","SELL"].includes(result.signal) &&
+      (!previous || previous.signal!==result.signal)) {
+    try {
+      const sent=await fetch("https://api.telegram.org/bot"+env.BOT_TOKEN+"/sendMessage",{
+        method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({chat_id:env.SIGNAL_ALERT_CHAT_ID,
+          text:"عیار هوشمند | سیگنال پژوهشی جدید\nنماد: XAU/USD\nجهت: "+result.signal+
+            "\nامتیاز همگرایی: "+result.confidence+"/100"+
+            "\nورود: "+result.entry+"\nحد ضرر: "+result.stop_loss+
+            "\nهدف: "+result.take_profit+"\nکندل ۶۰ دقیقه: "+result.last_candle_at+
+            "\nداده شاخصی XAUS است؛ احتمال موفقیت نیست و سفارش خودکار انجام نمی‌شود.",
+          disable_web_page_preview:true})
+      });
+      alertStatus=sent.ok?"SENT":"FAILED";
+    } catch { alertStatus="FAILED"; }
+  }
   const record={...result,symbol,recorded_at:new Date().toISOString(),
     archive_key:key,archive_source:"XAUS completed OHLC multi-timeframe evaluation",
-    execution_enabled:false};
+    alert_status:alertStatus,execution_enabled:false};
   await env.SIGNAL_HISTORY.put(key,JSON.stringify(record),{expirationTtl:90*24*60*60});
-  return true;
+  return {saved:true,alert_status:alertStatus};
 }
 
 function json(data, status=200) {
@@ -383,8 +406,11 @@ export default {
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
         };
-        try { result.archive_status=await archiveSignal(env,symbol,result)?"SAVED":"SKIPPED"; }
-        catch { result.archive_status="UNAVAILABLE"; }
+        try {
+          const archive=await archiveSignal(env,symbol,result);
+          result.archive_status=archive.saved?"SAVED":"SKIPPED";
+          result.alert_status=archive.alert_status;
+        } catch { result.archive_status="UNAVAILABLE";result.alert_status="UNAVAILABLE"; }
         return json(result);
       } catch(e) {
         return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
