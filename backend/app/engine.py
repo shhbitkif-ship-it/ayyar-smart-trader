@@ -3,6 +3,7 @@ from .indicators import ema,rsi,macd,bollinger,atr,vwap,support_resistance,fibon
 from .schemas import EvaluateRequest,SignalResponse
 
 TIMEFRAME_AGE={"1m":3,"5m":10,"15m":30,"30m":60,"1h":120,"4h":480,"1d":2880}
+TIMEFRAME_MINUTES={"1m":1,"5m":5,"15m":15,"30m":30,"1h":60,"4h":240,"1d":1440}
 
 def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalResponse:
     now=now or datetime.now(timezone.utc)
@@ -14,6 +15,12 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Duplicate market candle timestamps detected.")
     latest=candles[-1]
     latest_time=latest.timestamp.astimezone(timezone.utc); max_age=TIMEFRAME_AGE[request.timeframe]
+    # Intraday feeds should not silently bridge large holes in the price series.
+    # Daily/4h series are exempt because weekends and market closures are normal.
+    if request.timeframe in {"1m", "5m", "15m", "30m", "1h"}:
+        max_gap=timedelta(minutes=TIMEFRAME_MINUTES[request.timeframe] * 3.5)
+        if any(candles[i + 1].timestamp - candles[i].timestamp > max_gap for i in range(len(candles)-1)):
+            return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Missing candles create a gap in the intraday market history.")
     if latest_time > now+timedelta(seconds=30) or now-latest_time>timedelta(minutes=max_age):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Latest market candle is stale or future-dated.")
     if len(candles)<200: return SignalResponse(**base,action="NO_TRADE",status="INSUFFICIENT_DATA",reason="At least 200 candles are required for EMA200 and stable trend context.")
