@@ -444,7 +444,8 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
     let close=2600;
     candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
       const previous=close;
-      close+=0.5;
+      close+=i%2===0?0.5:-0.3;
+      if(i===count-1) close=previous+0.5;
       return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
         open:previous,high:Math.max(previous,close)+0.2,
         low:Math.min(previous,close)-0.2,close};
@@ -483,7 +484,7 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
     const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
     let close=2600;
     candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
-      const previous=close;close+=0.5;
+      const previous=close;close+=i%2===0?0.5:-0.3;if(i===count-1)close=previous+0.5;
       return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
         open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
     });
