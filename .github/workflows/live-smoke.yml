@@ -72,6 +72,19 @@ jobs:
           assert signal.get("execution_enabled") is False
           print("SIGNAL_GUARD_OK", json.dumps(signal, ensure_ascii=False))
 
+          status, latest = request("/v1/signals/latest?symbol=xau&interval=60m")
+          assert status == 200, "Latest global gold signal endpoint failed"
+          assert latest.get("signal") in {"BUY","SELL","NO_TRADE"}, "Unknown latest signal"
+          assert latest.get("execution_enabled") is False, "Live execution must remain disabled"
+          if latest.get("signal") != "NO_TRADE":
+              assert latest.get("entry") and latest.get("stop_loss") and latest.get("take_profit")
+              assert latest.get("risk_reward_ratio") == 2
+          print("LATEST_OHLC_SIGNAL_OK", json.dumps({
+              "signal":latest.get("signal"),"data_status":latest.get("data_status"),
+              "market_data_status":latest.get("market_data_status"),
+              "confidence":latest.get("confidence"),
+              "execution_enabled":latest.get("execution_enabled")}, ensure_ascii=False))
+
           start = datetime(2026, 1, 1, tzinfo=timezone.utc)
           candles = []
           previous = 100.0
