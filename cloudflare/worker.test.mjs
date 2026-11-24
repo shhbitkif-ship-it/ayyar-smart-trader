@@ -535,6 +535,50 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("signal performance uses next candle open, completed horizons and refuses candle gaps", async () => {
+  const originalFetch=globalThis.fetch;
+  const store=new Map();
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:40},(_,i)=>{
+    const open=2600+i;
+    return {timestamp:new Date(lastClosed-(39-i)*intervalMs).toISOString(),
+      open,high:open+2,low:open-1,close:open+1};
+  });
+  const signalTime=candles[10].timestamp;
+  store.set("xau:latest:sample",{signal:"BUY",last_candle_at:signalTime,recorded_at:signalTime});
+  const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
+    async get(key){return store.get(key)||null;}};
+  globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(candles)),
+    {status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.directional_signals,1);
+    assert.equal(body.horizons.find(x=>x.horizon_candles===1).scored,1);
+    assert.equal(body.horizons.find(x=>x.horizon_candles===4).scored,1);
+    assert.equal(body.horizons.find(x=>x.horizon_candles===24).scored,1);
+    assert.equal(body.outcomes[0].outcomes[1].entry_price,candles[11].open);
+    assert.equal(body.outcomes[0].outcomes[1].entry_basis,"next_completed_candle_open");
+    assert.equal(body.execution_enabled,false);
+    assert.match(body.warning,/not evidence of future profitability/);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("signal performance returns unavailable without storage or when the candle provider fails", async () => {
+  const noStorage=await worker.fetch(new Request("https://unit.test/v1/signals/performance"));
+  assert.equal(noStorage.status,503);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response("provider down",{status:503});
+  try {
+    const kv={async list(){return {keys:[]};},async get(){return null;}};
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    assert.equal(response.status,502);
+    assert.equal((await response.json()).execution_enabled,false);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("Telegram signal alert is sent once for a new confirmed direction and not duplicated", async () => {
   const originalFetch=globalThis.fetch;
   const store=new Map();
