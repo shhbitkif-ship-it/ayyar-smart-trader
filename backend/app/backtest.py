@@ -83,7 +83,9 @@ def run_ema_backtest(
                     cash = 0.0
                     entry_time = ordered[fill_index].timestamp.isoformat()
 
-        marked_equity = cash if quantity == 0 else quantity * float(ordered[fill_index].close)
+        # Mark open positions at estimated net liquidation value on every bar,
+        # not just at the final bar, so drawdown includes exit-side costs.
+        marked_equity = cash if quantity == 0 else quantity * float(ordered[fill_index].close) * (1.0 - cost_rate)
         equity_curve.append({
             "timestamp": ordered[fill_index].timestamp.isoformat(),
             "equity": round(marked_equity, 2),
@@ -100,7 +102,6 @@ def run_ema_backtest(
     else:
         final_equity = cash
         unrealized = 0.0
-    returns = [t["return_pct"] for t in trades]
     wins = sum(1 for t in trades if t["pnl"] > 0)
     peak = float(starting_capital)
     max_drawdown = 0.0
