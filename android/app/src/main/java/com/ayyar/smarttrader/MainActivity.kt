@@ -35,6 +35,7 @@ data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:St
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
 data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String)
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
+data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -46,11 +47,13 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var historyRefresh by remember { mutableIntStateOf(0) }
  var selectedSymbol by remember { mutableStateOf("gold-18k") }
  var backtestRefresh by remember { mutableIntStateOf(0) }
+ var archiveRefresh by remember { mutableIntStateOf(0) }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
+ val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -94,6 +97,29 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
         }
       }
       OutlinedButton(onClick={historyRefresh++},modifier=Modifier.fillMaxWidth()){Text("تازه‌سازی تاریخچه")}
+   } } }
+   item { Text("سوابق سیگنال‌های ذخیره‌شده",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+      Text("آرشیو سیگنال‌های چندتایم‌فریمی اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
+      Text("ثبت بر اساس کندل بسته‌شده • نگهداری ۹۰ روزه • بدون اجرای سفارش",color=muted,fontSize=11.sp)
+      when {
+        archiveRefresh==0 -> Text("برای مشاهده سوابق، دکمه دریافت تاریخچه را بزن.",color=muted,fontSize=12.sp)
+        archivedSignals==null -> Text("در حال دریافت سوابق…",color=muted)
+        archivedSignals!!.isFailure -> Text("تاریخچه فعلاً در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
+        archivedSignals!!.getOrThrow().isEmpty() -> Text("هنوز سابقه‌ای ثبت نشده است؛ پس از ارزیابی موفق بازار ذخیره می‌شود.",color=muted,fontSize=12.sp)
+        else -> archivedSignals!!.getOrThrow().take(20).forEach { row ->
+          Column(Modifier.fillMaxWidth().padding(vertical=5.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+              Text(when(row.signal){"BUY"->"خرید";"SELL"->"فروش";else->"عدم معامله"},color=if(row.signal=="BUY") Color(0xFF8FD6A8) else if(row.signal=="SELL") Color(0xFFFF8D8D) else muted,fontWeight=FontWeight.Bold)
+              Text("امتیاز ${row.confidence}",color=muted,fontSize=11.sp)
+            }
+            Text("روند: ${row.trend} • ثبت: ${formatLocalTimestamp(row.recordedAt)}",color=muted,fontSize=10.sp)
+            if(row.entry.isNotBlank()) Text("ورود ${row.entry} | حدضرر ${row.stop} | هدف ${row.target}",color=Color.White,fontSize=11.sp)
+          }
+          Divider(color=Color(0xFF303746))
+        }
+      }
+      OutlinedButton(onClick={archiveRefresh++},modifier=Modifier.fillMaxWidth()){Text("دریافت تاریخچه سیگنال‌ها")}
    } } }
    item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -176,6 +202,23 @@ private fun formatLocalTimestamp(raw:String):String {
  } catch (_:Exception) { raw }
 }
 
+
+private fun fetchSignalHistory():List<SignalHistoryRow>{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/history?limit=50").openConnection() as HttpURLConnection
+ connection.requestMethod="GET";connection.connectTimeout=10000;connection.readTimeout=15000
+ try {
+   if(connection.responseCode !in 200..299) throw IllegalStateException("History HTTP "+connection.responseCode)
+   val root=JSONObject(connection.inputStream.bufferedReader().use{it.readText()})
+   val rows=root.optJSONArray("records")?:JSONArray()
+   return (0 until rows.length()).map { i ->
+     val item=rows.getJSONObject(i)
+     fun value(key:String):String=if(item.isNull(key)) "" else item.optString(key,"")
+     SignalHistoryRow(value("signal"),value("trend"),item.optInt("confidence"),
+       value("recorded_at"),value("last_candle_at"),
+       value("entry"),value("stop_loss"),value("take_profit"))
+   }
+ } finally {connection.disconnect()}
+}
 
 private fun fetchLiveBacktest():BacktestUi{
  val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/ema-crossover/live?symbol=xau&interval=60m").openConnection() as HttpURLConnection
