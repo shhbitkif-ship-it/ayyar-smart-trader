@@ -32,6 +32,7 @@ def test_quote_rejects_unexpected_unit_instead_of_mislabeling():
     assert q["status"] == "UNAVAILABLE"
     assert q["meta"]["unit_valid"] is False
     assert q["unit"] == "USD/oz"
+    assert q["price"] is None
 
 
 def test_quote_marks_data_older_than_provider_window_stale():
