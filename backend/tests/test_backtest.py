@@ -7,11 +7,13 @@ from app.schemas import Candle
 def sample_candles():
     start = datetime(2025, 1, 1, tzinfo=timezone.utc)
     closes = []
-    for i in range(100):
-        if i < 60:
-            closes.append(3000 - i * 2)
+    for i in range(150):
+        if i < 70:
+            closes.append(3100 - i * 2)
+        elif i < 110:
+            closes.append(2960 + (i - 70) * 5)
         else:
-            closes.append(2880 + (i - 60) * 4)
+            closes.append(3160 - (i - 110) * 5)
     return [
         Candle(
             timestamp=start + timedelta(days=i),
