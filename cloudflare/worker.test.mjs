@@ -797,7 +797,7 @@ test("SELL signal performance reports non-negative favorable and adverse excursi
   const candles=Array.from({length:40},(_,i)=>{
     const open=2600+i;
     return {timestamp:new Date(lastClosed-(39-i)*intervalMs).toISOString(),
-      open,high:open+2,low:open-1,close:open+1};
+      open,high:open+2,low:i===11?open:open-1,close:open+1};
   });
   store.set("xau:latest:sell-sample",{signal:"SELL",last_candle_at:candles[10].timestamp});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
