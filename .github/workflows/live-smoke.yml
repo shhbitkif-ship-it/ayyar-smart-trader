@@ -106,6 +106,19 @@ jobs:
               "confidence":latest.get("confidence"),"reason":latest.get("reason"),
               "execution_enabled":latest.get("execution_enabled")}, ensure_ascii=False))
 
+          status, multi = request("/v1/signals/multi-timeframe?symbol=xau")
+          assert status == 200 and multi.get("signal") in {"BUY","SELL","NO_TRADE"}
+          assert multi.get("execution_enabled") is False
+          if multi.get("signal") != "NO_TRADE":
+              assert multi.get("risk_reward_ratio") == 2
+              assert multi.get("entry") and multi.get("stop_loss") and multi.get("take_profit")
+              assert multi.get("timeframes",{}).get("15m",{}).get("signal") == multi.get("signal")
+              assert multi.get("timeframes",{}).get("60m",{}).get("signal") == multi.get("signal")
+          print("MULTI_TIMEFRAME_SIGNAL_OK", json.dumps({
+              "signal":multi.get("signal"),"confidence":multi.get("confidence"),
+              "timeframes":multi.get("timeframes"),"reason":multi.get("reason"),
+              "execution_enabled":multi.get("execution_enabled")}, ensure_ascii=False))
+
           start = datetime(2026, 1, 1, tzinfo=timezone.utc)
           candles = []
           previous = 100.0
