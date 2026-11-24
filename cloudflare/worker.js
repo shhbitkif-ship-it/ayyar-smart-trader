@@ -33,7 +33,7 @@ function runBacktest(payload) {
   const candles = payload.candles.map(c => {
     const row = {timestamp:Date.parse(c?.timestamp),open:Number(c?.open),high:Number(c?.high),low:Number(c?.low),close:Number(c?.close)};
     if (!Number.isFinite(row.timestamp) || ![row.open,row.high,row.low,row.close].every(Number.isFinite) ||
-        row.open<=0 || row.high<=0 || row.low<=0 || row.close<=0 ||
+        row.open<=0 || row.high<=0 || row.low<=0 || row.close<=0 || Math.max(row.open,row.high,row.low,row.close)>1e15 ||
         row.high < Math.max(row.open,row.close,row.low) || row.low > Math.min(row.open,row.close,row.high))
       throw new Error("Each candle must contain a valid timestamp and consistent positive OHLC prices");
     return {...row,iso:new Date(row.timestamp).toISOString()};
@@ -102,6 +102,74 @@ function runBacktest(payload) {
     trades,equity_curve:equityCurve,
     warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
 }
+
+function evaluateSignal(payload) {
+  if(!payload || !Array.isArray(payload.candles) || payload.candles.length<60 || payload.candles.length>5000)
+    throw new Error("candles must contain between 60 and 5000 real OHLC records");
+  const candles=payload.candles.map(c=>{
+    const row={timestamp:Date.parse(c?.timestamp),open:Number(c?.open),high:Number(c?.high),low:Number(c?.low),close:Number(c?.close)};
+    if(!Number.isFinite(row.timestamp)||![row.open,row.high,row.low,row.close].every(Number.isFinite)||
+      [row.open,row.high,row.low,row.close].some(v=>v<=0||v>1e15)||
+      row.high<Math.max(row.open,row.close,row.low)||row.low>Math.min(row.open,row.close,row.high))
+      throw new Error("Each candle must contain a valid timestamp and consistent positive OHLC prices");
+    return {...row,iso:new Date(row.timestamp).toISOString()};
+  }).sort((a,b)=>a.timestamp-b.timestamp);
+  if(candles.some((c,i)=>i>0&&c.timestamp<=candles[i-1].timestamp))
+    throw new Error("Candle timestamps must be unique");
+  const timeframe=Number(payload.timeframe_minutes??60);
+  if(!Number.isFinite(timeframe)||timeframe<1||timeframe>10080)
+    throw new Error("timeframe_minutes must be between 1 and 10080");
+  const last=candles[candles.length-1],ageSeconds=(Date.now()-last.timestamp)/1000;
+  const freshnessLimit=Math.max(600,timeframe*120);
+  if(ageSeconds < -60 || ageSeconds > freshnessLimit)
+    return {signal:"NO_TRADE",confidence:0,reason:"Latest candle is stale or timestamp is in the future.",
+      data_status:"STALE",last_candle_at:last.iso,age_seconds:Math.round(ageSeconds),
+      execution_enabled:false};
+  const closes=candles.map(c=>c.close);
+  const fast=ema(closes,20),slow=ema(closes,50);
+  const fastNow=fast[fast.length-1],fastPrev=fast[fast.length-2],slowNow=slow[slow.length-1];
+  const trend=fastNow>slowNow?"BULLISH":fastNow<slowNow?"BEARISH":"NEUTRAL";
+  const changes=closes.slice(-15).slice(1).map((v,i)=>v-closes.slice(-15)[i]);
+  const gains=changes.map(v=>Math.max(0,v)),losses=changes.map(v=>Math.max(0,-v));
+  const avgGain=gains.reduce((a,b)=>a+b,0)/14,avgLoss=losses.reduce((a,b)=>a+b,0)/14;
+  const rsi=avgLoss===0?100:avgGain===0?0:100-(100/(1+avgGain/avgLoss));
+  const ranges=candles.slice(-14).map((c,i)=>{
+    const prev=candles[candles.length-15+i]?.close??c.close;
+    return Math.max(c.high-c.low,Math.abs(c.high-prev),Math.abs(c.low-prev));
+  });
+  const atr=ranges.reduce((a,b)=>a+b,0)/ranges.length;
+  const macdFast=ema(closes,12),macdSlow=ema(closes,26);
+  const macdLine=macdFast.slice(14).map((v,i)=>v-macdSlow[i]);
+  const macdSignal=ema(macdLine,9);
+  const histogram=macdLine[macdLine.length-1]-macdSignal[macdSignal.length-1];
+  const slope=fastNow-fastPrev;
+  const longChecks=[trend==="BULLISH",last.close>fastNow,slope>0,histogram>0,rsi>=50&&rsi<70];
+  const shortChecks=[trend==="BEARISH",last.close<fastNow,slope<0,histogram<0,rsi>30&&rsi<=50];
+  const longScore=longChecks.filter(Boolean).length,shortScore=shortChecks.filter(Boolean).length;
+  const side=longScore>=4&&longScore>shortScore?"BUY":shortScore>=4&&shortScore>longScore?"SELL":"NO_TRADE";
+  const score=side==="BUY"?longScore:side==="SELL"?shortScore:Math.max(longScore,shortScore);
+  const confidence=score*20;
+  const stopDistance=atr*1.5;
+  if(!Number.isFinite(atr)||atr<=0||!Number.isFinite(stopDistance)||stopDistance<=0)
+    throw new Error("ATR calculation is outside the supported numeric range");
+  const entry=last.close;
+  const stop=side==="BUY"?entry-stopDistance:side==="SELL"?entry+stopDistance:null;
+  const target=side==="BUY"?entry+stopDistance*2:side==="SELL"?entry-stopDistance*2:null;
+  const reasons=[];
+  if(trend!=="NEUTRAL") reasons.push("EMA20/EMA50 trend: "+trend);
+  reasons.push("RSI(14): "+round2(rsi));
+  reasons.push("MACD histogram: "+round6(histogram));
+  reasons.push("ATR(14): "+round6(atr));
+  reasons.push("Confluence checks: "+score+"/5");
+  return {signal:side,confidence,confidence_type:"technical_confluence_score_not_probability",
+    trend,rsi_14:round2(rsi),macd_histogram:round6(histogram),atr_14:round6(atr),
+    entry:side==="NO_TRADE"?null:round6(entry),stop_loss:stop===null?null:round6(stop),
+    take_profit:target===null?null:round6(target),risk_reward_ratio:side==="NO_TRADE"?null:2,
+    last_candle_at:last.iso,age_seconds:Math.round(ageSeconds),timeframe_minutes:timeframe,
+    reasons,execution_enabled:false,
+    warning:"Analysis only. Requires genuine, correctly timestamped OHLC candles. Confidence is a confluence score, not a probability. No broker orders are placed."};
+}
+
 function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
@@ -237,10 +305,10 @@ export default {
       try { return json(runBacktest(await request.json())); }
       catch(e) { return json({error:String(e?.message||"Invalid backtest request")},400); }
     }
-    if(url.pathname==="/v1/signals/evaluate"&&request.method==="POST") return json({
-      signal:"NO_TRADE",confidence:0,
-      reason:"Technical-history validation and independent signal verification are not enabled in this public-data build.",
-      execution_enabled:false});
+    if(url.pathname==="/v1/signals/evaluate"&&request.method==="POST") {
+      try { return json(evaluateSignal(await request.json())); }
+      catch(e) { return json({error:String(e?.message||"Invalid signal request"),signal:"NO_TRADE",execution_enabled:false},400); }
+    }
     return json({error:"Not found"},404);
   }
 };
