@@ -39,3 +39,10 @@
 
 ## آزمون خودکار
 GitHub Actions تست‌های بک‌اند، تست‌های Worker با Node.js و ساخت APK آزمایشی اندروید را اجرا می‌کند. Artifact ساخت APK با نام `ayyar-smart-trader-debug-apk` منتشر می‌شود.
+
+## ربات تلگرام (Webhook روی Cloudflare)
+- مسیر دریافت به‌روزرسانی‌ها: `POST /telegram/webhook` روی همان Worker.
+- فرمان‌ها: `/start`، `/help`، `/gold`، `/iran` و `/market`.
+- برای فعال‌سازی، در Cloudflare Worker با نام `ayyar-smart-trader-api` دو Secret با نام‌های `BOT_TOKEN` و `TELEGRAM_WEBHOOK_SECRET` ثبت کنید. مقدار Secret دوم باید یک رشته تصادفی امن باشد.
+- سپس Webhook تلگرام را با آدرس `https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev/telegram/webhook` و همان مقدار `secret_token` ثبت کنید. بدون هر دو Secret، مسیر عمداً با خطای 503 پاسخ می‌دهد.
+- توکن ربات را در GitHub، کد برنامه یا پیام‌های عمومی قرار ندهید. این مسیر Webhook جایگزین اجرای دائمی polling و سرویس میزبانی پولی است.
