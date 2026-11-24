@@ -363,6 +363,67 @@ async function archiveSignal(env,symbol,result) {
   return {saved:true,alert_status:alertStatus};
 }
 
+function calculateSignalPerformance(records,candles) {
+  const horizons=[1,4,24];
+  const times=new Map(candles.map((c,i)=>[Date.parse(c.timestamp),i]));
+  const stats=Object.fromEntries(horizons.map(h=>[h,{horizon_candles:h,scored:0,wins:0,losses:0,flats:0,
+    win_rate_pct:null,average_return_pct:null,average_favorable_pct:null,average_adverse_pct:null}]));
+  const outcomes=[];
+  let pending=0,unavailable=0;
+  const ordered=[...records].filter(r=>r&&["BUY","SELL"].includes(r.signal)&&r.last_candle_at)
+    .sort((a,b)=>Date.parse(b.last_candle_at)-Date.parse(a.last_candle_at));
+  for(const record of ordered) {
+    const signalTime=Date.parse(record.last_candle_at);
+    const index=times.get(signalTime);
+    if(!Number.isFinite(signalTime)||index===undefined) { unavailable++; continue; }
+    const row={signal:record.signal,last_candle_at:record.last_candle_at,outcomes:{}};
+    for(const horizon of horizons) {
+      const end=index+horizon;
+      if(end>=candles.length) { pending++; row.outcomes[horizon]={status:"PENDING",required_future_candles:horizon}; continue; }
+      let contiguous=true;
+      for(let i=index+1;i<=end;i++) {
+        if(Date.parse(candles[i].timestamp)-Date.parse(candles[i-1].timestamp)!==3600000) { contiguous=false; break; }
+      }
+      if(!contiguous) { unavailable++; row.outcomes[horizon]={status:"DATA_GAP"}; continue; }
+      const window=candles.slice(index+1,end+1);
+      const entry=window[0].open, exit=window[window.length-1].close;
+      if(!Number.isFinite(entry)||entry<=0||!Number.isFinite(exit)||exit<=0) {
+        unavailable++; row.outcomes[horizon]={status:"INVALID_PRICE"}; continue;
+      }
+      const direction=record.signal==="BUY"?1:-1;
+      const returnPct=direction*(exit/entry-1)*100;
+      const favorablePct=direction===1?(Math.max(...window.map(c=>c.high))/entry-1)*100:
+        (1-Math.min(...window.map(c=>c.low))/entry)*100;
+      const adversePct=direction===1?(1-Math.min(...window.map(c=>c.low))/entry)*100:
+        (Math.max(...window.map(c=>c.high))/entry-1)*100;
+      const metric=stats[horizon];
+      metric.scored++;
+      if(returnPct>0) metric.wins++; else if(returnPct<0) metric.losses++; else metric.flats++;
+      metric._returns=(metric._returns||0)+returnPct;
+      metric._favorable=(metric._favorable||0)+favorablePct;
+      metric._adverse=(metric._adverse||0)+adversePct;
+      row.outcomes[horizon]={status:"SCORED",entry_price:entry,exit_price:exit,
+        return_pct:round4(returnPct),max_favorable_pct:round4(favorablePct),
+        max_adverse_pct:round4(adversePct),entry_basis:"next_completed_candle_open"};
+    }
+    outcomes.push(row);
+  }
+  for(const horizon of horizons) {
+    const m=stats[horizon];
+    if(m.scored) {
+      m.win_rate_pct=round2(m.wins/m.scored*100);
+      m.average_return_pct=round4(m._returns/m.scored);
+      m.average_favorable_pct=round4(m._favorable/m.scored);
+      m.average_adverse_pct=round4(m._adverse/m.scored);
+    }
+    delete m._returns; delete m._favorable; delete m._adverse;
+  }
+  return {method:"completed_60m_candles_next_open_entry",horizons:Object.values(stats),
+    outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
+    unavailable_count:unavailable,execution_enabled:false,
+    warning:"Historical descriptive evaluation only. Entry is the next completed candle open; no fees, spread, slippage or broker fills are modeled. Small samples are not evidence of future profitability."};
+}
+
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
     "content-type":"application/json; charset=utf-8","cache-control":"no-store",
@@ -521,6 +582,20 @@ export default {
           reason:String(e?.message||"Multi-timeframe OHLC data unavailable"),
           execution_enabled:false,
           warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."});
+      }
+    }
+    if(url.pathname==="/v1/signals/performance"&&request.method==="GET") {
+      if(!env?.SIGNAL_HISTORY) return json({status:"UNAVAILABLE",error:"Signal history storage is not configured",execution_enabled:false},503);
+      try {
+        const listed=await env.SIGNAL_HISTORY.list({prefix:"xau:latest:",limit:1000});
+        const records=(await Promise.all(listed.keys.map(item=>env.SIGNAL_HISTORY.get(item.name,"json")))).filter(Boolean);
+        const market=await fetchGoldCandles("xau","60m");
+        const result=calculateSignalPerformance(records,market.candles);
+        return json({status:"OK",symbol:"xau",provider:market.provider,market_last_candle_at:market.last_candle_at,
+          candle_data_quality:market.data_quality,record_count:records.length,...result});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",error:String(e?.message||"Signal performance evaluation unavailable"),
+          execution_enabled:false},502);
       }
     }
     if(url.pathname==="/v1/signals/history"&&request.method==="GET") {
