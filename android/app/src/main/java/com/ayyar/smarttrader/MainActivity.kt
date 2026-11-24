@@ -29,6 +29,7 @@ import java.util.Locale
 data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:String,val source:String,val status:String,val timestamp:String)
 data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
+data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -43,7 +44,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.7.0",color=muted,fontSize=12.sp) }
+   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.8.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
@@ -64,6 +65,19 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
           val h=history!!.getOrThrow()
           Text("${h.points.size} نقطه روزانه • ${h.points.first().date} تا ${h.points.last().date}",color=muted,fontSize=11.sp)
           HistoryChart(h.points)
+          val indicators = remember(h.points) { calculateIndicators(h.points.map { it.value }) }
+          Text("شاخص‌های تکنیکال روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=14.sp)
+          if (indicators == null) {
+            Text("برای محاسبه شاخص‌ها حداقل ۵۰ نقطه معتبر لازم است.",color=Color(0xFFFFB86B),fontSize=12.sp)
+          } else {
+            IndicatorRow("EMA 20",indicators.ema20)
+            IndicatorRow("EMA 50",indicators.ema50)
+            IndicatorRow("RSI 14",indicators.rsi14,2)
+            IndicatorRow("MACD",indicators.macd,4)
+            IndicatorRow("خط سیگنال MACD",indicators.signal,4)
+            IndicatorRow("هیستوگرام MACD",indicators.histogram,4)
+            Text("محاسبات بر اساس میانگین‌های روزانه منبع انجام شده‌اند؛ این شاخص‌ها به‌تنهایی سیگنال خرید یا فروش نیستند.",color=muted,fontSize=10.sp)
+          }
           val first=h.points.first().value; val last=h.points.last().value
           val change=if(first!=0.0) (last-first)/first*100 else 0.0
           Text("تغییر بازه: ${String.format(Locale.US,"%.2f",change)}٪",color=if(change>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontWeight=FontWeight.Bold)
@@ -143,4 +157,42 @@ private fun collectHistory(value:Any?,out:MutableList<HistoryPoint>){
    }
    is JSONArray -> for(i in 0 until value.length()) collectHistory(value.opt(i),out)
  }
+}
+
+
+@Composable private fun IndicatorRow(label:String,value:Double,decimals:Int=2){
+ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+   Text(label,color=muted,fontSize=12.sp)
+   Text(String.format(Locale.US,"%."+decimals+"f",value),color=Color.White,fontSize=12.sp,fontWeight=FontWeight.SemiBold)
+ }
+}
+
+private fun emaValues(values:List<Double>,period:Int):List<Double>{
+ if(period<=0 || values.size<period) return emptyList()
+ val alpha=2.0/(period+1.0)
+ val out=mutableListOf(values.take(period).average())
+ for(v in values.drop(period)) out.add(alpha*v+(1-alpha)*out.last())
+ return out
+}
+
+private fun calculateIndicators(values:List<Double>):IndicatorUi?{
+ if(values.size<50 || values.any{!it.isFinite() || it<=0.0}) return null
+ val e20=emaValues(values,20).lastOrNull()?:return null
+ val e50=emaValues(values,50).lastOrNull()?:return null
+ val period=14
+ val changes=values.zipWithNext{a,b->b-a}
+ var gain=changes.take(period).sumOf{maxOf(it,0.0)}/period
+ var loss=changes.take(period).sumOf{maxOf(-it,0.0)}/period
+ for(change in changes.drop(period)){
+   gain=(gain*(period-1)+maxOf(change,0.0))/period
+   loss=(loss*(period-1)+maxOf(-change,0.0))/period
+ }
+ val rsi=when { loss==0.0 && gain>0.0 -> 100.0; loss==0.0 -> 50.0; else -> 100.0-100.0/(1.0+gain/loss) }
+ val fast=emaValues(values,12); val slow=emaValues(values,26)
+ if(fast.size<slow.size) return null
+ val macdLine=fast.drop(fast.size-slow.size).zip(slow){a,b->a-b}
+ val signalLine=emaValues(macdLine,9)
+ if(signalLine.isEmpty()) return null
+ val macd=macdLine.last(); val signal=signalLine.last()
+ return IndicatorUi(e20,e50,rsi,macd,signal,macd-signal)
 }
