@@ -427,6 +427,47 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("multi-timeframe signal is archived once per completed 60m candle and history is retrievable", async () => {
+  const originalFetch=globalThis.fetch;
+  const store=new Map();
+  const kv={
+    async put(key,value,options){store.set(key,{value:JSON.parse(value),options});},
+    async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
+    async get(key,type){const item=store.get(key);return item?item.value:null;}
+  };
+  const candlesByInterval={};
+  for(const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]){
+    const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    let close=2600;
+    candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
+      const previous=close;close+=i%2===0?0.5:-0.3;if(i===count-1)close=previous+0.5;
+      return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
+        open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
+    });
+  }
+  globalThis.fetch=async url=>{
+    const interval=new URL(String(url)).searchParams.get("interval");
+    return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
+      {status:200,headers:{"content-type":"application/json"}});
+  };
+  try{
+    const env={SIGNAL_HISTORY:kv};
+    const signal=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
+    const signalBody=await signal.json();
+    assert.equal(signalBody.market_data_status,"LIVE");
+    assert.equal(store.size,1);
+    const saved=[...store.values()][0];
+    assert.equal(saved.value.signal,signalBody.signal);
+    assert.equal(saved.options.expirationTtl,90*24*60*60);
+    const history=await worker.fetch(new Request("https://unit.test/v1/signals/history?limit=20"),env);
+    const historyBody=await history.json();
+    assert.equal(history.status,200);
+    assert.equal(historyBody.count,1);
+    assert.equal(historyBody.records[0].archive_source,"XAUS completed OHLC multi-timeframe evaluation");
+    assert.equal(historyBody.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("multi-timeframe endpoint fails closed if any timeframe is unavailable", async () => {
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async url=>{
