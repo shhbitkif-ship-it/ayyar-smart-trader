@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/live-smoke.yml"
       - "cloudflare/worker.js"
+      - "cloudflare/providers.js"
+      - "cloudflare/telegram.js"
   workflow_dispatch:
 
 permissions:
@@ -15,39 +17,82 @@ jobs:
   live-api:
     runs-on: ubuntu-latest
     steps:
-      - name: Check deployed Worker and provider feed
+      - name: Check deployed Worker, market feed, risk guard and backtest
         run: |
           python - <<'PY'
-          import json, urllib.request, urllib.error
+          import json, math, urllib.request
+          from datetime import datetime, timedelta, timezone
 
           base = "https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev"
 
-          def get(url):
-              req = urllib.request.Request(url, headers={"User-Agent": "AyyarSmartTrader-Diagnostics/1.0", "Accept": "application/json"})
+          def request(path, method="GET", body=None):
+              data = None if body is None else json.dumps(body).encode()
+              req = urllib.request.Request(
+                  base + path, data=data, method=method,
+                  headers={"User-Agent":"AyyarSmartTrader-Diagnostics/1.1",
+                           "Accept":"application/json","Content-Type":"application/json"})
               with urllib.request.urlopen(req, timeout=25) as response:
                   return response.status, json.loads(response.read().decode("utf-8"))
 
-          status, health = get(base + "/health")
+          status, health = request("/health")
           print("WORKER_HEALTH", status, json.dumps(health, ensure_ascii=False))
-          if status != 200 or health.get("status") != "ok":
-              raise SystemExit("Worker health check failed")
+          assert status == 200 and health.get("status") == "ok", "Worker health failed"
 
-          status, payload = get(base + "/v1/market/quotes")
-          print("QUOTES_HTTP", status)
-          if status != 200 or not isinstance(payload.get("quotes"), list):
-              raise SystemExit("Quotes endpoint failed or returned an unexpected schema")
-
+          status, payload = request("/v1/market/quotes")
+          assert status == 200 and isinstance(payload.get("quotes"), list), "Quotes schema failed"
           live = 0
+          expected = {"GOLD18":"تومان","GOLD24":"تومان","MESGHAL":"تومان",
+                      "COIN_EMAMI":"تومان","COIN_HALF":"تومان",
+                      "COIN_QUARTER":"تومان","USD_IRT":"تومان","XAUUSD":"USD/oz"}
+          assert len(payload["quotes"]) == len(expected), "Unexpected quote count"
           for q in payload["quotes"]:
-              state = q.get("status")
-              live += state == "LIVE"
-              print("QUOTE", q.get("symbol"), "status=", state, "price=", q.get("price"),
-                    "unit=", q.get("unit"), "timestamp=", q.get("timestamp"),
-                    "age_seconds=", q.get("age_seconds"), "reason=", (q.get("meta") or {}).get("reason"))
-          print("SUMMARY", json.dumps({"overall": payload.get("status"), "live_quotes": live,
-                                      "total_quotes": len(payload["quotes"]),
-                                      "provider_generated_at": payload.get("provider_generated_at"),
-                                      "notice": payload.get("notice")}, ensure_ascii=False))
-          if live == 0:
-              raise SystemExit("Worker is reachable, but provider currently supplies no valid fresh quotes")
+              symbol = q.get("symbol")
+              assert symbol in expected, "Unknown market symbol: " + str(symbol)
+              assert q.get("unit") == expected[symbol], "Unexpected display unit for " + symbol
+              if q.get("status") == "LIVE":
+                  live += 1
+                  assert isinstance(q.get("price"), (int,float)) and q["price"] > 0
+                  assert q.get("timestamp"), "LIVE quote missing timestamp"
+              else:
+                  assert q.get("price") is None, "Non-LIVE quote must not expose a price"
+              print("QUOTE", symbol, q.get("status"), q.get("price"), q.get("timestamp"), q.get("age_seconds"))
+          print("QUOTE_SUMMARY", json.dumps({"live":live,"total":len(expected),
+                "provider":payload.get("attribution"),"notice":payload.get("notice")}, ensure_ascii=False))
+          assert live > 0, "Provider currently supplies no fresh quotes"
+
+          status, policy = request("/v1/risk/policy")
+          assert status == 200 and policy.get("execution_enabled") is False
+          assert policy.get("default_risk_per_trade") <= 0.01
+          print("RISK_POLICY_OK", json.dumps(policy, ensure_ascii=False))
+
+          status, signal = request("/v1/signals/evaluate", "POST", {})
+          assert status == 200 and signal.get("signal") == "NO_TRADE"
+          assert signal.get("execution_enabled") is False
+          print("SIGNAL_GUARD_OK", json.dumps(signal, ensure_ascii=False))
+
+          start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+          candles = []
+          previous = 100.0
+          for i in range(80):
+              close = 100 + i * 0.08 + math.sin(i / 4) * 2
+              op = previous
+              candles.append({
+                  "timestamp": (start + timedelta(hours=i)).isoformat().replace("+00:00","Z"),
+                  "open": op, "high": max(op,close)+0.5,
+                  "low": min(op,close)-0.5, "close": close
+              })
+              previous = close
+          status, backtest = request("/v1/backtest/ema-crossover", "POST",
+                                     {"candles":candles,"starting_capital":10000,
+                                      "fee_bps":10,"slippage_bps":5})
+          assert status == 200, "Backtest endpoint failed"
+          assert len(backtest.get("equity_curve",[])) == len(candles), "Equity curve incomplete"
+          assert all(math.isfinite(p["equity"]) and p["equity"] > 0
+                     for p in backtest["equity_curve"]), "Invalid equity values"
+          assert "max_drawdown_pct" in backtest
+          print("BACKTEST_SMOKE_OK", json.dumps({
+              "candles":len(candles),"equity_points":len(backtest["equity_curve"]),
+              "closed_trades":backtest.get("closed_trades"),
+              "max_drawdown_pct":backtest.get("max_drawdown_pct"),
+              "net_return_pct":backtest.get("net_return_pct")}, ensure_ascii=False))
           PY
