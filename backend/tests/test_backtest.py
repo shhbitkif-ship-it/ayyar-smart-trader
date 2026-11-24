@@ -51,16 +51,17 @@ def test_backtest_rejects_insufficient_history():
 
 def test_open_position_final_equity_includes_estimated_exit_costs():
     start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    prices = [3100 - i * 2 if i < 70 else 2960 + (i - 70) * 5 for i in range(120)]
     rising = [
         Candle(
             timestamp=start + timedelta(days=i),
-            open=100 + i,
-            high=102 + i,
-            low=99 + i,
-            close=101 + i,
+            open=price,
+            high=price + 3,
+            low=price - 3,
+            close=price,
             volume=100,
         )
-        for i in range(120)
+        for i, price in enumerate(prices)
     ]
     no_cost = run_ema_backtest(rising, fee_bps=0, slippage_bps=0)
     with_cost = run_ema_backtest(rising, fee_bps=10, slippage_bps=5)
