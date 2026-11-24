@@ -145,7 +145,16 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
         performance!!.isFailure -> Text("کارنامه فعلاً قابل محاسبه نیست؛ داده کندل یا آرشیو در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
         else -> {
           val p=performance!!.getOrThrow()
+          val maximumScoredSamples=p.horizons.maxOfOrNull { it.scored } ?: 0
           Text("سیگنال جهت‌دار: ${p.directionalSignals} • در انتظار تکمیل: ${p.pending} • غیرقابل ارزیابی: ${p.unavailable}",color=muted,fontSize=11.sp)
+          Text(
+            when {
+              maximumScoredSamples==0 -> "هنوز هیچ نتیجه بالغ و قابل ارزیابی ثبت نشده است؛ درصد برد نمایش داده نمی‌شود."
+              maximumScoredSamples<30 -> "نمونه‌ها فعلاً محدود است: حداکثر $maximumScoredSamples نتیجه. برای نمایش زمینه‌ای حداقل ۳۰ نتیجه لازم است."
+              else -> "تعداد نتایج به آستانه زمینه‌ای ۳۰ رسیده؛ این عدد به‌تنهایی اعتبار آماری یا سودآوری را ثابت نمی‌کند."
+            },
+            color=Color(0xFFFFB86B),fontSize=11.sp
+          )
           p.horizons.forEach { h ->
             Text("پس از ${h.horizon} کندل",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
