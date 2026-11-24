@@ -140,7 +140,7 @@ fun RiskCalculator() {
             Button(onClick = {
                 val e = number(equity); val day = number(dayStartEquity); val peak = number(peakEquity)
                 val openRisk = number(openRiskAmount); val count = number(openPositions)
-                if (e == null || day == null || peak == null || openRisk == null || count == null || e <= 0 || day <= 0 || peak <= 0 || openRisk < 0 || count < 0 || count > 10 || count % 1.0 != 0.0) {
+                if (e == null || day == null || peak == null || openRisk == null || count == null || e <= 0 || day <= 0 || peak <= 0 || openRisk < 0 || count < 0 || count > 10 || count % 1.0 != 0.0 || (count == 0.0 && openRisk > 0.0)) {
                     portfolioError = "مقادیر حساب، ریسک باز و تعداد موقعیت‌ها را بررسی کن."; portfolioResult = null
                 } else {
                     portfolioError = null; portfolioResult = null; portfolioLoading = true
