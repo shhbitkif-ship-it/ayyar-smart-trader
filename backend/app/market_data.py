@@ -137,8 +137,9 @@ async def market_snapshot() -> dict:
         quotes = [_normalise(by_id.get(source_id), symbol, name, source_id)
                   for symbol, name, source_id in SYMBOLS]
         live = sum(1 for quote in quotes if quote["status"] == "LIVE")
+        snapshot_status = "LIVE" if live == len(quotes) else "PARTIAL" if live else "UNAVAILABLE"
         result = {
-            "status": "LIVE" if live else "UNAVAILABLE",
+            "status": snapshot_status,
             "as_of": datetime.now(timezone.utc),
             "provider_generated_at": _timestamp(payload.get("generated_utc")),
             "quotes": quotes,
