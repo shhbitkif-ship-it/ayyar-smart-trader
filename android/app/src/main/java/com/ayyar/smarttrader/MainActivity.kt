@@ -37,6 +37,8 @@ data class SignalUi(val signal:String,val confidence:Int,val trend:String,val en
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
+data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
+data class WalkForwardUi(val totalReturnPct:Double,val worstDrawdownPct:Double,val totalTrades:Int,val winRate:Double,val folds:List<WalkForwardFold>)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -50,6 +52,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var backtestRefresh by remember { mutableIntStateOf(0) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
+ var walkForwardRefresh by remember { mutableIntStateOf(0) }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
@@ -57,6 +60,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
+ val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -170,6 +174,33 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       Button(onClick={compareRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("مقایسه استراتژی‌ها")}
       Text("تعداد کندل‌ها و طول نمونه در تایم‌فریم‌ها متفاوت است؛ این نتایج پیش‌بینی آینده نیستند و اجرای سفارش غیرفعال است.",color=muted,fontSize=10.sp)
    } } }
+   item { Text("آزمون خارج از نمونه Walk-forward",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+      Text("انتخاب استراتژی با داده‌های گذشته و ارزیابی روی بازه‌های بعدیِ دیده‌نشده",color=Color.White,fontWeight=FontWeight.SemiBold)
+      Text("سه مرحله ارزیابی روی کندل‌های واقعی ۶۰ دقیقه‌ای؛ حداقل ۱۸۰ کندل لازم است.",color=muted,fontSize=11.sp)
+      when {
+        walkForwardRefresh==0 -> Text("برای اجرای آزمون مستقل، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
+        walkForward==null -> Text("در حال دریافت داده و اجرای سه مرحله آزمون…",color=muted)
+        walkForward!!.isFailure -> Text("آزمون انجام نشد؛ داده معتبر کافی از منبع دریافت نشد.",color=Color(0xFFFFB86B),fontSize=12.sp)
+        else -> {
+          val w=walkForward!!.getOrThrow()
+          Text("بازده ترکیبی خارج از نمونه: ${String.format(Locale.US,"%.2f",w.totalReturnPct)}٪",color=if(w.totalReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=20.sp,fontWeight=FontWeight.Bold)
+          IndicatorRow("بدترین افت سرمایه در یک مرحله",w.worstDrawdownPct)
+          IndicatorRow("مجموع معاملات بسته‌شده",w.totalTrades.toDouble(),0)
+          IndicatorRow("درصد برد کل",w.winRate)
+          w.folds.forEach { fold ->
+            Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+              Text("مرحله ${fold.fold} • ${fold.strategy}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+              Text("بازده ${String.format(Locale.US,"%.2f",fold.returnPct)}٪ • افت ${String.format(Locale.US,"%.2f",fold.drawdownPct)}٪ • ${fold.trades} معامله • برد ${String.format(Locale.US,"%.1f",fold.winRate)}٪",color=muted,fontSize=10.sp)
+              Text("${formatLocalTimestamp(fold.testStart)} تا ${formatLocalTimestamp(fold.testEnd)}",color=muted,fontSize=10.sp)
+            }
+            Divider(color=Color(0xFF303746))
+          }
+        }
+      }
+      Button(onClick={walkForwardRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("اجرای آزمون خارج از نمونه")}
+      Text("این آزمون تضمین سود نیست؛ داده آموزشی در سود و زیان دوره آزمون وارد نمی‌شود و سفارش واقعی اجرا نمی‌شود.",color=muted,fontSize=10.sp)
+   } } }
    item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { RiskCalculator() }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -248,6 +279,26 @@ private fun fetchBacktestComparison():List<CompareRow>{
      }
    }
    return rows
+ } finally {connection.disconnect()}
+}
+
+private fun fetchWalkForward():WalkForwardUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/walk-forward/live?symbol=xau&interval=60m").openConnection() as HttpURLConnection
+ connection.requestMethod="GET";connection.connectTimeout=15000;connection.readTimeout=45000
+ try {
+   if(connection.responseCode !in 200..299) throw IllegalStateException("Walk-forward HTTP "+connection.responseCode)
+   val root=JSONObject(connection.inputStream.bufferedReader().use{it.readText()})
+   val array=root.optJSONArray("folds")?:JSONArray()
+   val folds=(0 until array.length()).map { i ->
+     val item=array.getJSONObject(i)
+     WalkForwardFold(item.optInt("fold"),item.optString("selected_strategy"),
+       item.optString("test_start"),item.optString("test_end"),
+       item.optDouble("out_of_sample_return_pct"),item.optDouble("out_of_sample_drawdown_pct"),
+       item.optInt("out_of_sample_trades"),item.optDouble("out_of_sample_win_rate_pct"))
+   }
+   return WalkForwardUi(root.optDouble("compounded_out_of_sample_return_pct"),
+     root.optDouble("worst_fold_drawdown_pct"),root.optInt("total_out_of_sample_trades"),
+     root.optDouble("aggregate_out_of_sample_win_rate_pct"),folds)
  } finally {connection.disconnect()}
 }
 
