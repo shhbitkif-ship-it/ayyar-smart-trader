@@ -478,7 +478,9 @@ export default {
         const rawLots=riskAmount/lossPerLot;
         if(!Number.isFinite(riskAmount)||!Number.isFinite(stopDistance)||!Number.isFinite(lossPerLot)||lossPerLot<=0||!Number.isFinite(rawLots)||rawLots<=0)
           return json({error:"Position sizing overflow or underflow; review equity, stop distance, and contract value."},400);
-        const lots=Math.min(maxLot,Math.floor((rawLots+lotStep*1e-10)/lotStep)*lotStep);
+        const steppedLots=Math.floor((rawLots+lotStep*1e-10)/lotStep)*lotStep;
+        const brokerMaxLots=Math.floor((maxLot+lotStep*1e-10)/lotStep)*lotStep;
+        const lots=Number(Math.min(steppedLots,brokerMaxLots).toFixed(8));
         if(!Number.isFinite(lots)||lots<minLot)
           return json({allowed:false,lots:0,raw_lots:rawLots,risk_amount:riskAmount,
             reason:"Calculated size is below the broker minimum lot after rounding down; trade is blocked."});
