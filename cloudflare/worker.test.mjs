@@ -512,6 +512,72 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("Telegram signal alert is sent once for a new confirmed direction and not duplicated", async () => {
+  const originalFetch=globalThis.fetch;
+  const store=new Map();
+  const kv={
+    async put(key,value){store.set(key,JSON.parse(value));},
+    async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).sort().slice(0,limit).map(name=>({name}))};},
+    async get(key){return store.get(key)||null;}
+  };
+  const candlesByInterval={};
+  for(const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]){
+    const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    let close=2600;
+    candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
+      const previous=close;close+=i%2===0?0.5:-0.3;if(i===count-1)close=previous+0.5;
+      return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
+        open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
+    });
+  }
+  const sent=[];
+  globalThis.fetch=async url=>{
+    const target=String(url);
+    if(target.includes("api.telegram.org")){
+      sent.push(target);
+      return new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200,headers:{"content-type":"application/json"}});
+    }
+    const interval=new URL(target).searchParams.get("interval");
+    return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try{
+    const env={SIGNAL_HISTORY:kv,BOT_TOKEN:"test-token",SIGNAL_ALERT_CHAT_ID:"12345"};
+    const request=()=>new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau");
+    const first=await worker.fetch(request(),env);
+    const firstBody=await first.json();
+    assert.equal(firstBody.signal,"BUY");
+    assert.equal(firstBody.alert_status,"SENT");
+    assert.equal(sent.length,1);
+    const second=await worker.fetch(request(),env);
+    const secondBody=await second.json();
+    assert.equal(secondBody.signal,"BUY");
+    assert.equal(sent.length,1,"same completed candle must not send duplicate Telegram alerts");
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("Telegram /signals command returns the latest archived signal", async () => {
+  const originalFetch=globalThis.fetch;
+  const store=new Map([["xau:latest:0000000000001",{signal:"BUY",confidence:80,trend:"BULLISH",
+    recorded_at:"2026-11-24T12:00:00.000Z",entry:2650,stop_loss:2600,take_profit:2750}]]);
+  const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
+    async get(key){return store.get(key)||null;}};
+  let telegramBody=null;
+  globalThis.fetch=async(url,options)=>{
+    if(String(url).includes("api.telegram.org")){telegramBody=JSON.parse(options.body);return new Response(JSON.stringify({ok:true}),{status:200});}
+    throw new Error("Unexpected external request");
+  };
+  try{
+    const env={BOT_TOKEN:"test-token",TELEGRAM_WEBHOOK_SECRET:"test-secret",SIGNAL_HISTORY:kv};
+    const response=await worker.fetch(new Request("https://unit.test/telegram/webhook",{
+      method:"POST",headers:{"content-type":"application/json","X-Telegram-Bot-Api-Secret-Token":"test-secret"},
+      body:JSON.stringify({message:{chat:{id:77},text:"/signals"}})
+    }),env);
+    assert.equal(response.status,200);
+    assert.match(telegramBody.text,/خرید/);
+    assert.match(telegramBody.text,/ورود: 2650/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("multi-timeframe endpoint fails closed if any timeframe is unavailable", async () => {
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async url=>{
