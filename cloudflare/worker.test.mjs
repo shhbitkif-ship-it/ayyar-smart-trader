@@ -638,3 +638,41 @@ test("position sizing rejects invalid broker lot constraints", async () => {
   }));
   assert.equal(response.status,400);
 });
+
+
+test("walk-forward backtest selects parameters on past data and evaluates later unseen folds", async () => {
+  const candles=Array.from({length:240},(_,i)=>{
+    const close=2500+i*0.35+Math.sin(i/4)*3+Math.sin(i/11)*1.5;
+    const previous=i?2500+(i-1)*0.35+Math.sin((i-1)/4)*3+Math.sin((i-1)/11)*1.5:close-0.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
+      open:previous,high:Math.max(previous,close)+0.8,low:Math.min(previous,close)-0.8,close};
+  });
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,starting_capital:10000,fee_bps:10,slippage_bps:5})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.fold_count,3);
+  assert.equal(body.folds.length,3);
+  assert.equal(body.execution_enabled,false);
+  for(const fold of body.folds){
+    assert.ok(Date.parse(fold.test_start)>Date.parse(fold.training_end));
+    assert.ok(["EMA9/EMA21","EMA12/EMA26","EMA20/EMA50"].includes(fold.selected_strategy));
+    assert.ok(Number.isFinite(fold.out_of_sample_return_pct));
+  }
+});
+
+test("walk-forward backtest rejects short history instead of reporting misleading results", async () => {
+  const candles=Array.from({length:120},(_,i)=>{
+    const close=2500+i*0.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
+      open:close-0.1,high:close+0.3,low:close-0.3,close};
+  });
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,400);
+  assert.match(body.error,/180 to 5000/i);
+});
