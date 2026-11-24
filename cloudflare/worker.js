@@ -677,15 +677,17 @@ export default {
     if(url.pathname==="/v1/risk/position-size"&&request.method==="POST") {
       try {
         const p=await request.json();
-        const equity=Number(p.equity),entry=Number(p.entry),stop=Number(p.stop_loss);
-        const contract=Number(p.contract_value_per_price_unit);
-        const risk=Number(p.risk_fraction??0.01),daily=Number(p.daily_loss_fraction??0),drawdown=Number(p.drawdown_fraction??0);
-        const lotStep=Number(p.lot_step??0.01),minLot=Number(p.min_lot??lotStep);
-        const maxLot=p.max_lot===undefined?Number.MAX_SAFE_INTEGER:Number(p.max_lot);
-        if(![equity,entry,stop,contract,risk,daily,drawdown,lotStep,minLot,maxLot].every(Number.isFinite) ||
+        const numeric=(value)=>typeof value==="number"&&Number.isFinite(value);
+        const equity=p.equity,entry=p.entry,stop=p.stop_loss;
+        const contract=p.contract_value_per_price_unit;
+        const risk=p.risk_fraction??0.01,daily=p.daily_loss_fraction??0,drawdown=p.drawdown_fraction??0;
+        const lotStep=p.lot_step??0.01,minLot=p.min_lot??lotStep;
+        const maxLot=p.max_lot===undefined?Number.MAX_SAFE_INTEGER:p.max_lot;
+        if(![equity,entry,stop,contract,risk,daily,drawdown,lotStep,minLot,maxLot].every(numeric) ||
            equity<=0||entry<=0||stop<=0||contract<=0||risk<=0||risk>0.01||daily<0||daily>1||drawdown<0||drawdown>1||entry===stop||
-           lotStep<=0||lotStep>1000||minLot<=0||maxLot<minLot)
-          return json({error:"Invalid position sizing inputs"},400);
+           lotStep<=0||lotStep>1000||minLot<lotStep||maxLot<minLot||
+           Math.abs(minLot/lotStep-Math.round(minLot/lotStep))>1e-8)
+          return json({error:"Invalid position sizing inputs; all monetary, risk and lot fields must be finite JSON numbers and broker lot limits must align to the lot step."},400);
         if(daily>=0.03) return json({allowed:false,lots:0,reason:"Daily loss limit reached; trading is blocked."});
         if(drawdown>=0.08) return json({allowed:false,lots:0,reason:"Maximum drawdown limit reached; trading is blocked."});
         const effectiveRisk=Math.min(risk,0.01),riskAmount=equity*effectiveRisk;
