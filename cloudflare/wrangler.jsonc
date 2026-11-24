@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ayyar-smart-trader-api",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-24",
+  "kv_namespaces": [
+    { "binding": "SIGNAL_HISTORY", "id": "e3de061386ae467aae8f4d8da1e0e408" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "PAPER_ACCOUNTS", "class_name": "PaperAccount" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1-paper-accounts", "new_sqlite_classes": ["PaperAccount"] }
+  ]
+}
