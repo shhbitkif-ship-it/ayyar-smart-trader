@@ -3,16 +3,5 @@
   "name": "ayyar-smart-trader-api",
   "main": "worker.py",
   "compatibility_date": "2026-11-24",
-  "compatibility_flags": ["python_workers"],
-  "durable_objects": {
-    "bindings": [
-      { "name": "PAPER_ACCOUNTS", "class_name": "PaperAccount" }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "v1-paper-accounts",
-      "new_sqlite_classes": ["PaperAccount"]
-    }
-  ]
+  "compatibility_flags": ["python_workers"]
 }
