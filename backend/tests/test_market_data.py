@@ -79,3 +79,23 @@ def test_provider_stale_flag_is_respected():
     item["stale"] = True
     q = _normalise(item, "XAUUSD", "Gold", "xau")
     assert q["status"] == "STALE"
+
+
+def test_duplicate_provider_ids_are_excluded_as_ambiguous():
+    from app.market_data import _index_rows
+    rows = [
+        {"id": "xau", "price": 2300},
+        {"id": "gold-18k", "price": 7000},
+        {"id": "xau", "price": 2301},
+        None,
+        {"price": 10},
+    ]
+    indexed = _index_rows(rows)
+    assert "xau" not in indexed
+    assert indexed["gold-18k"]["price"] == 7000
+
+
+def test_unique_provider_ids_are_preserved():
+    from app.market_data import _index_rows
+    rows = [{"id": "xau", "price": 2300}, {"id": "usd", "price": 70000}]
+    assert set(_index_rows(rows)) == {"xau", "usd"}
