@@ -39,7 +39,7 @@ data class SignalHistoryRow(val signal:String,val trend:String,val confidence:In
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
 data class WalkForwardUi(val totalReturnPct:Double,val worstDrawdownPct:Double,val totalTrades:Int,val winRate:Double,val folds:List<WalkForwardFold>)
-data class MarketDataHealthUi(val status:String,val quality:String,val provider:String,val interval:String,val candleCount:Int,val ageSeconds:Long,val gapCount:Int,val missingIntervals:Int,val largestGap:Int,val lastCandle:String,val note:String)
+data class MarketDataHealthUi(val status:String,val quality:String,val provider:String,val interval:String,val candleCount:Int,val ageSeconds:Long,val gapCount:Int,val missingIntervals:Int,val largestGap:Int,val lastCandle:String,val note:String)\ndata class SignalPerformanceHorizon(val horizon:Int,val scored:Int,val wins:Int,val losses:Int,val flats:Int,val winRate:Double?,val averageReturn:Double?,val averageFavorable:Double?,val averageAdverse:Double?)\ndata class SignalPerformanceUi(val horizons:List<SignalPerformanceHorizon>,val directionalSignals:Int,val pending:Int,val unavailable:Int,val lastCandle:String,val warning:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -53,7 +53,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var backtestRefresh by remember { mutableIntStateOf(0) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
- var walkForwardRefresh by remember { mutableIntStateOf(0) }
+ var walkForwardRefresh by remember { mutableIntStateOf(0) }\n var performanceRefresh by remember { mutableIntStateOf(0) }
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val marketHealth by produceState<Result<MarketDataHealthUi>?>(null, refresh) { value=runCatching { withContext(Dispatchers.IO) { fetchMarketDataHealth() } } }
@@ -62,7 +62,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
- val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
+ val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }\n val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
    item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -130,6 +130,35 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
         }
       }
       OutlinedButton(onClick={archiveRefresh++},modifier=Modifier.fillMaxWidth()){Text("دریافت تاریخچه سیگنال‌ها")}
+   } } }
+   item { Text("کارنامه واقعی سیگنال‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+   item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+      Text("ارزیابی پس از صدور سیگنال با کندل‌های بسته‌شده",color=Color.White,fontWeight=FontWeight.SemiBold)
+      Text("ورود فرضی در قیمت بازشدن کندل بعدی؛ افق‌های ۱، ۴ و ۲۴ کندلی",color=muted,fontSize=11.sp)
+      when {
+        performanceRefresh==0 -> Text("برای محاسبه نتایج واقعی سیگنال‌های آرشیوشده، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
+        performance==null -> Text("در حال ارزیابی نتایج سیگنال‌ها…",color=muted)
+        performance!!.isFailure -> Text("کارنامه فعلاً قابل محاسبه نیست؛ داده کندل یا آرشیو در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
+        else -> {
+          val p=performance!!.getOrThrow()
+          Text("سیگنال جهت‌دار: ${p.directionalSignals} • در انتظار تکمیل: ${p.pending} • غیرقابل ارزیابی: ${p.unavailable}",color=muted,fontSize=11.sp)
+          p.horizons.forEach { h ->
+            Text("پس از ${h.horizon} کندل",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+              Text("نمونه: ${h.scored} • برد: ${h.wins} • باخت: ${h.losses}",color=muted,fontSize=11.sp)
+              Text(if(h.winRate==null) "—" else String.format(Locale.US,"%.1f%%",h.winRate),color=Color.White,fontSize=11.sp)
+            }
+            if(h.averageReturn!=null) {
+              IndicatorRow("میانگین بازده",h.averageReturn)
+              IndicatorRow("میانگین حرکت مطلوب",h.averageFavorable?:0.0)
+              IndicatorRow("میانگین حرکت نامطلوب",h.averageAdverse?:0.0)
+            }
+          }
+          Text("آخرین کندل ارزیابی: ${formatLocalTimestamp(p.lastCandle)}",color=muted,fontSize=10.sp)
+          Text(p.warning,color=muted,fontSize=10.sp)
+        }
+      }
+      OutlinedButton(onClick={performanceRefresh++},modifier=Modifier.fillMaxWidth()){Text(if(performanceRefresh==0) "محاسبه کارنامه سیگنال‌ها" else "به‌روزرسانی کارنامه")}
    } } }
    item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -321,6 +350,27 @@ private fun fetchSignalHistory():List<SignalHistoryRow>{
        value("recorded_at"),value("last_candle_at"),
        value("entry"),value("stop_loss"),value("take_profit"))
    }
+ } finally {connection.disconnect()}
+}
+
+private fun fetchSignalPerformance():SignalPerformanceUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/signals/performance").openConnection() as HttpURLConnection
+ connection.requestMethod="GET";connection.connectTimeout=12000;connection.readTimeout=25000
+ try {
+   val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+   val root=JSONObject(stream.bufferedReader().use{it.readText()})
+   if(connection.responseCode !in 200..299) throw IllegalStateException(root.optString("error","Performance unavailable"))
+   val array=root.optJSONArray("horizons")?:JSONArray()
+   val horizons=(0 until array.length()).map { i ->
+     val h=array.getJSONObject(i)
+     fun optional(key:String):Double?=if(h.isNull(key)) null else h.optDouble(key)
+     SignalPerformanceHorizon(h.optInt("horizon_candles"),h.optInt("scored"),h.optInt("wins"),
+       h.optInt("losses"),h.optInt("flats"),optional("win_rate_pct"),optional("average_return_pct"),
+       optional("average_favorable_pct"),optional("average_adverse_pct"))
+   }
+   return SignalPerformanceUi(horizons,root.optInt("directional_signals"),root.optInt("pending_count"),
+     root.optInt("unavailable_count"),root.optString("market_last_candle_at",""),
+     root.optString("warning","ارزیابی توصیفی است و تضمین سود نیست."))
  } finally {connection.disconnect()}
 }
 
