@@ -9,6 +9,8 @@ on:
       - "cloudflare/providers.js"
       - "cloudflare/telegram.js"
   workflow_dispatch:
+  schedule:
+    - cron: '23 */6 * * *' # Run live diagnostics every six hours (UTC)
 
 permissions:
   contents: read
