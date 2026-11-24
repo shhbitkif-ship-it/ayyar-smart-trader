@@ -50,25 +50,29 @@ function runBacktest(payload) {
   const cost=(fee+slippage)/10000;
   let cash=starting, quantity=0, entryPrice=null, entryTime=null;
   const trades=[], equityCurve=[{timestamp:candles[0].iso,equity:round2(starting)}];
-  for(let i=1;i<slow.length;i++){
-    const prevUp=fastAligned[i-1]>slow[i-1], nowUp=fastAligned[i]>slow[i];
-    const up=!prevUp&&nowUp, down=prevUp&&!nowUp;
-    const fillIndex=i+50;
-    if(fillIndex>=candles.length) break;
-    const fill=candles[fillIndex].open;
-    if(down&&quantity>0){
-      const exitPrice=fill*(1-cost), proceeds=quantity*exitPrice;
-      const pnl=proceeds-quantity*entryPrice;
-      cash=proceeds;
-      trades.push({entry_time:entryTime,exit_time:candles[fillIndex].iso,
-        entry_price:round6(entryPrice),exit_price:round6(exitPrice),pnl:round2(pnl),
-        return_pct:round4((exitPrice/entryPrice-1)*100)});
-      quantity=0;entryPrice=null;entryTime=null;
-    } else if(up&&quantity===0){
-      entryPrice=fill*(1+cost);quantity=cash/entryPrice;cash=0;entryTime=candles[fillIndex].iso;
+  // Mark equity at every candle close; this captures intra-trade drawdowns,
+  // rather than measuring drawdown only when a trade closes.
+  for(let candleIndex=1;candleIndex<candles.length;candleIndex++){
+    const signalIndex=candleIndex-50;
+    if(signalIndex>=1 && signalIndex<slow.length){
+      const prevUp=fastAligned[signalIndex-1]>slow[signalIndex-1];
+      const nowUp=fastAligned[signalIndex]>slow[signalIndex];
+      const up=!prevUp&&nowUp, down=prevUp&&!nowUp;
+      const fill=candles[candleIndex].open;
+      if(down&&quantity>0){
+        const exitPrice=fill*(1-cost), proceeds=quantity*exitPrice;
+        const pnl=proceeds-quantity*entryPrice;
+        cash=proceeds;
+        trades.push({entry_time:entryTime,exit_time:candles[candleIndex].iso,
+          entry_price:round6(entryPrice),exit_price:round6(exitPrice),pnl:round2(pnl),
+          return_pct:round4((exitPrice/entryPrice-1)*100)});
+        quantity=0;entryPrice=null;entryTime=null;
+      } else if(up&&quantity===0){
+        entryPrice=fill*(1+cost);quantity=cash/entryPrice;cash=0;entryTime=candles[candleIndex].iso;
+      }
     }
-    const equity=quantity===0?cash:quantity*candles[fillIndex].close;
-    equityCurve.push({timestamp:candles[fillIndex].iso,equity:round2(equity)});
+    const equity=quantity===0?cash:quantity*candles[candleIndex].close;
+    equityCurve.push({timestamp:candles[candleIndex].iso,equity:round2(equity)});
   }
   const finalEquity=quantity===0?cash:quantity*candles[candles.length-1].close;
   let peak=starting,maxDrawdown=0;
