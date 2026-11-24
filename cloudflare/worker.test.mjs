@@ -122,7 +122,7 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
 test("EMA backtest rejects arithmetic overflow instead of returning corrupt metrics", async () => {
   const candles = [];
   for (let i=0;i<80;i++) {
-    const close = i<55 ? 1 : i===55 ? 5 : 1e100;
+    const close = i<55 ? 1 : i<=56 ? 5 : 1e100;
     candles.push({
       timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
       open:close,high:close*1.001,low:close*0.99,close
