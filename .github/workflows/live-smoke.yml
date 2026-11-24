@@ -147,4 +147,56 @@ jobs:
               "closed_trades":backtest.get("closed_trades"),
               "max_drawdown_pct":backtest.get("max_drawdown_pct"),
               "net_return_pct":backtest.get("net_return_pct")}, ensure_ascii=False))
+
+          status, portfolio = request("/v1/risk/portfolio-check", "POST", {
+              "equity":10000,"day_start_equity":10000,"peak_equity":10000,
+              "proposed_risk_fraction":0.01,"open_positions":[]})
+          assert status == 200 and portfolio.get("allowed") is False
+          assert portfolio.get("status") == "UNVERIFIED_ACCOUNT_DATA"
+          assert portfolio.get("data_verified") is False and portfolio.get("execution_enabled") is False
+          print("PORTFOLIO_FAIL_CLOSED_OK", json.dumps({
+              "status":portfolio.get("status"),"allowed":portfolio.get("allowed"),
+              "data_verified":portfolio.get("data_verified"),
+              "execution_enabled":portfolio.get("execution_enabled")}, ensure_ascii=False))
+
+          status, performance = request("/v1/signals/performance")
+          assert status in {200, 502}, "Unexpected signal-performance HTTP status"
+          if status == 200:
+              assert performance.get("status") == "OK"
+              assert performance.get("execution_enabled") is False
+              assert isinstance(performance.get("horizons"), list)
+              assert [h.get("horizon_candles") for h in performance["horizons"]] == [1,4,24]
+          else:
+              assert performance.get("status") == "UNAVAILABLE"
+              assert performance.get("execution_enabled") is False
+          print("SIGNAL_PERFORMANCE_SMOKE_OK", json.dumps({
+              "http_status":status,"status":performance.get("status"),
+              "record_count":performance.get("record_count"),
+              "directional_signals":performance.get("directional_signals"),
+              "horizons":performance.get("horizons",[]),
+              "error":performance.get("error")}, ensure_ascii=False))
+
+          wf_candles = []
+          previous = 100.0
+          for i in range(240):
+              close = 100 + i * 0.035 + math.sin(i / 5) * 1.8 + math.sin(i / 17) * 0.8
+              op = previous
+              wf_candles.append({
+                  "timestamp": (start + timedelta(hours=i)).isoformat().replace("+00:00","Z"),
+                  "open":op,"high":max(op,close)+0.4,
+                  "low":min(op,close)-0.4,"close":close})
+              previous = close
+          status, walk = request("/v1/backtest/walk-forward", "POST", {
+              "candles":wf_candles,"starting_capital":10000,"fee_bps":10,"slippage_bps":5})
+          assert status == 200, "Walk-forward endpoint failed"
+          assert walk.get("fold_count") == 3 and len(walk.get("folds",[])) == 3
+          assert walk.get("execution_enabled") is False
+          assert math.isfinite(walk.get("compounded_out_of_sample_return_pct",float("nan")))
+          assert math.isfinite(walk.get("worst_fold_drawdown_pct",float("nan")))
+          print("WALK_FORWARD_SMOKE_OK", json.dumps({
+              "fold_count":walk.get("fold_count"),
+              "oos_return_pct":walk.get("compounded_out_of_sample_return_pct"),
+              "worst_fold_drawdown_pct":walk.get("worst_fold_drawdown_pct"),
+              "oos_trades":walk.get("total_out_of_sample_trades"),
+              "execution_enabled":walk.get("execution_enabled")}, ensure_ascii=False))
           PY
