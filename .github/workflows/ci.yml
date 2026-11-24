@@ -74,3 +74,5 @@ jobs:
           node-version: '22'
       - name: Run Worker tests
         run: npm test --prefix cloudflare
+      - name: Validate Cloudflare Worker bundle and Durable Object export
+        run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.jsonc
