@@ -563,6 +563,14 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(body.outcomes[0].outcomes[1].entry_basis,"next_completed_candle_open");
     assert.equal(body.execution_enabled,false);
     assert.match(body.warning,/not evidence of future profitability/);
+    const gapCandles=candles.filter((_,i)=>i!==12);
+    globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(gapCandles)),
+      {status:200,headers:{"content-type":"application/json"}});
+    const gapResponse=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    const gapBody=await gapResponse.json();
+    assert.equal(gapResponse.status,200);
+    assert.equal(gapBody.outcomes[0].outcomes[1].status,"DATA_GAP");
+    assert.equal(gapBody.horizons.find(x=>x.horizon_candles===4).scored,0);
   } finally { globalThis.fetch=originalFetch; }
 });
 
