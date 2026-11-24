@@ -112,3 +112,17 @@ test("EMA backtest rejects incomplete or invalid OHLC input", async () => {
   assert.equal(response.status,400);
   assert.ok((await response.json()).error);
 });
+
+test("Telegram webhook rejects requests without the secret header", async () => {
+  const response = await worker.fetch(new Request("https://unit.test/telegram/webhook", {
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({message:{chat:{id:1},text:"/start"}})
+  }), {BOT_TOKEN:"test-token",TELEGRAM_WEBHOOK_SECRET:"expected-secret"});
+  assert.equal(response.status,401);
+});
+
+test("Telegram webhook reports missing configuration without exposing secrets", async () => {
+  const response = await worker.fetch(new Request("https://unit.test/telegram/webhook", {
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({})
+  }), {});
+  assert.equal(response.status,503);
+});
