@@ -39,3 +39,49 @@ def test_candle_rejects_non_finite_market_values(field, bad_value):
     values[field] = bad_value
     with pytest.raises(ValidationError):
         Candle(**values)
+
+
+def test_duplicate_market_candle_timestamps_are_rejected():
+    now = datetime.now(timezone.utc)
+    data = candles(220, 1, now - timedelta(minutes=220))
+    data[-1] = data[-2].model_copy()
+    req = EvaluateRequest(symbol="XAUUSD", candles=data)
+    result = evaluate(req, now)
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "duplicate" in result.reason.lower()
+
+
+def test_naive_timestamp_in_any_market_candle_is_rejected():
+    now = datetime.now(timezone.utc)
+    data = candles(220, 1, now - timedelta(minutes=220))
+    data[0] = data[0].model_copy(update={"timestamp": data[0].timestamp.replace(tzinfo=None)})
+    req = EvaluateRequest(symbol="XAUUSD", candles=data)
+    result = evaluate(req, now)
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "every market candle" in result.reason.lower()
+
+
+def test_confirmation_candle_newer_than_market_data_is_rejected():
+    now = datetime.now(timezone.utc)
+    market = candles(220, 1, now - timedelta(minutes=221))
+    confirmation = candles(60, 1, now - timedelta(minutes=59))
+    confirmation[-1] = confirmation[-1].model_copy(update={"timestamp": market[-1].timestamp + timedelta(minutes=1)})
+    req = EvaluateRequest(symbol="XAUUSD", candles=market, confirmation_candles=confirmation)
+    result = evaluate(req, now)
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "confirmation data is stale" in result.reason.lower()
+
+
+def test_duplicate_confirmation_timestamps_are_rejected():
+    now = datetime.now(timezone.utc)
+    market = candles(220, 1, now - timedelta(minutes=220))
+    confirmation = candles(60, 1, now - timedelta(minutes=60))
+    confirmation[-1] = confirmation[-2].model_copy()
+    req = EvaluateRequest(symbol="XAUUSD", candles=market, confirmation_candles=confirmation)
+    result = evaluate(req, now)
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "duplicate confirmation" in result.reason.lower()
