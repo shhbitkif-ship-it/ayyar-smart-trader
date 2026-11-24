@@ -35,7 +35,7 @@ class PaperAccount(DurableObject):
         self.sql.exec("""
             CREATE TABLE IF NOT EXISTS accounts (
                 account_id TEXT PRIMARY KEY,
-                token_hash TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
                 currency TEXT NOT NULL CHECK(currency IN ('USD','IRT')),
                 starting_capital REAL NOT NULL CHECK(starting_capital > 0),
                 created_at TEXT NOT NULL
@@ -74,6 +74,7 @@ class PaperAccount(DurableObject):
         """)
 
     def allow_creation(self, ip_hash, day):
+        self.sql.exec("DELETE FROM creation_limits WHERE day < ?", day)
         rows = self.sql.exec(
             """INSERT INTO creation_limits(ip_hash, day, count)
                VALUES (?, ?, 1)
