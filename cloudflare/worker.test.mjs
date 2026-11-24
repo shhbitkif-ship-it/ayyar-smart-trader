@@ -787,3 +787,32 @@ test("portfolio risk guard blocks excessive aggregate risk and concurrent positi
 test("portfolio risk guard rejects proposed risk above the hard limit",async()=>{
  const response=await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({equity:100000,day_start_equity:100000,peak_equity:100000,proposed_risk_fraction:0.05})}));assert.equal(response.status,400);
 });
+
+
+test("SELL signal performance reports non-negative favorable and adverse excursions", async () => {
+  const originalFetch=globalThis.fetch;
+  const store=new Map();
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:40},(_,i)=>{
+    const open=2600+i;
+    return {timestamp:new Date(lastClosed-(39-i)*intervalMs).toISOString(),
+      open,high:open+2,low:open-1,close:open+1};
+  });
+  store.set("xau:latest:sell-sample",{signal:"SELL",last_candle_at:candles[10].timestamp});
+  const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
+    async get(key){return store.get(key)||null;}};
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),
+    {status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    const outcome=body.outcomes[0].outcomes[1];
+    assert.equal(outcome.status,"SCORED");
+    assert.ok(outcome.return_pct<0,"rising prices should be adverse for a SELL signal");
+    assert.equal(outcome.max_favorable_pct,0,"a favorable excursion must never be negative");
+    assert.ok(outcome.max_adverse_pct>0,"the rising market should create adverse excursion");
+    assert.equal(body.execution_enabled,false);
+  } finally { globalThis.fetch=originalFetch; }
+});
