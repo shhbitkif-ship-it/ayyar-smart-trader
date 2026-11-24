@@ -1,3 +1,4 @@
+import { handleTelegramWebhook } from "./telegram.js";
 const SOURCE = "https://nerkhara.com/api/v1/latest.json";
 const MAX_AGE_SECONDS = 660;
 const SYMBOLS = [
@@ -146,11 +147,13 @@ async function snapshot() {
   return cached;
 }
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url=new URL(request.url);
     if(request.method==="OPTIONS") return new Response(null,{headers:{
       "access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS",
       "access-control-allow-headers":"content-type"}});
+    if(url.pathname==="/telegram/webhook" && request.method==="POST")
+      return handleTelegramWebhook(request, env, snapshot, json);
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot());
     if(url.pathname==="/v1/market/history"&&request.method==="GET") {
