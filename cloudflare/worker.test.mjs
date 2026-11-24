@@ -326,7 +326,8 @@ test("latest signal endpoint evaluates real provider OHLC and never enables exec
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
-    assert.equal(body.market_provider,"XAUS");\n    assert.equal(body.market_provider_symbol,"xau");
+    assert.equal(body.market_provider,"XAUS");
+    assert.equal(body.market_provider_symbol,"xau");
     assert.equal(body.signal,"BUY");
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
