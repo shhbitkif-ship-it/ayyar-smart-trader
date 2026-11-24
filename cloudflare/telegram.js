@@ -15,7 +15,7 @@ export async function handleTelegramWebhook(request, env, snapshot, json) {
 
   let reply;
   if (text === "/start" || text === "/help") {
-    reply = "سلام! به عیار هوشمند خوش آمدید.\n/gold اونس جهانی\n/iran قیمت‌های ایران\n/market همه نرخ‌ها\nقیمت‌ها شاخصی هستند و توصیه معاملاتی یا قیمت اجرایی بروکر نیستند.";
+    reply = "سلام! به عیار هوشمند خوش آمدید.\n/gold اونس جهانی\n/iran قیمت‌های ایران\n/market همه نرخ‌ها\n/signals آخرین سیگنال‌ها\n/history تاریخچه سیگنال‌ها\nقیمت‌ها شاخصی هستند و توصیه معاملاتی یا قیمت اجرایی بروکر نیستند.";
   } else if (text === "/signals" || text === "/history") {
     if (!env?.SIGNAL_HISTORY) {
       reply = "آرشیو سیگنال هنوز پیکربندی نشده است.";
@@ -27,11 +27,11 @@ export async function handleTelegramWebhook(request, env, snapshot, json) {
         const lines = valid.map(item => {
           const direction = item.signal==="BUY" ? "خرید" : item.signal==="SELL" ? "فروش" : "عدم معامله";
           return direction + " | امتیاز " + item.confidence + "/100"
-            + "\\nروند: " + item.trend + " | ثبت: " + item.recorded_at
-            + (item.entry!=null ? "\\nورود: "+item.entry+" | حدضرر: "+item.stop_loss+" | هدف: "+item.take_profit : "");
+            + "\nروند: " + item.trend + " | ثبت: " + item.recorded_at
+            + (item.entry!=null ? "\nورود: "+item.entry+" | حدضرر: "+item.stop_loss+" | هدف: "+item.take_profit : "");
         });
-        reply = lines.length ? lines.join("\\n\\n")
-          + "\\n\\nداده پژوهشی XAUS؛ امتیاز احتمال موفقیت نیست و سفارش خودکار انجام نمی‌شود."
+        reply = lines.length ? lines.join("\n\n")
+          + "\n\nداده پژوهشی XAUS؛ امتیاز احتمال موفقیت نیست و سفارش خودکار انجام نمی‌شود."
           : "هنوز سابقه‌ای از سیگنال‌های چندتایم‌فریمی ثبت نشده است.";
       } catch {
         reply = "دریافت تاریخچه سیگنال‌ها موقتاً ناموفق بود.";
