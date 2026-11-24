@@ -249,11 +249,11 @@ function classifyMarketRegime(candles) {
   if(![atrPct,spreadPct,slopePct].every(Number.isFinite)||atrPct<=0) return {status:"UNAVAILABLE",tradeable:false,reason:"Regime indicators could not be calculated."};
   let status,reason;
   if(atrPct>1.5){status="HIGH_VOLATILITY";reason="ATR is above 1.5% of price; volatility filter blocks entries.";}
-  else if(spreadPct<0.08&&Math.abs(slopePct)<0.02){status="RANGE";reason="EMA spread and slope are too small; sideways market filter blocks entries.";}
-  else if(spreadPct>=0.08&&((trend==="BULLISH"&&slopePct>0)||(trend==="BEARISH"&&slopePct<0))){status="TRENDING";reason="EMA spread and slope confirm directional movement.";}
+  else if(spreadPct<0.04&&Math.abs(slopePct)<0.0015){status="RANGE";reason="EMA spread and slope are too small; sideways market filter blocks entries.";}
+  else if(spreadPct>=0.04&&((trend==="BULLISH"&&slopePct>0)||(trend==="BEARISH"&&slopePct<0))){status="TRENDING";reason="EMA spread and slope confirm directional movement.";}
   else {status="TRANSITIONAL";reason="Trend structure is not sufficiently consistent; wait for confirmation.";}
   return {status,tradeable:status==="TRENDING",trend,atr_pct:round4(atrPct),ema_spread_pct:round4(spreadPct),ema20_slope_pct:round4(slopePct),reason,
-    thresholds:{high_volatility_atr_pct:1.5,range_ema_spread_pct:0.08,range_abs_slope_pct:0.02}};
+    thresholds:{high_volatility_atr_pct:1.5,range_ema_spread_pct:0.04,range_abs_slope_pct:0.0015}};
 }
 
 
