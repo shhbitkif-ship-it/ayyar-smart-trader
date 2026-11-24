@@ -687,9 +687,9 @@ test("market regime identifies trend and blocks range and high volatility", asyn
     mode="volatile";body=await get();assert.equal(body.status,"HIGH_VOLATILITY");assert.equal(body.tradeable,false);assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=original;}
 });
-test("portfolio risk guard allows a proposal within aggregate limits",async()=>{
+test("portfolio risk guard never authorizes manually supplied account figures",async()=>{
  const response=await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({equity:100000,day_start_equity:100000,peak_equity:105000,proposed_risk_fraction:0.01,open_positions:[{risk_amount:500}],max_open_risk_fraction:0.02,max_positions:3})}));
- const body=await response.json();assert.equal(response.status,200);assert.equal(body.allowed,true);assert.equal(body.aggregate_risk_amount,1500);assert.equal(body.execution_enabled,false);
+ const body=await response.json();assert.equal(response.status,200);assert.equal(body.allowed,false);assert.equal(body.status,"UNVERIFIED_ACCOUNT_DATA");assert.equal(body.data_verified,false);assert.equal(body.aggregate_risk_amount,1500);assert.equal(body.execution_enabled,false);
 });
 test("portfolio risk guard blocks daily loss and peak drawdown",async()=>{
  const call=async payload=>(await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}))).json();
