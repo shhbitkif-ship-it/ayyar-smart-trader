@@ -123,11 +123,42 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
     }
 
 
+def _refresh_snapshot_status(snapshot: dict, now: datetime | None = None) -> dict:
+    """Re-evaluate provider and quote freshness, including cached snapshots."""
+    now = now or datetime.now(timezone.utc)
+    result = dict(snapshot)
+    generated = result.get("provider_generated_at")
+    generated_age = (now - generated.astimezone(timezone.utc)).total_seconds() if isinstance(generated, datetime) else None
+    generated_valid = generated_age is not None and -30 <= generated_age <= MAX_AGE_SECONDS
+    refreshed = []
+    for original in result.get("quotes", []):
+        quote = dict(original)
+        meta = dict(quote.get("meta") or {})
+        stamp = quote.get("timestamp")
+        age = (now - stamp.astimezone(timezone.utc)).total_seconds() if isinstance(stamp, datetime) else None
+        price = quote.get("price")
+        price_valid = isinstance(price, (int, float)) and not isinstance(price, bool) and math.isfinite(price) and price > 0
+        if not price_valid or meta.get("unit_valid") is not True:
+            quote["status"] = "UNAVAILABLE"
+        elif not generated_valid or age is None or not -30 <= age <= MAX_AGE_SECONDS or meta.get("stale") is True:
+            quote["status"] = "STALE"
+        else:
+            quote["status"] = "LIVE"
+        quote["age_seconds"] = round(age, 1) if age is not None else None
+        if not generated_valid and price_valid and meta.get("unit_valid") is True:
+            meta["reason"] = "Provider snapshot timestamp is missing, malformed, future-dated, or stale"
+        quote["meta"] = meta
+        refreshed.append(quote)
+    result["quotes"] = refreshed
+    live = sum(1 for quote in refreshed if quote["status"] == "LIVE")
+    result["status"] = "LIVE" if refreshed and live == len(refreshed) else "PARTIAL" if live else "UNAVAILABLE"
+    return result
+
 async def market_snapshot() -> dict:
     global _cache, _cache_at
     now_mono = time.monotonic()
     if _cache is not None and now_mono - _cache_at < CACHE_SECONDS:
-        return _cache
+        return _refresh_snapshot_status(_cache)
     try:
         payload = await _fetch_provider_json()
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
@@ -146,6 +177,7 @@ async def market_snapshot() -> dict:
             "notice": "NerkhAra is refreshed every ten minutes. These are indicative market readings, not broker execution quotes. STALE or UNAVAILABLE prices must never generate trade signals.",
             "attribution": "NerkhAra — https://nerkhara.com",
         }
+        result = _refresh_snapshot_status(result)
     except Exception as exc:
         result = {
             "status": "UNAVAILABLE",
@@ -157,5 +189,8 @@ async def market_snapshot() -> dict:
             "error": type(exc).__name__,
             "attribution": "NerkhAra — https://nerkhara.com",
         }
-    _cache, _cache_at = result, now_mono
+    if result.get("status") != "UNAVAILABLE":
+        _cache, _cache_at = result, now_mono
+    else:
+        _cache, _cache_at = None, 0.0
     return result
