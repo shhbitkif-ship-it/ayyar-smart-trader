@@ -112,7 +112,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
           Text("آخرین کندل بسته‌شده: ${formatLocalTimestamp(s.lastCandle)}",color=muted,fontSize=10.sp)
         }
       }
-      Text("منبع کندل: Yahoo Finance (XAUUSD=X). فقط اونس جهانی؛ برای طلای ۱۸ عیار و سکه ایران هنوز فید OHLC مستقل و معتبر متصل نشده است. امتیاز همگرایی احتمال موفقیت نیست. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=11.sp)
+      Text("منبع کندل: XAUS (XAU/USD). فقط اونس جهانی؛ برای طلای ۱۸ عیار و سکه ایران هنوز فید OHLC مستقل و معتبر متصل نشده است. امتیاز همگرایی احتمال موفقیت نیست. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=11.sp)
    } } }
    item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
  } } }
