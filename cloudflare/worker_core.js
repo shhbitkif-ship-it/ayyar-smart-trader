@@ -545,7 +545,7 @@ export default {
         return json({error:String(e?.message||"Paper account creation unavailable")},503);
       }
     }
-    const paperAccountMatch=url.pathname.match(/^\\/v1\\/paper\\/accounts\\/([a-f0-9]{32})(\\/trades)?$/);
+    const paperAccountMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})(\/trades)?$/);
     if(paperAccountMatch) {
       if(request.method!=="GET") return json({error:"Method not allowed"},405);
       const auth=request.headers.get("authorization")||"";
