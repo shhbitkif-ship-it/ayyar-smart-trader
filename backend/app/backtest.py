@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import Sequence
-from pydantic import BaseModel, Field
+import math
+from pydantic import BaseModel, Field, model_validator
 from .schemas import Candle
 from .indicators import ema
 
@@ -12,6 +13,12 @@ class BacktestRequest(BaseModel):
     fee_bps: float = Field(default=10.0, ge=0, le=500)
     slippage_bps: float = Field(default=5.0, ge=0, le=500)
 
+    @model_validator(mode="after")
+    def validate_finite_parameters(self):
+        for name in ("starting_capital", "fee_bps", "slippage_bps"):
+            if not math.isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        return self
 
 
 def run_ema_backtest(
@@ -26,7 +33,12 @@ def run_ema_backtest(
     This is a research simulation, not a live signal. Costs are charged on both
     entry and exit. No leverage, funding, taxes, or broker-specific lot rules.
     """
+    for name, value in (("starting_capital", starting_capital), ("fee_bps", fee_bps), ("slippage_bps", slippage_bps)):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite.")
     ordered = sorted(candles, key=lambda c: c.timestamp)
+    if any(ordered[i].timestamp >= ordered[i + 1].timestamp for i in range(len(ordered) - 1)):
+        raise ValueError("Candle timestamps must be unique and strictly increasing.")
     if len(ordered) < 60:
         raise ValueError("At least 60 OHLC candles are required.")
     if starting_capital <= 0 or fee_bps < 0 or slippage_bps < 0:
