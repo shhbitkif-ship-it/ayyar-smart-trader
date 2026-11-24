@@ -49,7 +49,7 @@
 
 
 ## دریافت و نصب نسخه آزمایشی اندروید
-1. در صفحه [آخرین اجرای ساخت اندروید](https://github.com/shhbitkif-ship-it/ayyar-smart-trader/actions/workflows/android.yml) آخرین اجرای موفق را باز کنید.
+1. در صفحه [صفحه اجرای ساخت و دریافت APK](https://github.com/shhbitkif-ship-it/ayyar-smart-trader/actions) آخرین اجرای موفق را باز کنید.
 2. با حساب GitHub وارد شوید؛ در بخش **Artifacts** فایل `ayyar-smart-trader-debug-apk` را دانلود کنید.
 3. فایل ZIP را در گوشی استخراج و فایل `app-debug.apk` را اجرا کنید.
 4. اگر اندروید اجازه نصب نداد، فقط برای برنامه‌ای که فایل را با آن باز می‌کنید گزینه **Allow from this source / اجازه از این منبع** را فعال کنید؛ پس از نصب می‌توانید آن را غیرفعال کنید.
