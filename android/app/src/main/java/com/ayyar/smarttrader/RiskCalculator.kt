@@ -19,6 +19,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
+private data class PortfolioGuardResult(val allowed:Boolean,val dailyLoss:Double,val drawdown:Double,val openRisk:Double,val proposedRisk:Double,val aggregateRisk:Double,val reason:String)
+
 private data class SizingResult(
     val allowed: Boolean,
     val lots: Double,
@@ -36,6 +38,13 @@ fun RiskCalculator() {
     var riskPercent by remember { mutableStateOf("1") }
     var dailyLoss by remember { mutableStateOf("0") }
     var drawdown by remember { mutableStateOf("0") }
+    var dayStartEquity by remember { mutableStateOf("100000000") }
+    var peakEquity by remember { mutableStateOf("100000000") }
+    var openRiskAmount by remember { mutableStateOf("0") }
+    var openPositions by remember { mutableStateOf("0") }
+    var portfolioResult by remember { mutableStateOf<PortfolioGuardResult?>(null) }
+    var portfolioError by remember { mutableStateOf<String?>(null) }
+    var portfolioLoading by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<SizingResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -121,6 +130,41 @@ fun RiskCalculator() {
                 }
                 Text(r.reason, color = muted, fontSize = 11.sp)
             }
+            HorizontalDivider(color = Color(0xFF343B49))
+            Text("کنترل ریسک کل پرتفوی", color = gold, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("برای محاسبه دقیق، ارقام واقعی حساب و مجموع ریسک باز را وارد کن.", color = muted, fontSize = 11.sp)
+            RiskInput("سرمایه ابتدای روز", dayStartEquity, { dayStartEquity = it }, "موجودی ابتدای روز")
+            RiskInput("بالاترین سرمایه ثبت‌شده", peakEquity, { peakEquity = it }, "اوج سرمایه حساب")
+            RiskInput("مجموع ریسک مبلغی معاملات باز", openRiskAmount, { openRiskAmount = it }, "مجموع زیان احتمالی تا حد ضرر")
+            RiskInput("تعداد موقعیت‌های باز", openPositions, { openPositions = it }, "۰ تا ۳")
+            Button(onClick = {
+                val e = number(equity); val day = number(dayStartEquity); val peak = number(peakEquity)
+                val openRisk = number(openRiskAmount); val count = number(openPositions)
+                if (e == null || day == null || peak == null || openRisk == null || count == null || e <= 0 || day <= 0 || peak <= 0 || openRisk < 0 || count < 0 || count > 10 || count % 1.0 != 0.0) {
+                    portfolioError = "مقادیر حساب، ریسک باز و تعداد موقعیت‌ها را بررسی کن."; portfolioResult = null
+                } else {
+                    portfolioError = null; portfolioResult = null; portfolioLoading = true
+                    scope.launch {
+                        try { portfolioResult = withContext(Dispatchers.IO) { checkPortfolioRisk(e, day, peak, openRisk, count.toInt()) } }
+                        catch (t: Throwable) { portfolioError = t.message ?: "بررسی پرتفوی انجام نشد." }
+                        finally { portfolioLoading = false }
+                    }
+                }
+            }, enabled = !portfolioLoading, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = gold, contentColor = Color(0xFF090B10))) {
+                Text(if (portfolioLoading) "در حال بررسی پرتفوی…" else "بررسی ریسک کل پرتفوی")
+            }
+            portfolioError?.let { Text(it, color = Color(0xFFFF8D8D), fontSize = 12.sp) }
+            portfolioResult?.let { p ->
+                HorizontalDivider(color = Color(0xFF343B49))
+                Text(if (p.allowed) "از نظر حدود ریسک مجاز است" else "ورود معامله جدید مسدود است", color = if (p.allowed) Color(0xFF8FD6A8) else Color(0xFFFF8D8D), fontWeight = FontWeight.Bold)
+                RiskValue("زیان روزانه محاسبه‌شده (٪)", p.dailyLoss * 100)
+                RiskValue("افت از اوج سرمایه (٪)", p.drawdown * 100)
+                RiskValue("ریسک معاملات باز", p.openRisk)
+                RiskValue("ریسک پیشنهادی معامله جدید", p.proposedRisk)
+                RiskValue("ریسک تجمیعی", p.aggregateRisk)
+                Text(p.reason, color = muted, fontSize = 11.sp)
+            }
+            Text("حدود پیش‌فرض: حداکثر ۱٪ ریسک معامله جدید، ۲٪ ریسک تجمیعی، حداکثر ۳ موقعیت باز، توقف در زیان روزانه ۳٪ یا افت ۸٪ از اوج. این کنترل سفارش ثبت نمی‌کند.", color = muted, fontSize = 10.sp)
             Text(
                 "نکته: مقدار ارزش قرارداد، گام حجم، اندازه تیک، کارمزد، اسپرد و قوانین نماد را از کارگزاری بررسی کن. خروجی تخمینی است، نه تضمین زیان نهایی.",
                 color = muted, fontSize = 10.sp
@@ -192,4 +236,19 @@ private fun calculatePositionSize(
     } finally {
         connection.disconnect()
     }
+}
+
+private fun checkPortfolioRisk(equity: Double, dayStart: Double, peak: Double, openRisk: Double, openPositions: Int): PortfolioGuardResult {
+    val connection = URL(BuildConfig.API_BASE_URL + "/v1/risk/portfolio-check").openConnection() as HttpURLConnection
+    connection.requestMethod = "POST"; connection.connectTimeout = 8000; connection.readTimeout = 8000
+    connection.doOutput = true; connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+    try {
+        val positions = org.json.JSONArray().apply { repeat(openPositions) { put(JSONObject().put("risk_amount", if (openPositions == 0) 0 else openRisk / openPositions)) } }
+        val payload = JSONObject().apply { put("equity", equity); put("day_start_equity", dayStart); put("peak_equity", peak); put("proposed_risk_fraction", 0.01); put("max_open_risk_fraction", 0.02); put("max_positions", 3); put("open_positions", positions) }
+        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        val status = connection.responseCode; val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val json = JSONObject(stream.bufferedReader().use { it.readText() })
+        if (status !in 200..299) throw IllegalStateException(json.optString("error", "خطای سرور: HTTP $status"))
+        return PortfolioGuardResult(json.optBoolean("allowed", false), json.optDouble("daily_loss_fraction"), json.optDouble("drawdown_fraction"), json.optDouble("open_risk_amount"), json.optDouble("proposed_risk_amount"), json.optDouble("aggregate_risk_amount"), json.optString("reason"))
+    } finally { connection.disconnect() }
 }
