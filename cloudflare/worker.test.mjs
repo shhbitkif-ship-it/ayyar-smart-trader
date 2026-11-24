@@ -119,6 +119,24 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.ok(body.warning.startsWith("Research only"));
 });
 
+test("EMA backtest rejects arithmetic overflow instead of returning corrupt metrics", async () => {
+  const candles = [];
+  for (let i=0;i<80;i++) {
+    const close = i<55 ? 1e308 : 1.1e308;
+    candles.push({
+      timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close,low:close*0.99,close
+    });
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,starting_capital:10000})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,400);
+  assert.match(body.error,/numeric range/i);
+});
+
 test("EMA backtest rejects incomplete or invalid OHLC input", async () => {
   const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
     method:"POST",headers:{"content-type":"application/json"},
