@@ -4,6 +4,7 @@ from .schemas import EvaluateRequest, SignalResponse
 from .market_data import market_snapshot
 from .config import DEFAULT_RISK_PER_TRADE, MAX_DAILY_LOSS, MAX_DRAWDOWN
 from .risk import PositionSizeRequest, calculate_position_size
+from .backtest import BacktestRequest, backtest
 
 app = FastAPI(
     title="Ayyar Smart Trader API",
@@ -53,3 +54,8 @@ def position_size(payload: PositionSizeRequest):
 @app.post("/v1/signals/evaluate", response_model=SignalResponse)
 def evaluate_signal(payload: EvaluateRequest):
     return evaluate(payload)
+
+
+@app.post("/v1/backtest/ema-crossover")
+def ema_crossover_backtest(payload: BacktestRequest):
+    return backtest(payload)
