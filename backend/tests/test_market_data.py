@@ -127,3 +127,57 @@ def test_snapshot_marks_no_live_quotes_unavailable(monkeypatch):
     monkeypatch.setattr(market_data, "_cache", None)
     result = asyncio.run(market_data.market_snapshot())
     assert result["status"] == "UNAVAILABLE"
+
+def test_snapshot_rejects_quotes_when_provider_timestamp_is_missing(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+    async def fake_provider():
+        now = datetime.now(timezone.utc).isoformat()
+        return {"items": [{"id": "xau", "price": 2300, "unit": "USD", "updated_utc": now, "stale": False}]}
+    monkeypatch.setattr(market_data, "_fetch_provider_json", fake_provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    result = asyncio.run(market_data.market_snapshot())
+    xau = next(q for q in result["quotes"] if q["symbol"] == "XAUUSD")
+    assert xau["status"] == "STALE"
+    assert result["status"] == "UNAVAILABLE"
+
+def test_snapshot_rejects_quotes_when_provider_timestamp_is_old(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+    async def fake_provider():
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(seconds=MAX_AGE_SECONDS + 60)).isoformat()
+        return {"generated_utc": old, "items": [{"id": "xau", "price": 2300, "unit": "USD", "updated_utc": now.isoformat(), "stale": False}]}
+    monkeypatch.setattr(market_data, "_fetch_provider_json", fake_provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    result = asyncio.run(market_data.market_snapshot())
+    xau = next(q for q in result["quotes"] if q["symbol"] == "XAUUSD")
+    assert xau["status"] == "STALE"
+
+def test_provider_failure_is_not_cached_and_next_request_recovers(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+    calls = {"count": 0}
+    async def flaky_provider():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("temporary outage")
+        now = datetime.now(timezone.utc).isoformat()
+        return {"generated_utc": now, "items": [{"id": "xau", "price": 2300, "unit": "USD", "updated_utc": now, "stale": False}]}
+    monkeypatch.setattr(market_data, "_fetch_provider_json", flaky_provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    first = asyncio.run(market_data.market_snapshot())
+    second = asyncio.run(market_data.market_snapshot())
+    assert first["status"] == "UNAVAILABLE"
+    assert second["status"] == "PARTIAL"
+    assert calls["count"] == 2
+
+def test_cached_snapshot_expires_at_quote_freshness_limit():
+    from app.market_data import _refresh_snapshot_status
+    now = datetime.now(timezone.utc)
+    stamp = now - timedelta(seconds=MAX_AGE_SECONDS - 2)
+    quote = _normalise({"price": 2300, "unit": "USD", "updated_utc": stamp.isoformat(), "stale": False}, "XAUUSD", "Gold", "xau")
+    snapshot = {"status": "LIVE", "provider_generated_at": now, "quotes": [quote]}
+    refreshed = _refresh_snapshot_status(snapshot, now + timedelta(seconds=5))
+    assert refreshed["quotes"][0]["status"] == "STALE"
+    assert refreshed["status"] == "UNAVAILABLE"
