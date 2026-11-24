@@ -376,7 +376,8 @@ export default {
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
         };
-        await archiveSignal(env,symbol,result);
+        try { result.archive_status=await archiveSignal(env,symbol,result)?"SAVED":"SKIPPED"; }
+        catch { result.archive_status="UNAVAILABLE"; }
         return json(result);
       } catch(e) {
         return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
