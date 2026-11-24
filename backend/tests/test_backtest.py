@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import pytest
-from app.backtest import run_ema_backtest
+from app.backtest import BacktestRequest, run_ema_backtest
+from pydantic import ValidationError
 from app.schemas import Candle
 
 
@@ -82,3 +83,34 @@ def test_equity_curve_marks_every_candle_for_drawdown_accuracy():
     assert len(result["equity_curve"]) == len(candles)
     assert result["equity_curve"][0]["timestamp"] == candles[0].timestamp.isoformat()
     assert result["equity_curve"][-1]["timestamp"] == candles[-1].timestamp.isoformat()
+
+
+@pytest.mark.parametrize("field,bad_value", [
+    ("starting_capital", float("nan")),
+    ("starting_capital", float("inf")),
+    ("fee_bps", float("nan")),
+    ("slippage_bps", float("inf")),
+])
+def test_backtest_request_rejects_non_finite_parameters(field, bad_value):
+    values = {"candles": sample_candles()}
+    values[field] = bad_value
+    with pytest.raises(ValidationError):
+        BacktestRequest(**values)
+
+
+@pytest.mark.parametrize("field,bad_value", [
+    ("starting_capital", float("inf")),
+    ("fee_bps", float("nan")),
+    ("slippage_bps", float("-inf")),
+])
+def test_backtest_engine_rejects_non_finite_parameters(field, bad_value):
+    kwargs = {field: bad_value}
+    with pytest.raises(ValueError, match="finite"):
+        run_ema_backtest(sample_candles(), **kwargs)
+
+
+def test_backtest_rejects_duplicate_candle_timestamps():
+    candles = sample_candles()
+    candles[1] = candles[0].model_copy(update={"close": candles[0].close})
+    with pytest.raises(ValueError, match="timestamps"):
+        run_ema_backtest(candles)
