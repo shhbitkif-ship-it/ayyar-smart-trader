@@ -27,6 +27,6 @@ export async function fetchTalasanj(env={}) {
       const fresh=Number.isFinite(stamp)&&age>=-30&&age<=90;
       return validPrice&&fresh?[{id,price,unit,updated_utc:updated,stale:false}]:[];
     });
-    return {generated_utc:body.updated_at,items};
+    return items.length?{generated_utc:body.updated_at,items}:null;
   } catch { return null; }
 }
