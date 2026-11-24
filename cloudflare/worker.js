@@ -381,8 +381,8 @@ function calculateSignalPerformance(records,candles) {
       const end=index+horizon;
       if(end>=candles.length) { pending++; row.outcomes[horizon]={status:"PENDING",required_future_candles:horizon}; continue; }
       let contiguous=true;
-      for(let i=index+1;i<=end;i++) {
-        if(Date.parse(candles[i].timestamp)-Date.parse(candles[i-1].timestamp)!==3600000) { contiguous=false; break; }
+      for(let step=1;step<=horizon;step++) {
+        if(times.get(signalTime+step*3600000)!==index+step) { contiguous=false; break; }
       }
       if(!contiguous) { unavailable++; row.outcomes[horizon]={status:"DATA_GAP"}; continue; }
       const window=candles.slice(index+1,end+1);
