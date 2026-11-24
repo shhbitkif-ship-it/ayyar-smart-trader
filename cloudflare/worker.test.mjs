@@ -257,14 +257,10 @@ test("Talasanj provider fails closed when credentials or valid provider data are
 });
 
 
-function yahooChartFixture(candles) {
-  return {chart:{result:[{
-    timestamp:candles.map(c=>Math.floor(Date.parse(c.timestamp)/1000)),
-    indicators:{quote:[{
-      open:candles.map(c=>c.open),high:candles.map(c=>c.high),
-      low:candles.map(c=>c.low),close:candles.map(c=>c.close)
-    }]}
-  }],error:null}};
+function xausChartFixture(candles) {
+  return {data_state:{status:"fresh",as_of:new Date().toISOString(),source:"upstream",age_seconds:1},
+    points:candles.map(c=>({t:Math.floor(Date.parse(c.timestamp)/1000),
+      o:c.open,h:c.high,l:c.low,c:c.close,v:null}))};
 }
 
 test("global gold candle endpoint returns only completed validated OHLC candles", async () => {
@@ -279,15 +275,15 @@ test("global gold candle endpoint returns only completed validated OHLC candles"
   let requested="";
   globalThis.fetch=async url=>{
     requested=String(url);
-    return new Response(JSON.stringify(yahooChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+    return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
   };
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
     const body=await response.json();
     assert.equal(response.status,200);
-    assert.match(requested,/XAUUSD%3DX/);
-    assert.equal(body.provider,"Yahoo Finance");
-    assert.equal(body.provider_symbol,"XAUUSD=X");
+    assert.match(requested,/xaus.com\/api\/v1\/chart\?symbol=xau/);
+    assert.equal(body.provider,"XAUS");
+    assert.equal(body.provider_symbol,"xau");
     assert.equal(body.status,"LIVE");
     assert.equal(body.candles.length,80);
     assert.equal(body.candles.at(-1).timestamp,candles.at(-1).timestamp);
@@ -302,7 +298,7 @@ test("global gold candle endpoint rejects stale upstream OHLC data", async () =>
     const close=2600+i;
     return {timestamp:new Date(old-(79-i)*3600000).toISOString(),open:close,high:close+1,low:close-1,close};
   });
-  globalThis.fetch=async()=>new Response(JSON.stringify(yahooChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
     const body=await response.json();
@@ -324,13 +320,13 @@ test("latest signal endpoint evaluates real provider OHLC and never enables exec
     return {timestamp:new Date(lastClosed-(119-i)*intervalMs).toISOString(),
       open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
   });
-  globalThis.fetch=async()=>new Response(JSON.stringify(yahooChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=60m"));
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
-    assert.equal(body.market_provider_symbol,"XAUUSD=X");
+    assert.equal(body.market_provider,"XAUS");\n    assert.equal(body.market_provider_symbol,"xau");
     assert.equal(body.signal,"BUY");
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
