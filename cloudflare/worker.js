@@ -418,9 +418,14 @@ function calculateSignalPerformance(records,candles) {
     }
     delete m._returns; delete m._favorable; delete m._adverse;
   }
+  const maximumScoredSamples=Math.max(0,...Object.values(stats).map(item=>item.scored));
   return {method:"completed_60m_candles_next_open_entry",horizons:Object.values(stats),
     outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
-    unavailable_count:unavailable,execution_enabled:false,
+    unavailable_count:unavailable,
+    sample_quality:{minimum_context_samples:30,maximum_scored_samples:maximumScoredSamples,
+      status:maximumScoredSamples>=30?"AT_OR_ABOVE_CONTEXT_THRESHOLD":"BELOW_CONTEXT_THRESHOLD",
+      note:"30 is a practical display threshold only; it does not establish statistical significance or predict future performance."},
+    execution_enabled:false,
     warning:"Historical descriptive evaluation only. Entry is the next completed candle open; no fees, spread, slippage or broker fills are modeled. Small samples are not evidence of future profitability."};
 }
 
