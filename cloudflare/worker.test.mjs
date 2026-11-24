@@ -562,6 +562,9 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(body.outcomes[0].outcomes[1].entry_price,candles[11].open);
     assert.equal(body.outcomes[0].outcomes[1].entry_basis,"next_completed_candle_open");
     assert.equal(body.execution_enabled,false);
+    assert.equal(body.sample_quality.minimum_context_samples,30);
+    assert.equal(body.sample_quality.maximum_scored_samples,1);
+    assert.equal(body.sample_quality.status,"BELOW_CONTEXT_THRESHOLD");
     assert.match(body.warning,/not evidence of future profitability/);
     const gapCandles=candles.filter((_,i)=>i!==11);
     globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(gapCandles)),
