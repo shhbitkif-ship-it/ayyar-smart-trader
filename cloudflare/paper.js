@@ -49,7 +49,7 @@ export function simulatePaperTrading(payload) {
     position=null;
   };
   for(let i=1;i<candles.length;i++){
-    const c=candles[i],signalIndex=i-slow;
+    const c=candles[i],signalIndex=i-slow+1;
     if(position){
       let exit=null,reason=null;
       if(c.open<=position.stop_loss){exit=c.open;reason="STOP_GAP";}
