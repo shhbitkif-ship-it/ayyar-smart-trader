@@ -687,3 +687,22 @@ test("market regime identifies trend and blocks range and high volatility", asyn
     mode="volatile";body=await get();assert.equal(body.status,"HIGH_VOLATILITY");assert.equal(body.tradeable,false);assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=original;}
 });
+test("portfolio risk guard allows a proposal within aggregate limits",async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({equity:100000,day_start_equity:100000,peak_equity:105000,proposed_risk_fraction:0.01,open_positions:[{risk_amount:500}],max_open_risk_fraction:0.02,max_positions:3})}));
+ const body=await response.json();assert.equal(response.status,200);assert.equal(body.allowed,true);assert.equal(body.aggregate_risk_amount,1500);assert.equal(body.execution_enabled,false);
+});
+test("portfolio risk guard blocks daily loss and peak drawdown",async()=>{
+ const call=async payload=>(await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}))).json();
+ const base={equity:97000,day_start_equity:100000,peak_equity:110000,open_positions:[]};
+ const daily=await call(base);assert.equal(daily.allowed,false);assert.match(daily.reason,/Daily loss limit/);
+ const dd=await call({...base,equity:101000,day_start_equity:101000});assert.equal(dd.allowed,false);assert.match(dd.reason,/drawdown limit/);
+});
+test("portfolio risk guard blocks excessive aggregate risk and concurrent positions",async()=>{
+ const call=async payload=>(await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}))).json();
+ const base={equity:100000,day_start_equity:100000,peak_equity:100000,proposed_risk_fraction:0.01};
+ const exposure=await call({...base,open_positions:[{risk_amount:1500}]});assert.equal(exposure.allowed,false);assert.match(exposure.reason,/aggregate open plus proposed risk/i);
+ const count=await call({...base,open_positions:[{risk_amount:100},{risk_amount:100},{risk_amount:100}]});assert.equal(count.allowed,false);assert.match(count.reason,/concurrent positions/i);
+});
+test("portfolio risk guard rejects proposed risk above the hard limit",async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/risk/portfolio-check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({equity:100000,day_start_equity:100000,peak_equity:100000,proposed_risk_fraction:0.05})}));assert.equal(response.status,400);
+});
