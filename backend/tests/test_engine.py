@@ -85,3 +85,26 @@ def test_duplicate_confirmation_timestamps_are_rejected():
     assert result.action == "NO_TRADE"
     assert result.status == "STALE"
     assert "duplicate confirmation" in result.reason.lower()
+
+
+@pytest.mark.parametrize("timeframe,step", [("1m", 5), ("5m", 20), ("15m", 50), ("30m", 100), ("1h", 200)])
+def test_large_intraday_history_gap_is_no_trade(timeframe, step):
+    now = datetime.now(timezone.utc)
+    data = candles(220, 1, now - timedelta(minutes=220))
+    # Introduce a gap well beyond the permitted interval in the middle.
+    for index in range(110, len(data)):
+        data[index] = data[index].model_copy(update={"timestamp": data[index].timestamp + timedelta(minutes=step)})
+    req = EvaluateRequest(symbol="XAUUSD", timeframe=timeframe, candles=data)
+    result = evaluate(req, now + timedelta(minutes=step))
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "gap" in result.reason.lower()
+
+
+def test_daily_history_allows_weekend_gap():
+    now = datetime.now(timezone.utc)
+    data = candles(220, 1440, now - timedelta(days=222))
+    data[150:] = [c.model_copy(update={"timestamp": c.timestamp + timedelta(days=2)}) for c in data[150:]]
+    req = EvaluateRequest(symbol="XAUUSD", timeframe="1d", candles=data)
+    result = evaluate(req, now)
+    assert result.status != "STALE" or "gap" not in result.reason.lower()
