@@ -47,6 +47,19 @@ test("risk policy disables execution and caps risk", async () => {
   assert.equal(policy.default_risk_per_trade,0.01);
 });
 
+
+test("position sizing rejects numeric overflow and underflow", async () => {
+  const response = await worker.fetch(new Request("https://unit.test/v1/risk/position-size", {
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({
+      equity:1e100,entry:1e-200,stop_loss:2e-200,
+      contract_value_per_price_unit:1e-100
+    })
+  }));
+  assert.equal(response.status,400);
+  assert.match((await response.json()).error,/overflow or underflow/i);
+});
+
 test("position sizing blocks daily loss limit", async () => {
   const response = await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
     method:"POST",headers:{"content-type":"application/json"},
