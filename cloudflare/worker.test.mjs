@@ -208,3 +208,50 @@ test("Telegram webhook reports missing configuration without exposing secrets", 
   }), {});
   assert.equal(response.status,503);
 });
+
+
+import { fetchTalasanj } from "./providers.js";
+
+test("Talasanj provider maps only supported symbols with verified units and timestamps", async () => {
+  const originalFetch = globalThis.fetch;
+  const stamp = new Date().toISOString();
+  let seenAuthorization = false;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(String(url), "https://talasanj.info/api/v1/prices");
+    seenAuthorization = options.headers.authorization === "Bearer test-only-key";
+    return new Response(JSON.stringify({
+      updated_at: stamp,
+      prices: {
+        gram18: { price: 7250000, updated_at: stamp },
+        gram24: { price: 9660000, updated_at: stamp },
+        mazaneh: { price: 31400000, updated_at: stamp },
+        coin_full: { price: 81000000, updated_at: stamp },
+        coin_half: { price: 43000000, updated_at: stamp },
+        coin_quarter: { price: 26000000, updated_at: stamp },
+        usd: { price: 71000, updated_at: stamp },
+        ounce: { price: 2660, updated_at: stamp }
+      }
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await fetchTalasanj({ TALASANJ_API_KEY: "test-only-key" });
+    assert.equal(seenAuthorization, true);
+    assert.equal(result.items.length, 8);
+    assert.equal(result.items.find(x => x.id === "gold-18k").unit, "IRT");
+    assert.equal(result.items.find(x => x.id === "xau").unit, "USD");
+    assert.ok(result.items.every(x => x.price > 0 && x.updated_utc === stamp));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Talasanj provider fails closed when credentials or valid provider data are absent", async () => {
+  assert.equal(await fetchTalasanj({}), null);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("upstream unavailable", { status: 503 });
+  try {
+    assert.equal(await fetchTalasanj({ TALASANJ_API_KEY: "test-only-key" }), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
