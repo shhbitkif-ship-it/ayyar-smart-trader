@@ -73,8 +73,10 @@ test("signal endpoint computes a bounded technical confluence score from fresh c
   }));
   const body=await response.json();
   assert.equal(response.status,200,JSON.stringify(body));
-  assert.ok(["BUY","SELL","NO_TRADE"].includes(body.signal));
-  assert.ok(body.confidence>=0&&body.confidence<=100);
+  assert.equal(body.signal,"BUY");
+  assert.equal(body.confidence,100);
+  assert.ok(body.entry>0&&body.stop_loss>0&&body.take_profit>body.entry);
+  assert.equal(body.risk_reward_ratio,2);
   assert.equal(body.execution_enabled,false);
   assert.equal(body.confidence_type,"technical_confluence_score_not_probability");
 });
