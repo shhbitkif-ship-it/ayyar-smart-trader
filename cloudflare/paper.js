@@ -68,12 +68,17 @@ export function simulatePaperTrading(payload) {
         const ranges=prior.map((x,j)=>Math.max(x.high-x.low,Math.abs(x.high-candles[Math.max(0,Math.max(1,i-14)+j-1)].close),Math.abs(x.low-candles[Math.max(0,Math.max(1,i-14)+j-1)].close)));
         const atr=ranges.reduce((a,b)=>a+b,0)/ranges.length;
         const distance=atr*1.5,rawEntry=candles[i+1].open,entry=rawEntry*(1+costRate);
-        const riskAmount=equity*risk,lossPerUnit=distance*contract,quantity=riskAmount/lossPerUnit;
-        const stop=entry-distance,target=entry+distance*2,entryFee=rawEntry*quantity*contract*fee/10000;
+        const riskAmount=equity*risk;
+        const stop=entry-distance,target=entry+distance*2;
+        const entryFeePerUnit=rawEntry*contract*fee/10000;
+        const exitFeePerUnit=stop*contract*fee/10000;
+        const lossPerUnit=(entry-stop*(1-costRate))*contract+entryFeePerUnit+exitFeePerUnit;
+        const quantity=riskAmount/lossPerUnit;
+        const entryFee=rawEntry*quantity*contract*fee/10000;
         if(![atr,distance,entry,riskAmount,lossPerUnit,quantity,stop,target,entryFee].every(Number.isFinite)||
-          atr<=0||distance<=0||quantity<=0||stop<=0||target<=entry)
+          atr<=0||distance<=0||quantity<=0||lossPerUnit<=0||stop<=0||target<=entry)
           throw new Error("Paper position sizing exceeded numeric limits");
-        position={entry_time:candles[i+1].timestamp,entry_price:entry,quantity,stop_loss:stop,take_profit:target,entry_fee};
+        position={entry_time:candles[i+1].timestamp,entry_price:entry,quantity,stop_loss:stop,take_profit:target,entry_fee:entryFee};
       }
     }
     const mark=position?equity+(c.close-position.entry_price)*position.quantity*contract-position.entry_fee:equity;
