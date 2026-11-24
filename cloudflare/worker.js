@@ -348,9 +348,9 @@ export default {
         }]));
         const intraday=analyses[1].signal;
         const shortAligned=analyses[0].signal===intraday;
-        const dailyAligned=(intraday==="BUY"&&analyses[2].trend==="BULLISH")||
-          (intraday==="SELL"&&analyses[2].trend==="BEARISH");
-        const aligned=intraday!=="NO_TRADE"&&shortAligned&&dailyAligned;
+        const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
+        const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
+        const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned;
         const base=analyses[1];
         return json({
           signal:aligned?intraday:"NO_TRADE",
@@ -362,7 +362,7 @@ export default {
           timeframes:byInterval,market_data_status:"LIVE",
           market_provider:"XAUS",market_source_url:"https://xaus.com/api/v1/chart",
           last_candle_at:markets[1].last_candle_at,
-          reasons:aligned?["15m and 60m signals agree","Daily trend confirms direction","Entry levels use the 60m candle"]:["15m, 60m and daily trend are not fully aligned; wait for confirmation."],
+          reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","Entry levels use the 60m candle"]:["Signal or EMA trend is not aligned across 15m, 60m and daily charts; wait for confirmation."],
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
         });
