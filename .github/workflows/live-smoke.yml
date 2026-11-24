@@ -85,7 +85,7 @@ jobs:
           print("LATEST_OHLC_SIGNAL_OK", json.dumps({
               "signal":latest.get("signal"),"data_status":latest.get("data_status"),
               "market_data_status":latest.get("market_data_status"),
-              "confidence":latest.get("confidence"),
+              "confidence":latest.get("confidence"),"reason":latest.get("reason"),
               "execution_enabled":latest.get("execution_enabled")}, ensure_ascii=False))
 
           start = datetime(2026, 1, 1, tzinfo=timezone.utc)
