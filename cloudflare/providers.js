@@ -19,8 +19,13 @@ export async function fetchTalasanj(env={}) {
     const body=await response.json();
     if(!body?.prices || typeof body.prices!=="object" || !body.updated_at) throw new Error("Invalid Talasanj response");
     const items=MAP.flatMap(([id,symbol,unit])=>{
-      const row=body.prices[symbol],price=Number(row?.price);
-      return Number.isFinite(price)&&price>0?[{id,price,unit,updated_utc:row.updated_at||body.updated_at,stale:false}]:[];
+      const row=body.prices[symbol],price=row?.price;
+      const updated=row?.updated_at||body.updated_at;
+      const stamp=typeof updated==="string"?Date.parse(updated):NaN;
+      const age=(Date.now()-stamp)/1000;
+      const validPrice=typeof price==="number"&&Number.isFinite(price)&&price>0;
+      const fresh=Number.isFinite(stamp)&&age>=-30&&age<=90;
+      return validPrice&&fresh?[{id,price,unit,updated_utc:updated,stale:false}]:[];
     });
     return {generated_utc:body.updated_at,items};
   } catch { return null; }
