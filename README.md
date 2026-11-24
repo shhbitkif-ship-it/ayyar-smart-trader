@@ -27,19 +27,17 @@
 - ارزیابی تحلیل: POST /v1/signals/evaluate
 - مستندات: /docs
 
-## استقرار رایگان API روی Vercel (بدون ساخت API Token)
-1. وارد https://vercel.com/new شو و با حساب GitHub ادامه بده.
-2. مخزن `shhbitkif-ship-it/ayyar-smart-trader` را Import کن.
-3. در تنظیمات پروژه، **Root Directory** را روی `backend` بگذار.
-4. Framework Preset را روی **FastAPI** قرار بده (یا اگر خودکار تشخیص داده شد، همان را نگه دار).
-5. نام پروژه را `ayyar-smart-trader` انتخاب کن و Deploy را بزن.
-6. پس از اتمام، آدرس ساخته‌شده را باز کن و انتهای آن `/health` را اضافه کن. باید پاسخ JSON با `"status":"ok"` ببینی.
-7. سپس `/v1/market/quotes` را بررسی کن. فقط اگر timestamp تازه و status برابر LIVE بود، داده را زنده تلقی کن.
-
-این روش به API Token یا کارت بانکی نیاز ندارد؛ اتصال GitHub به Vercel و تأیید Import باید یک‌بار توسط صاحب حساب انجام شود. پلن Hobby رایگان برای استفاده شخصی و غیرتجاری است و محدودیت مصرف دارد؛ شرایط جاری را در https://vercel.com/docs/plans/hobby ببین.
+## API رایگان مستقرشده روی Cloudflare Workers
+- آدرس پایه: `https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev`
+- سلامت: [`/health`](https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev/health)
+- قیمت‌ها: [`/v1/market/quotes`](https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev/v1/market/quotes)
+- وضعیت بازار: `/v1/market/status`
+- سیاست ریسک: `/v1/risk/policy`
+- کد Worker در `cloudflare/worker.js` نگهداری می‌شود.
+- این Worker از فید عمومی NerkhAra استفاده می‌کند؛ هیچ کلید API در برنامه یا مخزن قرار نگرفته است.
 
 ## اندروید
-پوشهٔ `android` پروژهٔ Android Studio است. GitHub Actions فایل Debug APK را با نام `ayyar-smart-trader-debug-apk` به‌صورت Artifact می‌سازد. پس از استقرار API، مقدار `API_BASE_URL` در فایل `android/app/build.gradle.kts` باید با دامنه واقعی Vercel هماهنگ شود و APK دوباره ساخته شود.
+پوشهٔ `android` پروژهٔ Android Studio است. GitHub Actions فایل Debug APK را با نام `ayyar-smart-trader-debug-apk` به‌صورت Artifact می‌سازد. نشانی API رایگان Cloudflare Workers در تنظیمات پیش‌فرض برنامه قرار گرفته است.
 
 ## ساخت و آزمون خودکار
 با هر push به شاخهٔ `main`، GitHub Actions تست‌های بک‌اند و ساخت APK آزمایشی Debug را اجرا می‌کند.
@@ -48,7 +46,7 @@
 - API و اپلیکیشن ابزار اطلاعاتی/تحلیلی هستند، نه توصیه مالی.
 - اتصال به کارگزاری و ثبت سفارش واقعی پیاده‌سازی نشده است.
 - Snapshot ده‌دقیقه‌ای برای معاملات سریع یک‌دقیقه‌ای کافی نیست؛ تا دریافت داده کندلی معتبر، خروجی باید محافظه‌کارانه باشد.
-- پیش از اتکا به قیمت‌ها، ساختار JSON و صحت timestamp منبع باید در محیط مستقرشده آزموده شود.
+- ساختار JSON و قرارداد منبع بر اساس مستندات رسمی NerkhAra پیاده‌سازی شده است؛ سلامت Worker باید با endpointهای بالا بررسی شود و وضعیت هر نرخ فقط در صورت تازه و معتبر بودن LIVE خواهد بود.
 
 
 ### نکتهٔ راه‌اندازی Vercel
