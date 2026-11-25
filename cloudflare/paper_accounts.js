@@ -50,6 +50,7 @@ export class PaperAccount extends DurableObject {
         exit_price REAL,
         realized_pnl REAL,
         fees REAL NOT NULL DEFAULT 0,
+        fee_bps REAL NOT NULL DEFAULT 0,
         idempotency_key TEXT UNIQUE,
         last_checked_at TEXT,
         strategy_id TEXT,
@@ -69,6 +70,7 @@ export class PaperAccount extends DurableObject {
       CREATE INDEX IF NOT EXISTS idx_paper_notifications_created
         ON paper_notifications(created_at DESC);
     `);
+    try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN fee_bps REAL NOT NULL DEFAULT 0"); } catch {}
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN last_checked_at TEXT"); } catch {}
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN strategy_id TEXT"); } catch {}
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN signal_id TEXT"); } catch {}
@@ -375,7 +377,7 @@ export class PaperAccount extends DurableObject {
     if(!account) return null;
     const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
       `SELECT trade_id,status,symbol,side,quantity,entry_price,stop_loss,take_profit,
-       fees,opened_at,strategy_id,signal_id,signal_type
+       fees,fee_bps,opened_at,strategy_id,signal_id,signal_type
        FROM paper_trades WHERE idempotency_key=? LIMIT 1`,
       trade.idempotency_key
     ).toArray()[0] : null;
@@ -387,7 +389,7 @@ export class PaperAccount extends DurableObject {
         Number(existing.entry_price)===Number(trade.entry_price)&&
         Number(existing.stop_loss)===Number(trade.stop_loss)&&
         Number(existing.take_profit)===Number(trade.take_profit)&&
-        Number(existing.fees)===expectedFee&&existing.opened_at===createdAt&&
+        Number(existing.fees)===expectedFee&&Number(existing.fee_bps)===Number(trade.fee_bps)&&existing.opened_at===createdAt&&
         (existing.strategy_id??null)===(trade.strategy_id??null)&&
         (existing.signal_id??null)===(trade.signal_id??null)&&
         (existing.signal_type??null)===(trade.signal_type??null);
@@ -408,7 +410,8 @@ export class PaperAccount extends DurableObject {
     const summary=this.getSummary(tokenHash);
     const open=this.ctx.storage.sql.exec(
       `SELECT COALESCE(SUM(quantity*entry_price),0) AS exposure,
-       COALESCE(SUM(quantity*ABS(entry_price-stop_loss)+fees),0) AS risk
+       COALESCE(SUM(quantity*ABS(entry_price-stop_loss)+fees+
+         quantity*stop_loss*fee_bps/10000),0) AS risk
        FROM paper_trades WHERE status='OPEN'`
     ).toArray()[0];
     const notional=trade.quantity*trade.entry_price;
@@ -452,11 +455,11 @@ export class PaperAccount extends DurableObject {
       throw new Error("MAX_DRAWDOWN_LIMIT_EXCEEDED");
     this.ctx.storage.sql.exec(
       `INSERT INTO paper_trades
-       (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,idempotency_key,
+       (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,fee_bps,idempotency_key,
         strategy_id,signal_id,signal_type)
-       VALUES(?,?,?,?,?,?,?,'OPEN',?,?,?,?,?,?)`,
+       VALUES(?,?,?,?,?,?,?,'OPEN',?,?,?,?,?,?,?)`,
       trade.trade_id,trade.symbol,trade.side,trade.quantity,trade.entry_price,
-      trade.stop_loss,trade.take_profit,createdAt,entryFee,trade.idempotency_key,
+      trade.stop_loss,trade.take_profit,createdAt,entryFee,trade.fee_bps,trade.idempotency_key,
       trade.strategy_id??null,trade.signal_id??null,trade.signal_type??null
     );
     this._appendLedgerEntry(account,"TRADE_OPENED:"+trade.trade_id,"TRADE_OPENED",-entryFee,
