@@ -204,6 +204,62 @@ export class PaperAccount extends DurableObject {
       mode:"PAPER_ONLY",execution_enabled:false};
   }
 
+  getPerformanceReport(tokenHash,period="week",asOf) {
+    const account=this.authorizedAccount(tokenHash);
+    if(!account) return null;
+    const days=period==="month"?30:7;
+    const endDate=asOf||new Date().toISOString().slice(0,10);
+    const endMs=Date.parse(endDate+"T00:00:00.000Z");
+    if(!Number.isFinite(endMs)||new Date(endMs).toISOString().slice(0,10)!==endDate)
+      throw new Error("INVALID_REPORT_DATE");
+    const startDate=new Date(endMs-(days-1)*86400000).toISOString().slice(0,10);
+    const daily=this.ctx.storage.sql.exec(
+      `SELECT substr(closed_at,1,10) AS day,COUNT(*) AS trades,
+       SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) AS wins,
+       SUM(CASE WHEN realized_pnl<0 THEN 1 ELSE 0 END) AS losses,
+       COALESCE(SUM(realized_pnl),0) AS pnl,
+       COALESCE(SUM(fees),0) AS fees,
+       COALESCE(SUM(CASE WHEN realized_pnl>0 THEN realized_pnl ELSE 0 END),0) AS gross_profit,
+       COALESCE(SUM(CASE WHEN realized_pnl<0 THEN -realized_pnl ELSE 0 END),0) AS gross_loss
+       FROM paper_trades WHERE status='CLOSED' AND closed_at>=? AND closed_at<?
+       GROUP BY substr(closed_at,1,10) ORDER BY day ASC`,
+      startDate+"T00:00:00.000Z",new Date(endMs+86400000).toISOString()
+    ).toArray();
+    const byDay=new Map(daily.map(row=>[row.day,row]));
+    const closed=this.ctx.storage.sql.exec(
+      `SELECT realized_pnl FROM paper_trades WHERE status='CLOSED' AND closed_at>=? AND closed_at<?
+       ORDER BY closed_at ASC`,
+      startDate+"T00:00:00.000Z",new Date(endMs+86400000).toISOString()
+    ).toArray();
+    let balance=Number(account.starting_capital),peak=balance,maxDrawdown=0,maxDrawdownPct=0;
+    let trades=0,wins=0,losses=0,netPnl=0,fees=0,grossProfit=0,grossLoss=0;
+    const equityCurve=[];
+    for(let i=0;i<days;i++){
+      const day=new Date(Date.parse(startDate+"T00:00:00.000Z")+i*86400000).toISOString().slice(0,10);
+      const row=byDay.get(day);
+      const pnl=Number(row?.pnl||0);
+      balance+=pnl;trades+=Number(row?.trades||0);wins+=Number(row?.wins||0);
+      losses+=Number(row?.losses||0);netPnl+=pnl;fees+=Number(row?.fees||0);
+      grossProfit+=Number(row?.gross_profit||0);grossLoss+=Number(row?.gross_loss||0);
+      peak=Math.max(peak,balance);
+      const drawdown=Math.max(0,peak-balance);
+      maxDrawdown=Math.max(maxDrawdown,drawdown);
+      maxDrawdownPct=Math.max(maxDrawdownPct,peak>0?drawdown/peak*100:0);
+      equityCurve.push({date:day,balance:Number(balance.toFixed(8)),daily_pnl:Number(pnl.toFixed(8))});
+    }
+    const avgWin=wins?grossProfit/wins:0,avgLoss=losses?grossLoss/losses:0;
+    return {period,timezone:"UTC",start_date:startDate,end_date:endDate,starting_balance:Number(account.starting_capital),
+      ending_balance:Number(balance.toFixed(8)),closed_trades:trades,wins,losses,
+      win_rate_pct:trades?Number((wins/trades*100).toFixed(2)):0,
+      net_pnl:Number(netPnl.toFixed(8)),fees:Number(fees.toFixed(8)),
+      gross_profit:Number(grossProfit.toFixed(8)),gross_loss:Number(grossLoss.toFixed(8)),
+      profit_factor:grossLoss>0?Number((grossProfit/grossLoss).toFixed(4)):null,
+      average_win:Number(avgWin.toFixed(8)),average_loss:Number(avgLoss.toFixed(8)),
+      expectancy:trades?Number((netPnl/trades).toFixed(8)):0,
+      max_drawdown:Number(maxDrawdown.toFixed(8)),max_drawdown_pct:Number(maxDrawdownPct.toFixed(2)),
+      equity_curve:equityCurve,mode:"PAPER_ONLY",execution_enabled:false};
+  }
+
   closeTrade(tokenHash,tradeId,exitPrice,feeBps,closedAt) {
     if(!this.authorizedAccount(tokenHash)) return null;
     const trade=this.ctx.storage.sql.exec("SELECT * FROM paper_trades WHERE trade_id=? AND status='OPEN' LIMIT 1",tradeId).toArray()[0];
