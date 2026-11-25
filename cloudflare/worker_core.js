@@ -526,7 +526,7 @@ function normalise(item, def, provider="NerkhAra") {
   };
 }
 async function snapshot(env={}) {
-  if(cached && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) return cached;
+  if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) return cached;
   try {
     let payload=await fetchTalasanj(env);
     let provider="Talasanj";
