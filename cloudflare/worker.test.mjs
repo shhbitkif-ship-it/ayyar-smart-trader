@@ -1142,6 +1142,39 @@ test("paper account creation returns a one-time bearer token and virtual balance
   assert.equal(account.balance,12500);
 });
 
+test("paper trade closure creates authenticated in-app notification and daily PnL report",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.77"},
+    body:JSON.stringify({starting_capital:10000,currency:"USD"})
+  }),env);
+  const account=await created.json();
+  const headers={authorization:"Bearer "+account.access_token,"content-type":"application/json"};
+  const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
+    method:"POST",headers,body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.01,
+      entry_price:2000,stop_loss:1990,take_profit:2020,idempotency_key:"notify-test-001"})
+  }),env);
+  const trade=await opened.json();
+  assert.equal(opened.status,201);
+  const closed=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+
+    "/trades/"+trade.trade_id+"/close",{method:"POST",headers,body:JSON.stringify({exit_price:2010})}),env);
+  assert.equal(closed.status,200);
+  const notifications=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/notifications",{headers}),env);
+  const notificationBody=await notifications.json();
+  assert.equal(notifications.status,200);
+  assert.equal(notificationBody.notifications.length,1);
+  assert.equal(notificationBody.notifications[0].trade_id,trade.trade_id);
+  const day=notificationBody.notifications[0].created_at.slice(0,10);
+  const report=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/report/daily?date="+day,{headers}),env);
+  const reportBody=await report.json();
+  assert.equal(report.status,200);
+  assert.equal(reportBody.closed_trades,1);
+  assert.equal(reportBody.wins,1);
+  assert.equal(reportBody.execution_enabled,false);
+});
+
 test("paper account endpoints reject missing and invalid bearer tokens",async()=>{
   const env=paperAccountEnv();
   const missing=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+"a".repeat(32)),env);
