@@ -138,6 +138,97 @@ export class PaperAccount extends DurableObject {
       created_at:account.created_at,trading_enabled:false,execution_enabled:false};
   }
 
+  getIntegrityReport(tokenHash) {
+    const account=this.authorizedAccount(tokenHash);
+    if(!account) return null;
+    const discrepancies=[];
+    const tolerance=1e-8;
+    const closeEnough=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&
+      Math.abs(a-b)<=tolerance*Math.max(1,Math.abs(a),Math.abs(b));
+    const ledgerRows=this.ctx.storage.sql.exec(
+      "SELECT id,event_id,event_type,amount,balance_after,metadata_json,created_at FROM ledger_entries ORDER BY id ASC"
+    ).toArray();
+    const trades=this.ctx.storage.sql.exec(
+      "SELECT trade_id,symbol,side,quantity,entry_price,status,opened_at,closed_at,exit_price,realized_pnl,fees FROM paper_trades ORDER BY opened_at ASC"
+    ).toArray();
+    const notifications=this.ctx.storage.sql.exec(
+      "SELECT trade_id,event_type,COUNT(*) AS event_count FROM paper_notifications GROUP BY trade_id,event_type"
+    ).toArray();
+    const notificationCounts=new Map(notifications.map(row=>[row.trade_id+":"+row.event_type,Number(row.event_count||0)]));
+    let ledgerChange=0,ledgerBalance=Number(account.starting_capital);
+    for(const row of ledgerRows) {
+      const amount=Number(row.amount),balanceAfter=Number(row.balance_after);
+      let metadataValid=false;
+      try { const metadata=JSON.parse(row.metadata_json); metadataValid=Boolean(metadata&&typeof metadata==="object"&&!Array.isArray(metadata)); } catch {}
+      if(typeof row.event_id!=="string"||!row.event_id||typeof row.event_type!=="string"||!row.event_type||
+        !Number.isFinite(amount)||!Number.isFinite(balanceAfter)||!metadataValid||
+        typeof row.created_at!=="string"||!Number.isFinite(Date.parse(row.created_at))) {
+        discrepancies.push({code:"INVALID_LEDGER_ENTRY",ledger_id:row.id});
+        continue;
+      }
+      ledgerChange+=amount;
+      ledgerBalance+=amount;
+      if(!closeEnough(balanceAfter,ledgerBalance))
+        discrepancies.push({code:"LEDGER_BALANCE_AFTER_MISMATCH",ledger_id:row.id,
+          expected_balance_after:ledgerBalance,recorded_balance_after:balanceAfter});
+    }
+    let realizedPnl=0,openFees=0,closedTrades=0,openTrades=0;
+    for(const trade of trades) {
+      const quantity=Number(trade.quantity),entry=Number(trade.entry_price),fees=Number(trade.fees);
+      if(!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(entry)||entry<=0||
+        !Number.isFinite(fees)||fees<0||!["BUY","SELL"].includes(trade.side)||
+        typeof trade.trade_id!=="string"||!trade.trade_id||
+        !Number.isFinite(Date.parse(trade.opened_at||""))) {
+        discrepancies.push({code:"INVALID_TRADE_RECORD",trade_id:trade.trade_id??null});
+        continue;
+      }
+      if(trade.status==="OPEN") {
+        openTrades++;
+        openFees+=fees;
+        if(trade.closed_at!==null||trade.exit_price!==null||trade.realized_pnl!==null)
+          discrepancies.push({code:"OPEN_TRADE_HAS_CLOSING_FIELDS",trade_id:trade.trade_id});
+        if(notificationCounts.get(trade.trade_id+":TRADE_CLOSED")>0)
+          discrepancies.push({code:"OPEN_TRADE_HAS_CLOSE_NOTIFICATION",trade_id:trade.trade_id});
+      } else if(trade.status==="CLOSED") {
+        closedTrades++;
+        const exit=Number(trade.exit_price),realized=Number(trade.realized_pnl);
+        if(!Number.isFinite(exit)||exit<=0||!Number.isFinite(realized)||
+          !Number.isFinite(Date.parse(trade.closed_at||""))) {
+          discrepancies.push({code:"INVALID_CLOSED_TRADE_FIELDS",trade_id:trade.trade_id});
+          continue;
+        }
+        const gross=(exit-entry)*quantity*(trade.side==="BUY"?1:-1);
+        const expectedRealized=gross-fees;
+        if(!closeEnough(realized,expectedRealized))
+          discrepancies.push({code:"REALIZED_PNL_MISMATCH",trade_id:trade.trade_id,
+            expected_realized_pnl:expectedRealized,recorded_realized_pnl:realized});
+        realizedPnl+=realized;
+        const count=notificationCounts.get(trade.trade_id+":TRADE_CLOSED")||0;
+        if(count!==1) discrepancies.push({code:count===0?"CLOSED_TRADE_NOTIFICATION_MISSING":"DUPLICATE_CLOSED_TRADE_NOTIFICATIONS",
+          trade_id:trade.trade_id,count});
+      } else {
+        discrepancies.push({code:"INVALID_TRADE_STATUS",trade_id:trade.trade_id,status:trade.status});
+      }
+    }
+    for(const row of notifications) {
+      if(row.event_type==="TRADE_CLOSED"&&!trades.some(trade=>trade.trade_id===row.trade_id&&trade.status==="CLOSED"))
+        discrepancies.push({code:"ORPHAN_CLOSED_TRADE_NOTIFICATION",trade_id:row.trade_id});
+    }
+    const expectedBalance=Number(account.starting_capital)+ledgerChange+realizedPnl-openFees;
+    if(!Number.isFinite(expectedBalance))
+      discrepancies.push({code:"NON_FINITE_DERIVED_BALANCE"});
+    return {account_id:account.account_id,currency:account.currency,
+      integrity_status:discrepancies.length?"NEEDS_REVIEW":"CLEAN",discrepancy_count:discrepancies.length,
+      discrepancies,starting_capital:Number(account.starting_capital),
+      derived_balance:Number.isFinite(expectedBalance)?Number(expectedBalance.toFixed(8)):null,
+      ledger:{events:ledgerRows.length,net_change:Number(ledgerChange.toFixed(8)),
+        recorded_running_balance:Number(ledgerBalance.toFixed(8)),
+        mode:ledgerRows.length?"ACTIVE":"EMPTY"},
+      trades:{total:trades.length,open:openTrades,closed:closedTrades,
+        realized_pnl:Number(realizedPnl.toFixed(8)),open_fees:Number(openFees.toFixed(8))},
+      checked_at:new Date().toISOString(),mode:"PAPER_ONLY",execution_enabled:false};
+  }
+
   createTrade(tokenHash,trade,createdAt) {
     if(!this.authorizedAccount(tokenHash)) return null;
     const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
