@@ -2,27 +2,6 @@ import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Miniflare } from "miniflare";
 
-class FaultInjectPaperAccount extends (await import("./paper_accounts.js")).PaperAccount {
-  setFaultMode(mode) {
-    if (!["none", "after-close-ledger", "after-close-notification"].includes(mode))
-      throw new Error("INVALID_TEST_FAULT_MODE");
-    this.faultMode = mode;
-  }
-
-  _appendLedgerEntry(account, eventId, eventType, amount, metadata, createdAt) {
-    const result = super._appendLedgerEntry(account, eventId, eventType, amount, metadata, createdAt);
-    if (this.faultMode === "after-close-ledger" && eventType === "TRADE_CLOSED")
-      throw new Error("INJECTED_FAILURE_AFTER_LEDGER_WRITE");
-    return result;
-  }
-
-  _recordClosedNotification(trade, closed, reason, closedAt) {
-    super._recordClosedNotification(trade, closed, reason, closedAt);
-    if (this.faultMode === "after-close-notification")
-      throw new Error("INJECTED_FAILURE_AFTER_NOTIFICATION_WRITE");
-  }
-}
-
 let mf;
 let namespace;
 
@@ -51,8 +30,7 @@ async function makeAccount() {
   const accountId = "sqlite-rollback-" + (++accountCounter);
   const tokenHash = "token-hash-" + accountCounter;
   const stub = namespace.get(namespace.idFromName(accountId));
-  const createdAt = "2026-11-25T08:00:00.000Z";
-  await stub.createAccount(accountId, tokenHash, "USD", 100000, createdAt);
+  await stub.createAccount(accountId, tokenHash, "USD", 100000, "2026-11-25T08:00:00.000Z");
   const trade = {
     trade_id: "trade-" + accountCounter,
     symbol: "XAUUSD",
