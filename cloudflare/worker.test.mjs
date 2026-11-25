@@ -59,6 +59,30 @@ test("signal endpoint blocks stale candles", async () => {
   assert.equal(body.execution_enabled,false);
 });
 
+test("signal endpoint blocks fresh but gapped candle history", async () => {
+  const candles=[];
+  let close=100;
+  for(let i=0;i<80;i++){
+    const previous=close;
+    close+=i%2===0?0.5:-0.3;
+    if(i===79) close=previous+0.5;
+    const candleIndex=i<40?i:i+1;
+    candles.push({timestamp:new Date(Date.now()-(80-candleIndex)*3600000).toISOString(),
+      open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,timeframe_minutes:60})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.signal,"NO_TRADE");
+  assert.equal(body.data_status,"GAPPED");
+  assert.equal(body.gap_count,1);
+  assert.equal(body.missing_intervals,1);
+  assert.equal(body.execution_enabled,false);
+});
+
 test("signal endpoint computes a bounded technical confluence score from fresh candles", async () => {
   const candles=[];
   let close=100;
