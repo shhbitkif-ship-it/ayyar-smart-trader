@@ -147,10 +147,10 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0];
     return updated??{error:"TRADE_NOT_OPEN"};
   }
-  monitorTrades(tokenHash,candle,feeBps,checkedAt) {
+  monitorTrades(tokenHash,symbol,candle,feeBps,checkedAt) {
     if(!this.authorizedAccount(tokenHash)) return null;
     const rows=this.ctx.storage.sql.exec(
-      "SELECT * FROM paper_trades WHERE status='OPEN' ORDER BY opened_at ASC"
+      "SELECT * FROM paper_trades WHERE status='OPEN' AND symbol=? ORDER BY opened_at ASC",symbol
     ).toArray();
     const results=[];
     for(const trade of rows) {
