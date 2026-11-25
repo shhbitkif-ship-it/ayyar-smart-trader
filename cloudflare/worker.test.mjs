@@ -917,6 +917,39 @@ function paperFixture(){
  });
 }
 
+test("historical backtest fetches only verified completed XAUS candles and stays paper-only",async()=>{
+ const originalFetch=globalThis.fetch;
+ const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+ const candles=Array.from({length:100},(_,i)=>{
+  const close=i<30?3000-i*2:2940+(i-30)*4;
+  return {timestamp:new Date(lastClosed-(99-i)*intervalMs).toISOString(),
+   open:close-.2,high:close+1,low:close-1,close};
+ });
+ globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+ try{
+  const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/backtest",{
+   method:"POST",headers:{"content-type":"application/json"},
+   body:JSON.stringify({symbol:"xau",interval:"60m",fast_period:3,slow_period:8,
+    starting_capital:10000,risk_fraction:.01,contract_value_per_price_unit:1,fee_bps:2,slippage_bps:1})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.mode,"PAPER_ONLY");assert.equal(body.execution_enabled,false);
+  assert.equal(body.provider,"XAUS");assert.equal(body.symbol,"xau");
+  assert.ok(body.candles===undefined);
+  assert.ok(body.closed_trades>=0);assert.ok(body.data_quality.candle_count>=60);
+  assert.match(body.history_note,/not a multi-year/i);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test("historical backtest rejects unsupported domestic instruments without fabricating data",async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/backtest",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({symbol:"gold-18k",interval:"60m",contract_value_per_price_unit:1})
+ }));
+ assert.equal(response.status,400);
+});
+
 test("paper trading simulation returns a trade journal and virtual equity without execution",async()=>{
  const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
   method:"POST",headers:{"content-type":"application/json"},
