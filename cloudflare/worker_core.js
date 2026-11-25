@@ -187,6 +187,23 @@ function evaluateSignal(payload) {
     return {signal:"NO_TRADE",confidence:0,reason:"Latest candle is stale or timestamp is in the future.",
       data_status:"STALE",last_candle_at:last.iso,age_seconds:Math.round(ageSeconds),
       execution_enabled:false};
+  const intervalMs=timeframe*60*1000;
+  const gaps=[];
+  for(let i=1;i<candles.length;i++){
+    const delta=candles[i].timestamp-candles[i-1].timestamp;
+    if(delta>intervalMs*1.5){
+      gaps.push({from:candles[i-1].iso,to:candles[i].iso,
+        missing_intervals:Math.max(1,Math.round(delta/intervalMs)-1)});
+    }
+  }
+  if(gaps.length){
+    return {signal:"NO_TRADE",confidence:0,reason:"Candle history contains missing intervals; signal generation is blocked until a continuous history is available.",
+      data_status:"GAPPED",gap_count:gaps.length,
+      missing_intervals:gaps.reduce((sum,g)=>sum+g.missing_intervals,0),
+      largest_gap_intervals:gaps.reduce((max,g)=>Math.max(max,g.missing_intervals),0),
+      gaps:gaps.slice(0,20),last_candle_at:last.iso,age_seconds:Math.round(ageSeconds),
+      timeframe_minutes:timeframe,execution_enabled:false};
+  }
   const closes=candles.map(c=>c.close);
   const fast=ema(closes,20),slow=ema(closes,50);
   const fastNow=fast[fast.length-1],fastPrev=fast[fast.length-2],slowNow=slow[slow.length-1];
