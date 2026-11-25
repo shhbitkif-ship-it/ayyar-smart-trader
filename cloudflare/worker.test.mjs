@@ -1257,7 +1257,22 @@ function paperAccountEnv({allow=true}={}) {
           monitorTradesInternal(symbol,candleInput,feeBps,checkedAt){
             const a=accounts.get(name);
             if(!a)return null;
+            if(typeof symbol!=="string"||!/^[A-Z0-9_-]{1,20}$/.test(symbol))
+              throw new Error("INVALID_MONITOR_SYMBOL");
+            if(typeof feeBps!=="number"||!Number.isFinite(feeBps)||feeBps<0||feeBps>1000)
+              throw new Error("INVALID_MONITOR_FEE");
+            if(typeof checkedAt!=="string"||!Number.isFinite(Date.parse(checkedAt)))
+              throw new Error("INVALID_MONITOR_CHECK_TIME");
             const candles=Array.isArray(candleInput)?candleInput:[candleInput];
+            if(!candles.length)throw new Error("NO_COMPLETED_CANDLES");
+            for(const candle of candles){
+              const values=[candle?.open,candle?.high,candle?.low,candle?.close];
+              if(!Number.isFinite(Date.parse(candle?.timestamp))||
+                !values.every(v=>typeof v==="number"&&Number.isFinite(v)&&v>0)||
+                candle.high<Math.max(candle.open,candle.close)||
+                candle.low>Math.min(candle.open,candle.close)||candle.high<candle.low)
+                throw new Error("INVALID_MONITOR_CANDLE");
+            }
             const results=[];
             for(const trade of (a.trades??[]).filter(t=>t.status==="OPEN"&&t.symbol===symbol)){
               for(const candle of candles){
@@ -1760,7 +1775,7 @@ test("paper account monitor rejects malformed OHLC values before updating positi
   const account=await created.json();
   const accountDO=env.PAPER_ACCOUNTS.getByName(account.account_id);
   const malformed={timestamp:new Date().toISOString(),open:2000,high:1990,low:1980,close:2005};
-  await assert.rejects(()=>accountDO.monitorTradesInternal("XAUUSD",malformed,5,new Date().toISOString()),
+  assert.throws(()=>accountDO.monitorTradesInternal("XAUUSD",malformed,5,new Date().toISOString()),
     /INVALID_MONITOR_CANDLE/);
   assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
 });
