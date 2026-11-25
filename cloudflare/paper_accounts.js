@@ -145,6 +145,11 @@ export class PaperAccount extends DurableObject {
       trade.idempotency_key
     ).toArray()[0] : null;
     if(existing) return { ...existing, duplicate:true };
+    const openSameSymbol=this.ctx.storage.sql.exec(
+      "SELECT trade_id,side FROM paper_trades WHERE status='OPEN' AND symbol=? LIMIT 1",
+      trade.symbol
+    ).toArray()[0];
+    if(openSameSymbol) throw new Error("DUPLICATE_OPEN_SYMBOL");
     const summary=this.getSummary(tokenHash);
     const open=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(quantity*entry_price),0) AS exposure FROM paper_trades WHERE status='OPEN'").toArray()[0];
     const notional=trade.quantity*trade.entry_price;
