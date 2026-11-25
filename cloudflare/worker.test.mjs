@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import worker from "./worker_core.js";
-import { calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
+import { calculateLegacyPaperBalance, calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 const originalFetch = globalThis.fetch;
 const freshItems = [
@@ -32,6 +32,19 @@ test("paper ledger fee and settlement math reconciles BUY and SELL positions",()
   assert.equal(sell.realizedPnl,-1.041);
   assert.equal(sell.ledgerCloseAmount,-1.021);
   assert.ok(Math.abs((5000-sellEntryFee+sell.ledgerCloseAmount)-(5000+sell.realizedPnl))<1e-10);
+});
+
+test("legacy paper balance ignores unverified partial ledger rows",()=>{
+  const balance=calculateLegacyPaperBalance({
+    startingCapital:10000,realizedPnl:125,openFees:4
+  });
+  assert.equal(balance,10121);
+  assert.throws(()=>calculateLegacyPaperBalance({
+    startingCapital:10000,realizedPnl:Infinity,openFees:4
+  }),/INVALID_LEGACY_PAPER_BALANCE_INPUT/);
+  assert.throws(()=>calculateLegacyPaperBalance({
+    startingCapital:10000,realizedPnl:125,openFees:-1
+  }),/INVALID_LEGACY_PAPER_BALANCE_INPUT/);
 });
 
 test("paper ledger idempotency accepts only exact event replays",()=>{
