@@ -1573,3 +1573,21 @@ test("Wrangler config preserves signal history and declares SQLite paper account
     tag:"v1-paper-accounts",new_sqlite_classes:["PaperAccount"]
   }]);
 });
+
+
+test("market snapshot reports PARTIAL instead of LIVE when only some instruments are fresh", async () => {
+  const isolatedWorker = (await import("./worker_core.js?partial-market-status-test")).default;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    generated_utc:new Date().toISOString(),
+    items:[{id:"gold-18k",price:7200000,unit:"IRT",updated_utc:new Date().toISOString(),stale:false}]
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"PARTIAL");
+    assert.equal(body.live_quotes,1);
+    assert.equal(body.total_quotes,8);
+    assert.equal(body.quotes.filter(q=>q.status==="LIVE").length,1);
+  } finally { globalThis.fetch=originalFetch; }
+});
