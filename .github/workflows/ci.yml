@@ -72,7 +72,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run Worker tests
+      - name: Install Worker test dependencies
+        run: npm install --prefix cloudflare --no-audit --no-fund
+      - name: Run Worker unit tests
         run: npm test --prefix cloudflare
+      - name: Run SQLite Durable Object transaction integration tests
+        run: npm run test:integration --prefix cloudflare
       - name: Validate Cloudflare Worker bundle and Durable Object export
         run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.jsonc
