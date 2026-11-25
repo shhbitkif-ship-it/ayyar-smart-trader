@@ -124,3 +124,8 @@ The paper account rejects opening a second position for the same symbol while an
 ## Verified-data historical backtest
 
 `POST /v1/paper-trading/backtest` fetches completed, validated global XAU/USD candles from XAUS and runs the existing EMA/ATR paper simulation. Supported intervals are 15m, 60m, and 1d. Example JSON: `{"symbol":"xau","interval":"60m","fast_period":20,"slow_period":50,"starting_capital":10000,"risk_fraction":0.01,"contract_value_per_price_unit":1,"fee_bps":10,"slippage_bps":5}`. The contract value must be selected for the intended instrument sizing; it is not inferred. Response includes provider, last candle timestamp, candle-quality/gap metadata, and a warning about the limited provider history window. This feed is global XAU/USD only, not Iranian gold/coin prices or a broker feed. The backtest is paper-only, does not save account trades, and is not evidence of future performance. For longer-period research, a verified historical dataset is required.
+
+
+## Signal quality gate
+
+Directional technical confluence is now only a candidate, not an automatic signal. The engine also classifies the completed-candle market regime and blocks BUY/SELL when volatility is excessive, the market is ranging, or trend structure is transitional. Responses expose the proposed direction, final signal, regime metrics, and explicit block reason. A blocked setup returns `NO_TRADE` and zero confidence; the underlying confluence score is reported separately and is not a probability. This is a deterministic safety filter, not a guarantee of better returns. Execution remains disabled.
