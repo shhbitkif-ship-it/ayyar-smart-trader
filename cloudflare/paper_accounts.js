@@ -88,7 +88,8 @@ export class PaperAccount extends DurableObject {
        FROM paper_trades`
     ).toArray()[0];
     const realized=Number(stats.realized_pnl||0);
-    const balance=account.starting_capital+Number(ledger.net_ledger_change||0)+realized;
+    const openFees=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(fees),0) AS amount FROM paper_trades WHERE status='OPEN'").toArray()[0];
+    const balance=account.starting_capital+Number(ledger.net_ledger_change||0)+realized-Number(openFees.amount||0);
     if(!Number.isFinite(balance)) throw new Error("Stored paper balance is invalid");
     return {account_id:account.account_id,currency:account.currency,
       starting_capital:account.starting_capital,balance,realized_pnl:realized,
@@ -97,6 +98,53 @@ export class PaperAccount extends DurableObject {
       created_at:account.created_at,trading_enabled:false,execution_enabled:false};
   }
 
+  createTrade(tokenHash,trade,createdAt) {
+    if(!this.authorizedAccount(tokenHash)) return null;
+    const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
+      "SELECT trade_id,status FROM paper_trades WHERE idempotency_key=? LIMIT 1",
+      trade.idempotency_key
+    ).toArray()[0] : null;
+    if(existing) return { ...existing, duplicate:true };
+    const summary=this.getSummary(tokenHash);
+    const open=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(quantity*entry_price),0) AS exposure FROM paper_trades WHERE status='OPEN'").toArray()[0];
+    const notional=trade.quantity*trade.entry_price;
+    const risk=trade.quantity*Math.abs(trade.entry_price-trade.stop_loss);
+    if(!Number.isFinite(notional)||notional<=0||notional+Number(open.exposure||0)>summary.balance)
+      throw new Error("INSUFFICIENT_PAPER_BALANCE");
+    if(!Number.isFinite(risk)||risk>summary.balance*0.01+1e-8)
+      throw new Error("RISK_LIMIT_EXCEEDED");
+    const entryFee=notional*trade.fee_bps/10000;
+    this.ctx.storage.sql.exec(
+      `INSERT INTO paper_trades
+       (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,idempotency_key)
+       VALUES(?,?,?,?,?,?,?,'OPEN',?,?,?)`,
+      trade.trade_id,trade.symbol,trade.side,trade.quantity,trade.entry_price,
+      trade.stop_loss,trade.take_profit,createdAt,entryFee,trade.idempotency_key
+    );
+    return {trade_id:trade.trade_id,symbol:trade.symbol,side:trade.side,quantity:trade.quantity,
+      entry_price:trade.entry_price,stop_loss:trade.stop_loss,take_profit:trade.take_profit,
+      status:"OPEN",opened_at:createdAt,fees:entryFee,duplicate:false,execution_enabled:false};
+  }
+
+  closeTrade(tokenHash,tradeId,exitPrice,feeBps,closedAt) {
+    if(!this.authorizedAccount(tokenHash)) return null;
+    const trade=this.ctx.storage.sql.exec("SELECT * FROM paper_trades WHERE trade_id=? AND status='OPEN' LIMIT 1",tradeId).toArray()[0];
+    if(!trade) return {error:"TRADE_NOT_OPEN"};
+    const direction=trade.side==="BUY"?1:-1;
+    const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
+    const exitFee=exitPrice*trade.quantity*feeBps/10000;
+    const entryFee=trade.entry_price*trade.quantity*feeBps/10000;
+    const fees=entryFee+exitFee;
+    const realized=gross-fees;
+    if(![gross,exitFee,entryFee,fees,realized].every(Number.isFinite)) throw new Error("TRADE_VALUE_OUT_OF_RANGE");
+    const updated=this.ctx.storage.sql.exec(
+      `UPDATE paper_trades SET status='CLOSED',closed_at=?,exit_price=?,realized_pnl=?,fees=?
+       WHERE trade_id=? AND status='OPEN'
+       RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
+      closedAt,exitPrice,realized,fees,tradeId
+    ).toArray()[0];
+    return updated??{error:"TRADE_NOT_OPEN"};
+  }
   listTrades(tokenHash,limit=50) {
     if(!this.authorizedAccount(tokenHash)) return null;
     const safeLimit=Math.max(1,Math.min(Number.isInteger(limit)?limit:50,100));
