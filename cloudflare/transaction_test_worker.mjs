@@ -2,13 +2,15 @@ import { PaperAccount } from "./paper_accounts.js";
 
 export class FaultInjectPaperAccount extends PaperAccount {
   setFaultMode(mode) {
-    if (!["none", "after-close-ledger", "after-close-notification"].includes(mode))
+    if (!["none", "after-open-ledger", "after-close-ledger", "after-close-notification"].includes(mode))
       throw new Error("INVALID_TEST_FAULT_MODE");
     this.faultMode = mode;
   }
 
   _appendLedgerEntry(account, eventId, eventType, amount, metadata, createdAt) {
     const result = super._appendLedgerEntry(account, eventId, eventType, amount, metadata, createdAt);
+    if (this.faultMode === "after-open-ledger" && eventType === "TRADE_OPENED")
+      throw new Error("INJECTED_FAILURE_AFTER_OPEN_LEDGER_WRITE");
     if (this.faultMode === "after-close-ledger" && eventType === "TRADE_CLOSED")
       throw new Error("INJECTED_FAILURE_AFTER_LEDGER_WRITE");
     return result;
