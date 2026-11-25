@@ -462,6 +462,12 @@ test("latest signal endpoint evaluates real provider OHLC and never enables exec
     assert.equal(body.market_provider,"XAUS");
     assert.equal(body.market_provider_symbol,"xau");
     assert.equal(body.signal,"BUY");
+    assert.equal(body.signal_quality.status,"PASSED");
+    assert.equal(body.signal_quality.passed_checks,4);
+    assert.equal(body.signal_quality.required_checks,4);
+    assert.deepEqual(body.signal_quality.blocked_reasons,[]);
+    assert.equal(body.timeframes["15m"].proposed_signal,"BUY");
+    assert.equal(body.timeframes["60m"].signal_quality.regime_tradeable,true);
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
   } finally { globalThis.fetch=originalFetch; }
