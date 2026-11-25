@@ -653,6 +653,11 @@ export default {
           if(notifications===null) return json({error:"Account not found or access denied"},404);
           return json({notifications,execution_enabled:false,mode:"PAPER_ONLY"});
         }
+        if(resource==="analytics/strategy") {
+          const analytics=await account.getStrategyAttribution(tokenHash);
+          if(analytics===null) return json({error:"Account not found or access denied"},404);
+          return json(analytics);
+        }
         const day=url.searchParams.get("date")||new Date().toISOString().slice(0,10);
         if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+"T00:00:00.000Z"))||
           new Date(Date.parse(day+"T00:00:00.000Z")).toISOString().slice(0,10)!==day)
@@ -699,6 +704,7 @@ export default {
           const payload=await request.json();
           if(!payload||typeof payload!=="object"||Array.isArray(payload)) return json({error:"Request body must be a JSON object"},400);
           const {symbol,side,quantity,entry_price,stop_loss,take_profit}=payload;
+          const strategyId=payload.strategy_id??null,signalId=payload.signal_id??null,signalType=payload.signal_type??null;
           const feeBps=payload.fee_bps??5;
           const idem=payload.idempotency_key;
           if(typeof symbol!=="string"||!/^[A-Z0-9._-]{2,32}$/.test(symbol)||
@@ -707,9 +713,13 @@ export default {
              quantity<=0||entry_price<=0||stop_loss<=0||take_profit<=0||feeBps<0||feeBps>1000||
              (side==="BUY"&&(stop_loss>=entry_price||take_profit<=entry_price))||
              (side==="SELL"&&(stop_loss<=entry_price||take_profit>=entry_price))||
-             (idem!==undefined&&(typeof idem!=="string"||idem.length<8||idem.length>128)))
+             (idem!==undefined&&(typeof idem!=="string"||idem.length<8||idem.length>128))||
+             (strategyId!==null&&(typeof strategyId!=="string"||!/^[A-Za-z0-9._:-]{1,64}$/.test(strategyId)))||
+             (signalId!==null&&(typeof signalId!=="string"||!/^[A-Za-z0-9._:-]{1,96}$/.test(signalId)))||
+             (signalType!==null&&(!["BUY","SELL","NO_TRADE"].includes(signalType))))
             return json({error:"Invalid trade: use positive numeric values, directional stop/target and a valid optional idempotency_key"},400);
-          const result=await account.createTrade(tokenHash,{trade_id:randomHex(16),symbol,side,quantity,entry_price,stop_loss,take_profit,fee_bps:feeBps,idempotency_key:idem??null},new Date().toISOString());
+          const result=await account.createTrade(tokenHash,{trade_id:randomHex(16),symbol,side,quantity,entry_price,stop_loss,take_profit,fee_bps:feeBps,idempotency_key:idem??null,
+            strategy_id:strategyId,signal_id:signalId,signal_type:signalType},new Date().toISOString());
           if(result===null) return json({error:"Account not found or access denied"},404);
           if(result.error) return json(result,409);
           return json({...result,mode:"PAPER_ONLY",trading_enabled:false,execution_enabled:false},201);
