@@ -27,6 +27,15 @@ export function calculatePaperSettlement({side,quantity,entryPrice,exitPrice,ent
   return {gross,entryFee,exitFee,totalFees,realizedPnl,ledgerCloseAmount};
 }
 
+export function calculateLegacyPaperBalance({startingCapital,realizedPnl,openFees}) {
+  if(!Number.isFinite(startingCapital)||startingCapital<=0||
+    !Number.isFinite(realizedPnl)||!Number.isFinite(openFees)||openFees<0)
+    throw new Error("INVALID_LEGACY_PAPER_BALANCE_INPUT");
+  const balance=startingCapital+realizedPnl-openFees;
+  if(!Number.isFinite(balance)) throw new Error("LEGACY_PAPER_BALANCE_OUT_OF_RANGE");
+  return balance;
+}
+
 function stableLedgerJson(value) {
   if(Array.isArray(value)) return "["+value.map(stableLedgerJson).join(",")+"]";
   if(value&&typeof value==="object")
