@@ -525,7 +525,7 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
     const batch=accountIds.slice(offset,offset+10);
     const outcomes=await Promise.allSettled(batch.map(async accountId=>{
       const account=env.PAPER_ACCOUNTS.getByName(accountId);
-      const result=await account.monitorTradesInternal("XAUUSD",candle,5,checkedAt);
+      const result=await account.monitorTradesInternal("XAUUSD",market.candles,5,checkedAt);
       if(!result) throw new Error("Paper account monitor returned no result: "+accountId);
       return result;
     }));
