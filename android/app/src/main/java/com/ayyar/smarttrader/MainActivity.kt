@@ -75,7 +75,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
  val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.0",color=muted,fontSize=12.sp) }
+   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.2",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
@@ -805,6 +805,8 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
 @Composable private fun PaperActivityCard(accountId:String,token:String){
  var refresh by remember{mutableIntStateOf(0)}
  var report by remember{mutableStateOf<JSONObject?>(null)}
+ var performance by remember{mutableStateOf<JSONObject?>(null)}
+ var period by remember{mutableStateOf("week")}
  var notifications by remember{mutableStateOf<JSONArray?>(null)}
  var loading by remember{mutableStateOf(false)}
  var error by remember{mutableStateOf("")}
@@ -815,15 +817,16 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
    try{
     val result=withContext(Dispatchers.IO){
      val day=paperApi("GET","/v1/paper/accounts/$accountId/report/daily",token)
+     val stats=paperApi("GET","/v1/paper/accounts/$accountId/report/performance?period=$period",token)
      val events=paperApi("GET","/v1/paper/accounts/$accountId/notifications",token)
-     Pair(day,events.optJSONArray("notifications")?:JSONArray())
+     Triple(day,stats,events.optJSONArray("notifications")?:JSONArray())
     }
-    report=result.first;notifications=result.second
+    report=result.first;performance=result.second;notifications=result.third
    }catch(e:Exception){error=e.message?:"دریافت گزارش و اعلان‌ها ناموفق بود."}
    finally{loading=false}
   }
  }
- LaunchedEffect(accountId,token,refresh){if(accountId.isNotBlank()&&token.isNotBlank()) load()}
+ LaunchedEffect(accountId,token,refresh,period){if(accountId.isNotBlank()&&token.isNotBlank()) load()}
  Card(colors=CardDefaults.cardColors(containerColor=Color(0xFF151C28)),shape=RoundedCornerShape(14.dp)){
   Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){
    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
@@ -838,6 +841,40 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
      Text("سود/زیان: ${String.format(Locale.US,"%.2f",pnl)}",color=if(pnl>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp,fontWeight=FontWeight.SemiBold)
     }
     Text("کارمزد ثبت‌شده: ${String.format(Locale.US,"%.2f",r.optDouble("fees"))} • منطقه زمانی UTC",color=muted,fontSize=10.sp)
+   }
+   Divider(color=Color(0xFF303746))
+   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+    Text("عملکرد معاملات",color=Color.White,fontSize=12.sp,fontWeight=FontWeight.SemiBold)
+    Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){
+     TextButton(onClick={period="week"},enabled=period!="week"){Text("۷ روز")}
+     TextButton(onClick={period="month"},enabled=period!="month"){Text("۳۰ روز")}
+    }
+   }
+   performance?.let{p->
+    val pnl=p.optDouble("net_pnl")
+    val pnlColor=if(pnl>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D)
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+     Column { Text("بازده خالص",color=muted,fontSize=10.sp);Text(String.format(Locale.US,"%.2f",pnl),color=pnlColor,fontSize=15.sp,fontWeight=FontWeight.Bold) }
+     Column { Text("درصد برد",color=muted,fontSize=10.sp);Text(String.format(Locale.US,"%.1f%%",p.optDouble("win_rate_pct")),color=Color.White,fontSize=14.sp,fontWeight=FontWeight.SemiBold) }
+     Column { Text("افت سرمایه",color=muted,fontSize=10.sp);Text(String.format(Locale.US,"%.2f%%",p.optDouble("max_drawdown_pct")),color=Color(0xFFFFB86B),fontSize=14.sp,fontWeight=FontWeight.SemiBold) }
+    }
+    val pf=if(p.isNull("profit_factor"))"—" else String.format(Locale.US,"%.2f",p.optDouble("profit_factor"))
+    Text("معاملات: ${p.optInt("closed_trades")} • ضریب سود: $pf • امید ریاضی: ${String.format(Locale.US,"%.2f",p.optDouble("expectancy"))}",color=muted,fontSize=10.sp)
+    Text("بیشترین افت: ${String.format(Locale.US,"%.2f",p.optDouble("max_drawdown"))} • کارمزد: ${String.format(Locale.US,"%.2f",p.optDouble("fees"))}",color=muted,fontSize=10.sp)
+    val curve=p.optJSONArray("equity_curve")?:JSONArray()
+    if(curve.length()>0){
+     val maxAbs=(0 until curve.length()).maxOfOrNull{curve.optJSONObject(it)?.optDouble("daily_pnl")?.let{kotlin.math.abs(it)}?:0.0}?:0.0
+     Row(Modifier.fillMaxWidth().height(48.dp),horizontalArrangement=Arrangement.spacedBy(3.dp),verticalAlignment=Alignment.Bottom){
+      for(i in 0 until curve.length()){
+       val point=curve.optJSONObject(i)?:continue
+       val daily=point.optDouble("daily_pnl")
+       val barHeight=if(maxAbs>0)(4.0+34.0*kotlin.math.abs(daily)/maxAbs).dp else 4.dp
+       Box(Modifier.weight(1f).height(barHeight).background(if(daily>=0)Color(0xFF4D9B72) else Color(0xFFB75E5E),RoundedCornerShape(topStart=3.dp,topEnd=3.dp)))
+      }
+     }
+     Text("نمودار تغییرات روزانه سود/زیان • ${p.optString("start_date")} تا ${p.optString("end_date")} (UTC)",color=muted,fontSize=9.sp)
+    }
+    Text("افت سرمایه بر اساس موجودی تحقق‌یافته روزانه محاسبه شده؛ سود/زیان باز و نوسان درون‌روزی در آن لحاظ نشده است.",color=muted,fontSize=9.sp)
    }
    Divider(color=Color(0xFF303746))
    Text("آخرین اعلان‌های بسته‌شدن",color=Color.White,fontSize=12.sp,fontWeight=FontWeight.SemiBold)
