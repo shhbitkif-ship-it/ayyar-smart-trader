@@ -119,3 +119,8 @@ Authenticated endpoint: `GET /v1/paper/accounts/{account_id}/analytics/strategy`
 ## Duplicate open-position guard
 
 The paper account rejects opening a second position for the same symbol while an existing position on that symbol is still open (HTTP 409). Close the open position first. This avoids accidental stacking or simultaneous opposing positions in the paper journal; it does not place real orders.
+
+
+## Verified-data historical backtest
+
+`POST /v1/paper-trading/backtest` fetches completed, validated global XAU/USD candles from XAUS and runs the existing EMA/ATR paper simulation. Supported intervals are 15m, 60m, and 1d. Example JSON: `{"symbol":"xau","interval":"60m","fast_period":20,"slow_period":50,"starting_capital":10000,"risk_fraction":0.01,"contract_value_per_price_unit":1,"fee_bps":10,"slippage_bps":5}`. The contract value must be selected for the intended instrument sizing; it is not inferred. Response includes provider, last candle timestamp, candle-quality/gap metadata, and a warning about the limited provider history window. This feed is global XAU/USD only, not Iranian gold/coin prices or a broker feed. The backtest is paper-only, does not save account trades, and is not evidence of future performance. For longer-period research, a verified historical dataset is required.
