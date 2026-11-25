@@ -796,7 +796,65 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
      Divider(color=Color(0xFF303746))
     }
    }
+   if(accountId.isNotBlank()) PaperActivityCard(accountId,token)
    Text(status,color=if(status.contains("ناموفق")||status.contains("خطا")||status.contains("حد")||status.contains("موجودی")) Color(0xFFFFB86B) else muted,fontSize=11.sp)
+  }
+ }
+}
+
+@Composable private fun PaperActivityCard(accountId:String,token:String){
+ var refresh by remember{mutableIntStateOf(0)}
+ var report by remember{mutableStateOf<JSONObject?>(null)}
+ var notifications by remember{mutableStateOf<JSONArray?>(null)}
+ var loading by remember{mutableStateOf(false)}
+ var error by remember{mutableStateOf("")}
+ val scope=rememberCoroutineScope()
+ fun load(){
+  scope.launch{
+   loading=true;error=""
+   try{
+    val result=withContext(Dispatchers.IO){
+     val day=paperApi("GET","/v1/paper/accounts/$accountId/report/daily",token)
+     val events=paperApi("GET","/v1/paper/accounts/$accountId/notifications",token)
+     Pair(day,events.optJSONArray("notifications")?:JSONArray())
+    }
+    report=result.first;notifications=result.second
+   }catch(e:Exception){error=e.message?:"دریافت گزارش و اعلان‌ها ناموفق بود."}
+   finally{loading=false}
+  }
+ }
+ LaunchedEffect(accountId,token,refresh){if(accountId.isNotBlank()&&token.isNotBlank()) load()}
+ Card(colors=CardDefaults.cardColors(containerColor=Color(0xFF151C28)),shape=RoundedCornerShape(14.dp)){
+  Column(Modifier.fillMaxWidth().padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){
+   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+    Text("گزارش روزانه و اعلان‌ها",color=gold,fontWeight=FontWeight.SemiBold,fontSize=14.sp)
+    TextButton(onClick={refresh++},enabled=!loading){Text(if(loading)"در حال دریافت…" else "بروزرسانی")}
+   }
+   report?.let{r->
+    Text("امروز (UTC) • معاملات بسته‌شده: ${r.optInt("closed_trades")}",color=Color.White,fontSize=12.sp)
+    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+     Text("برد: ${r.optInt("wins")} • باخت: ${r.optInt("losses")}",color=muted,fontSize=11.sp)
+     val pnl=r.optDouble("realized_pnl")
+     Text("سود/زیان: ${String.format(Locale.US,"%.2f",pnl)}",color=if(pnl>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp,fontWeight=FontWeight.SemiBold)
+    }
+    Text("کارمزد ثبت‌شده: ${String.format(Locale.US,"%.2f",r.optDouble("fees"))} • منطقه زمانی UTC",color=muted,fontSize=10.sp)
+   }
+   Divider(color=Color(0xFF303746))
+   Text("آخرین اعلان‌های بسته‌شدن",color=Color.White,fontSize=12.sp,fontWeight=FontWeight.SemiBold)
+   val items=notifications
+   if(items==null||items.length()==0) Text("هنوز اعلانی ثبت نشده است.",color=muted,fontSize=11.sp)
+   else for(i in 0 until minOf(items.length(),8)){
+    val event=items.optJSONObject(i)?:continue
+    val pnl=event.optDouble("realized_pnl")
+    Column(verticalArrangement=Arrangement.spacedBy(2.dp)){
+     Text(event.optString("title","معامله بسته شد"),color=Color.White,fontSize=11.sp,fontWeight=FontWeight.SemiBold)
+     Text(event.optString("message"),color=muted,fontSize=10.sp)
+     Text(formatLocalTimestamp(event.optString("created_at")),color=muted,fontSize=9.sp)
+    }
+    if(i<minOf(items.length(),8)-1) Divider(color=Color(0xFF303746))
+   }
+   if(error.isNotBlank()) Text(error,color=Color(0xFFFFB86B),fontSize=10.sp)
+   Text("اعلان‌ها داخل برنامه ذخیره می‌شوند؛ اعلان پوش‌نوتیفیکیشن سیستم‌عامل هنوز فعال نیست.",color=muted,fontSize=9.sp)
   }
  }
 }
