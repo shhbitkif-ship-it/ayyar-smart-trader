@@ -784,7 +784,7 @@ export default {
           return json({...result,mode:"PAPER_ONLY",trading_enabled:false,execution_enabled:false},201);
         } catch(e) {
           const message=String(e?.message||"Paper trade could not be recorded");
-          const status=message==="INSUFFICIENT_PAPER_BALANCE"||message==="RISK_LIMIT_EXCEEDED"||message.includes("open paper trade already exists")?409:503;
+          const status=message==="INSUFFICIENT_PAPER_BALANCE"||message==="RISK_LIMIT_EXCEEDED"||message==="TOTAL_OPEN_RISK_LIMIT_EXCEEDED"||message==="DAILY_LOSS_LIMIT_EXCEEDED"||message==="MAX_DRAWDOWN_LIMIT_EXCEEDED"||message.includes("open paper trade already exists")?409:503;
           return json({error:message,execution_enabled:false},status);
         }
       }
