@@ -60,7 +60,7 @@ test("Durable Object restart recovers paper trades ledger and notifications", as
       PAPER_ACCOUNTS: { className: "FaultInjectPaperAccount", useSQLite: true }
     },
     kvNamespaces: ["SIGNAL_HISTORY"],
-    resourcePersistencePath: persistencePath,
+    durableObjectsPersist: persistencePath,
     cf: false
   };
   let firstMf;
