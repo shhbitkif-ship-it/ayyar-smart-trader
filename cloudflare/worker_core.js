@@ -575,8 +575,9 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       execution_enabled:false,mode:"PAPER_ONLY"
     });
     const market=await fetchGoldCandles("xau","15m");
-    if(market.status!=="LIVE"||market.provider!=="XAUS"||!market.candles?.length)
-      throw new Error("Fresh completed XAUS 15m candle unavailable; no paper positions were changed");
+    if(market.status!=="LIVE"||market.provider!=="XAUS"||!market.candles?.length||
+      market.data_quality?.status!=="CLEAN"||market.data_quality?.missing_intervals>0)
+      throw new Error("Fresh, continuous XAUS 15m candles unavailable; no paper positions were changed");
     const checkedAt=new Date().toISOString();
     let accountsChecked=0,processed=0,closed=0;
     const failures=[];
@@ -675,8 +676,9 @@ export default {
       try {
         const market=await fetchGoldCandles("xau","15m");
         if(market.status!=="LIVE"||market.provider!=="XAUS"||
-          !Array.isArray(market.candles)||market.candles.length===0)
-          throw new Error("Fresh completed XAUS 15m candle unavailable; paper positions were not changed");
+          !Array.isArray(market.candles)||market.candles.length===0||
+          market.data_quality?.status!=="CLEAN"||market.data_quality?.missing_intervals>0)
+          throw new Error("Fresh, continuous XAUS 15m candles unavailable; paper positions were not changed");
         const candle=market.candles[market.candles.length-1];
         if(!candle||!Number.isFinite(Date.parse(candle.timestamp))||
           (market.last_candle_at&&market.last_candle_at!==candle.timestamp))
