@@ -197,6 +197,39 @@ test("eight percent peak-to-current drawdown blocks new paper positions", async 
   assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
 });
 
+test("stress: 30 concurrent create and close retries settle exactly once", async () => {
+  const accountId = "sqlite-stress-retries";
+  const tokenHash = "token-hash-stress-retries";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId,tokenHash,"USD",100000,"2026-11-25T12:00:00.000Z");
+  const trade = {
+    trade_id:"stress-trade",symbol:"XAUUSD",side:"BUY",quantity:1,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:5,
+    idempotency_key:"stress-idem"
+  };
+  const createdAt="2026-11-25T12:01:00.000Z";
+  const creates=await Promise.all(Array.from({length:30},()=>stub.createTrade(tokenHash,trade,createdAt)));
+  assert.equal(creates.filter(x=>x.duplicate===false).length,1);
+  assert.equal(creates.filter(x=>x.duplicate===true).length,29);
+  assert.equal((await stub.listTrades(tokenHash)).length,1);
+  assert.equal((await stub.getSummary(tokenHash)).ledger_events,2);
+
+  const closes=await Promise.all(Array.from({length:30},(_,i)=>
+    stub.closeTrade(tokenHash,"stress-trade",110+i,5,
+      "2026-11-25T12:"+(String(2+Math.floor(i/60)).padStart(2,"0"))+":"+String(i%60).padStart(2,"0")+".000Z")
+  ));
+  assert.equal(closes.filter(x=>x.status==="CLOSED").length,1);
+  assert.equal(closes.filter(x=>x.error==="TRADE_NOT_OPEN").length,29);
+  assert.equal((await stub.listTrades(tokenHash)).filter(x=>x.status==="CLOSED").length,1);
+  assert.equal((await stub.listNotifications(tokenHash)).length,1);
+  const summary=await stub.getSummary(tokenHash);
+  assert.equal(summary.closed_trades,1);
+  assert.equal(summary.ledger_events,3);
+  const integrity=await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled,false);
+});
+
 test("concurrent paper trade retries are idempotent and conflicting payloads are rejected", async () => {
   const accountId = "sqlite-concurrent-idempotency";
   const tokenHash = "token-hash-concurrent-idempotency";
