@@ -1634,6 +1634,61 @@ test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("paper monitor processes each completed candle only once",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.77"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const headers={authorization:"Bearer "+account.access_token};
+  const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
+    method:"POST",headers:{"content-type":"application/json",...headers},
+    body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020})
+  }),env);
+  assert.equal(opened.status,201);
+  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:70},(_,i)=>{
+    const close=2000+i*.01;
+    return {timestamp:new Date(lastClosed-(69-i)*intervalMs).toISOString(),
+      open:close,high:close+.5,low:close-.5,close};
+  });
+  env.__accounts.get(account.account_id).trades[0].opened_at=
+    new Date(Date.parse(candles.at(-1).timestamp)-intervalMs).toISOString();
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+  try{
+    const request=()=>new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/monitor",{
+      method:"POST",headers
+    });
+    const first=await (await worker.fetch(request(),env)).json();
+    const second=await (await worker.fetch(request(),env)).json();
+    assert.equal(first.processed,1);
+    assert.equal(first.results[0].status,"OPEN");
+    assert.equal(second.processed,0);
+    assert.equal(second.results[0].status,"UNCHANGED");
+    assert.equal(second.results[0].reason,"CANDLE_ALREADY_PROCESSED");
+    assert.equal(second.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("paper monitor rejects malformed OHLC values before updating positions",async()=>{
+  const env=paperAccountEnv();
+  const accountId="a".repeat(32);
+  const account=env.PAPER_ACCOUNTS.getByName(accountId);
+  const originalFetch=globalThis.fetch;
+  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candle={timestamp:new Date(lastClosed).toISOString(),open:2000,high:1990,low:1980,close:2005};
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture([candle])),{status:200});
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+accountId+"/monitor",{
+      method:"POST",headers:{authorization:"Bearer "+ "x".repeat(64)}
+    }),env);
+    assert.notEqual(response.status,200);
+    assert.equal(account.trades.length,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("scheduled monitor checks every registered paper account using fresh completed XAUS candle",async()=>{
   const statusStore=new Map();
   const env=paperAccountEnv();
