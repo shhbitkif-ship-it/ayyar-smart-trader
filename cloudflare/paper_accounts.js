@@ -217,13 +217,16 @@ export class PaperAccount extends DurableObject {
     const expectedBalance=Number(account.starting_capital)+ledgerChange+realizedPnl-openFees;
     if(!Number.isFinite(expectedBalance))
       discrepancies.push({code:"NON_FINITE_DERIVED_BALANCE"});
+    const ledgerImplemented=ledgerRows.length>0;
     return {account_id:account.account_id,currency:account.currency,
-      integrity_status:discrepancies.length?"NEEDS_REVIEW":"CLEAN",discrepancy_count:discrepancies.length,
-      discrepancies,starting_capital:Number(account.starting_capital),
+      integrity_status:discrepancies.length?"NEEDS_REVIEW":ledgerImplemented?"CLEAN":"PARTIAL",
+      integrity_note:ledgerImplemented?null:"Trade-derived balance checks are active, but ledger_entries is not yet populated by the paper-trading lifecycle; ledger reconciliation is therefore unavailable.",
+      discrepancy_count:discrepancies.length,discrepancies,starting_capital:Number(account.starting_capital),
       derived_balance:Number.isFinite(expectedBalance)?Number(expectedBalance.toFixed(8)):null,
       ledger:{events:ledgerRows.length,net_change:Number(ledgerChange.toFixed(8)),
         recorded_running_balance:Number(ledgerBalance.toFixed(8)),
-        mode:ledgerRows.length?"ACTIVE":"EMPTY"},
+        status:ledgerImplemented?"ACTIVE":"NOT_IMPLEMENTED",
+        mode:ledgerImplemented?"ACTIVE":"EMPTY"},
       trades:{total:trades.length,open:openTrades,closed:closedTrades,
         realized_pnl:Number(realizedPnl.toFixed(8)),open_fees:Number(openFees.toFixed(8))},
       checked_at:new Date().toISOString(),mode:"PAPER_ONLY",execution_enabled:false};
