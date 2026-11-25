@@ -809,6 +809,7 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
  var performance by remember{mutableStateOf<JSONObject?>(null)}
  var period by remember{mutableStateOf("week")}
  var notifications by remember{mutableStateOf<JSONArray?>(null)}
+ var strategyAnalytics by remember{mutableStateOf<JSONObject?>(null)}
  var loading by remember{mutableStateOf(false)}
  var error by remember{mutableStateOf("")}
  val scope=rememberCoroutineScope()
@@ -820,9 +821,10 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
      val day=paperApi("GET","/v1/paper/accounts/$accountId/report/daily",token)
      val stats=paperApi("GET","/v1/paper/accounts/$accountId/report/performance?period=$period",token)
      val events=paperApi("GET","/v1/paper/accounts/$accountId/notifications",token)
-     Triple(day,stats,events.optJSONArray("notifications")?:JSONArray())
+     val attribution=paperApi("GET","/v1/paper/accounts/$accountId/analytics/strategy",token)
+     arrayOf(day,stats,JSONObject().put("notifications",events.optJSONArray("notifications")?:JSONArray()),attribution)
     }
-    report=result.first;performance=result.second;notifications=result.third
+    report=result[0];performance=result[1];notifications=result[2].optJSONArray("notifications");strategyAnalytics=result[3]
    }catch(e:Exception){error=e.message?:"دریافت گزارش و اعلان‌ها ناموفق بود."}
    finally{loading=false}
   }
@@ -876,6 +878,27 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
      Text("نمودار تغییرات روزانه سود/زیان • ${p.optString("start_date")} تا ${p.optString("end_date")} (UTC)",color=muted,fontSize=9.sp)
     }
     Text("افت سرمایه بر اساس موجودی تحقق‌یافته روزانه محاسبه شده؛ سود/زیان باز و نوسان درون‌روزی در آن لحاظ نشده است.",color=muted,fontSize=9.sp)
+   }
+   Divider(color=Color(0xFF303746))
+   Text("تحلیل عملکرد استراتژی‌ها",color=Color.White,fontSize=12.sp,fontWeight=FontWeight.SemiBold)
+   strategyAnalytics?.let{analytics->
+    Text("معاملات بسته‌شده: ${analytics.optInt("total_closed_trades")} • دارای شناسه استراتژی: ${analytics.optInt("attributed_closed_trades")} • بدون انتساب: ${analytics.optInt("unattributed_closed_trades")}",color=muted,fontSize=10.sp)
+    val groups=analytics.optJSONArray("groups")?:JSONArray()
+    if(groups.length()==0) Text("برای تحلیل، معاملات آزمایشی را با شناسه استراتژی و سیگنال ثبت کن.",color=muted,fontSize=10.sp)
+    else for(i in 0 until minOf(groups.length(),8)){
+     val group=groups.optJSONObject(i)?:continue
+     val label=group.optString("strategy_id","UNATTRIBUTED")
+     val signal=group.optString("signal_type","UNATTRIBUTED")
+     val guidance=group.optString("risk_guidance","NO_AUTOMATIC_CHANGE")
+     Column(verticalArrangement=Arrangement.spacedBy(2.dp)){
+      Text("$label • $signal",color=gold,fontSize=11.sp,fontWeight=FontWeight.SemiBold)
+      Text("تعداد: ${group.optInt("closed_trades")} • برد: ${String.format(Locale.US,"%.1f%%",group.optDouble("win_rate_pct"))} • خالص: ${String.format(Locale.US,"%.2f",group.optDouble("net_pnl"))}",color=muted,fontSize=10.sp)
+      Text("امید ریاضی: ${String.format(Locale.US,"%.2f",group.optDouble("expectancy"))} • وضعیت نمونه: ${if(group.optString("sample_quality")=="MINIMUM_SAMPLE_MET")"حداقل نمونه تأمین شده" else "نمونه ناکافی"}",color=muted,fontSize=9.sp)
+      if(guidance=="CONSIDER_HALF_RISK") Text("پیشنهاد احتیاطی: بررسی کاهش ریسک به نصف",color=Color(0xFFFFB86B),fontSize=10.sp)
+     }
+     if(i<minOf(groups.length(),8)-1) Divider(color=Color(0xFF303746))
+    }
+    Text("این تحلیل فقط معاملات دارای داده واقعی را گروه‌بندی می‌کند. پیشنهاد ریسک صرفاً راهنماست؛ ریسک خودکار تغییر نمی‌کند و هرگز افزایش نمی‌یابد.",color=muted,fontSize=9.sp)
    }
    Divider(color=Color(0xFF303746))
    Text("آخرین اعلان‌های بسته‌شدن",color=Color.White,fontSize=12.sp,fontWeight=FontWeight.SemiBold)
