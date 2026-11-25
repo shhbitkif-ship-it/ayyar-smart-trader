@@ -175,11 +175,13 @@ export class PaperAccount extends DurableObject {
       ).toArray();
       const events=[];
       for(const trade of trades) {
-        if(trade.status==="OPEN"&&Number.isFinite(Number(trade.fees))&&Number(trade.fees)>=0) {
+        if(trade.status==="OPEN"&&Number.isFinite(Number(trade.fees))&&Number(trade.fees)>=0&&
+          Number.isFinite(Date.parse(trade.opened_at||""))) {
           events.push({id:"TRADE_OPENED:"+trade.trade_id,type:"TRADE_OPENED",
             amount:-Number(trade.fees),at:trade.opened_at,
             metadata:{trade_id:trade.trade_id,legacy_backfill:true}});
-        } else if(trade.status==="CLOSED"&&Number.isFinite(Number(trade.realized_pnl))) {
+        } else if(trade.status==="CLOSED"&&Number.isFinite(Number(trade.realized_pnl))&&
+          Number.isFinite(Date.parse(trade.closed_at||""))) {
           events.push({id:"TRADE_CLOSED:"+trade.trade_id,type:"TRADE_CLOSED",
             amount:Number(trade.realized_pnl),at:trade.closed_at,
             metadata:{trade_id:trade.trade_id,legacy_backfill:true}});
@@ -327,7 +329,7 @@ export class PaperAccount extends DurableObject {
       derived_balance:Number.isFinite(expectedBalance)?Number(expectedBalance.toFixed(8)):null,
       ledger:{events:ledgerRows.length,net_change:Number(ledgerChange.toFixed(8)),
         recorded_running_balance:Number(ledgerBalance.toFixed(8)),
-        status:ledgerImplemented?"ACTIVE":"PARTIAL_UNKNOWN",
+        status:ledgerImplemented?"ACTIVE":"PARTIAL_UNKNOWN",migration_status:ledgerStatus,
         mode:ledgerRows.length?"ACTIVE":"EMPTY"},
       trades:{total:trades.length,open:openTrades,closed:closedTrades,
         realized_pnl:Number(realizedPnl.toFixed(8)),open_fees:Number(openFees.toFixed(8))},
