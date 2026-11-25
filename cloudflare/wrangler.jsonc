@@ -3,6 +3,9 @@
   "name": "ayyar-smart-trader-api",
   "main": "worker.js",
   "compatibility_date": "2026-11-24",
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "kv_namespaces": [
     { "binding": "SIGNAL_HISTORY", "id": "e3de061386ae467aae8f4d8da1e0e408" }
   ],
