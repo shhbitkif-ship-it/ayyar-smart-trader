@@ -1001,6 +1001,7 @@ function paperAccountEnv({allow=true}={}) {
               const existing=a.trades.find(t=>t.idempotency_key===trade.idempotency_key);
               if(existing)return {...existing,duplicate:true};
             }
+            if(a.trades.some(t=>t.status==="OPEN"&&t.symbol===trade.symbol))throw new Error("DUPLICATE_OPEN_SYMBOL");
             const row={...trade,status:"OPEN",opened_at:createdAt,fees:trade.quantity*trade.entry_price*trade.fee_bps/10000};
             a.trades.push(row);
             return row;
