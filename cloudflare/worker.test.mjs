@@ -1488,6 +1488,20 @@ test("paper trade closure creates authenticated in-app notification and daily Pn
   assert.equal(invalid.status,400);
 });
 
+test("paper ledger lifecycle uses atomic SQLite transactions and idempotent event keys",()=>{
+ const source=readFileSync(new URL("./paper_accounts.js",import.meta.url),"utf8");
+ assert.match(source,/transactionSync\(\(\)=>this\._createTradeAtomic/);
+ assert.match(source,/transactionSync\(\(\)=>this\._closeTradeAtomic/);
+ assert.match(source,/transactionSync\(\(\)=>this\._monitorTradesAtomic/);
+ assert.match(source,/ACCOUNT_OPENED:/);
+ assert.match(source,/TRADE_OPENED:/);
+ assert.match(source,/TRADE_CLOSED:/);
+ assert.match(source,/LEDGER_IDEMPOTENCY_CONFLICT/);
+ assert.match(source,/LEGACY_BACKFILLED/);
+ assert.match(source,/LEDGER_MIGRATION_INCOMPLETE/);
+ assert.doesNotMatch(source,/sql\.exec\(["'`]BEGIN TRANSACTION/);
+});
+
 test("paper account integrity endpoint is authenticated and read-only",async()=>{
   const env=paperAccountEnv();
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
