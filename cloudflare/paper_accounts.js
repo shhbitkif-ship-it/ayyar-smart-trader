@@ -219,18 +219,13 @@ export class PaperAccount extends DurableObject {
        SUM(CASE WHEN realized_pnl<0 THEN 1 ELSE 0 END) AS losses,
        COALESCE(SUM(realized_pnl),0) AS pnl,
        COALESCE(SUM(fees),0) AS fees,
-       COALESCE(SUM(CASE WHEN realized_pnl>0 THEN realized_pnl ELSE 0 END),0) AS gross_profit,
-       COALESCE(SUM(CASE WHEN realized_pnl<0 THEN -realized_pnl ELSE 0 END),0) AS gross_loss
+       COALESCE(SUM(CASE WHEN realized_pnl>0 THEN realized_pnl ELSE 0 END),0) AS winning_pnl,
+       COALESCE(SUM(CASE WHEN realized_pnl<0 THEN -realized_pnl ELSE 0 END),0) AS losing_pnl
        FROM paper_trades WHERE status='CLOSED' AND closed_at>=? AND closed_at<?
        GROUP BY substr(closed_at,1,10) ORDER BY day ASC`,
       startDate+"T00:00:00.000Z",new Date(endMs+86400000).toISOString()
     ).toArray();
     const byDay=new Map(daily.map(row=>[row.day,row]));
-    const closed=this.ctx.storage.sql.exec(
-      `SELECT realized_pnl FROM paper_trades WHERE status='CLOSED' AND closed_at>=? AND closed_at<?
-       ORDER BY closed_at ASC`,
-      startDate+"T00:00:00.000Z",new Date(endMs+86400000).toISOString()
-    ).toArray();
     let balance=Number(account.starting_capital),peak=balance,maxDrawdown=0,maxDrawdownPct=0;
     let trades=0,wins=0,losses=0,netPnl=0,fees=0,grossProfit=0,grossLoss=0;
     const equityCurve=[];
@@ -240,7 +235,7 @@ export class PaperAccount extends DurableObject {
       const pnl=Number(row?.pnl||0);
       balance+=pnl;trades+=Number(row?.trades||0);wins+=Number(row?.wins||0);
       losses+=Number(row?.losses||0);netPnl+=pnl;fees+=Number(row?.fees||0);
-      grossProfit+=Number(row?.gross_profit||0);grossLoss+=Number(row?.gross_loss||0);
+      grossProfit+=Number(row?.winning_pnl||0);grossLoss+=Number(row?.losing_pnl||0);
       peak=Math.max(peak,balance);
       const drawdown=Math.max(0,peak-balance);
       maxDrawdown=Math.max(maxDrawdown,drawdown);
@@ -252,7 +247,7 @@ export class PaperAccount extends DurableObject {
       ending_balance:Number(balance.toFixed(8)),closed_trades:trades,wins,losses,
       win_rate_pct:trades?Number((wins/trades*100).toFixed(2)):0,
       net_pnl:Number(netPnl.toFixed(8)),fees:Number(fees.toFixed(8)),
-      gross_profit:Number(grossProfit.toFixed(8)),gross_loss:Number(grossLoss.toFixed(8)),
+      winning_pnl:Number(grossProfit.toFixed(8)),losing_pnl:Number(grossLoss.toFixed(8)),
       profit_factor:grossLoss>0?Number((grossProfit/grossLoss).toFixed(4)):null,
       average_win:Number(avgWin.toFixed(8)),average_loss:Number(avgLoss.toFixed(8)),
       expectancy:trades?Number((netPnl/trades).toFixed(8)):0,
