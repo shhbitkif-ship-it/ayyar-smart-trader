@@ -1174,6 +1174,15 @@ function paperAccountEnv({allow=true}={}) {
               closed_trades:0,ledger_events:0,created_at:a.createdAt,
               trading_enabled:false,execution_enabled:false};
           },
+          getIntegrityReport:async(tokenHash)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            return {account_id:name,currency:a.currency,integrity_status:"CLEAN",
+              discrepancy_count:0,discrepancies:[],starting_capital:a.capital,
+              derived_balance:a.capital,ledger:{events:0,net_change:0,mode:"EMPTY"},
+              trades:{total:0,open:0,closed:0,realized_pnl:0,open_fees:0},
+              mode:"PAPER_ONLY",execution_enabled:false};
+          },
           createTrade:async(tokenHash,trade,createdAt)=>{
             const a=accounts.get(name);
             if(!a||a.tokenHash!==tokenHash)return null;
@@ -1460,6 +1469,27 @@ test("paper trade closure creates authenticated in-app notification and daily Pn
   const invalid=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
     account.account_id+"/report/performance?period=year&date="+day,{headers}),env);
   assert.equal(invalid.status,400);
+});
+
+test("paper account integrity endpoint is authenticated and read-only",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.10"},
+    body:JSON.stringify({starting_capital:12000})
+  }),env);
+  const account=await created.json();
+  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/integrity";
+  const unauthorized=await worker.fetch(new Request(url),env);
+  assert.equal(unauthorized.status,401);
+  const response=await worker.fetch(new Request(url,{
+    headers:{authorization:"Bearer "+account.access_token}
+  }),env);
+  const report=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(report.integrity_status,"CLEAN");
+  assert.equal(report.discrepancy_count,0);
+  assert.equal(report.execution_enabled,false);
+  assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
 });
 
 test("paper account endpoints reject missing and invalid bearer tokens",async()=>{
