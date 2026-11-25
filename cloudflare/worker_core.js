@@ -549,6 +549,28 @@ export default {
         return json({error:String(e?.message||"Paper account creation unavailable")},503);
       }
     }
+    const paperMonitorMatch=url.pathname.match(/^\\/v1\\/paper\\/accounts\\/([a-f0-9]{32})\\/monitor$/);
+    if(paperMonitorMatch&&request.method==="POST") {
+      const accountId=paperMonitorMatch[1];
+      const auth=request.headers.get("authorization")||"";
+      if(!auth.startsWith("Bearer ")) return json({error:"Bearer authorization required"},401);
+      const bearer=auth.slice(7);
+      if(bearer.length<32||bearer.length>256) return json({error:"Invalid bearer token"},401);
+      const tokenHash=await sha256Hex(bearer);
+      const symbol="XAUUSD";
+      try {
+        const market=await fetchGoldCandles("xau","15m");
+        const candle=market.candles[market.candles.length-1];
+        const account=env.PAPER_ACCOUNTS.getByName(accountId);
+        const result=await account.monitorTrades(tokenHash,symbol,candle,5,new Date().toISOString());
+        if(result===null) return json({error:"Account not found or access denied"},404);
+        return json({...result,symbol,provider:market.provider,market_data_status:market.status,
+          market_candle_at:market.last_candle_at,mode:"PAPER_ONLY",execution_enabled:false});
+      } catch(e) {
+        return json({error:String(e?.message||"Paper trade monitoring unavailable"),
+          status:"UNAVAILABLE",execution_enabled:false},502);
+      }
+    }
     const paperAccountMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})(?:\/(trades)(?:\/([a-f0-9]{32})\/close)?)?$/);
     if(paperAccountMatch) {
       const accountId=paperAccountMatch[1],isTrades=paperAccountMatch[2]==="trades",closeId=paperAccountMatch[3];
