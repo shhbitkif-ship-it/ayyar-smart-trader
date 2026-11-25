@@ -507,7 +507,51 @@ async function snapshot(env={}) {
   cachedAt=Date.now();
   return cached;
 }
+
+async function runScheduledPaperMonitor(env, scheduledTime) {
+  const registry=env?.PAPER_ACCOUNTS?.getByName("__paper_bootstrap_guard__");
+  if(!registry?.listAccountIds) throw new Error("Paper account registry is unavailable");
+  const accountIds=await registry.listAccountIds(5000);
+  if(!accountIds.length) return {status:"IDLE",accounts_checked:0,closed_trades:0,
+    scheduled_at:new Date(scheduledTime).toISOString(),execution_enabled:false};
+  const market=await fetchGoldCandles("xau","15m");
+  if(market.status!=="LIVE"||market.provider!=="XAUS"||!market.candles?.length)
+    throw new Error("Fresh completed XAUS 15m candle unavailable; no paper positions were changed");
+  const candle=market.candles[market.candles.length-1];
+  const checkedAt=new Date().toISOString();
+  let accountsChecked=0,processed=0,closed=0;
+  const failures=[];
+  for(let offset=0;offset<accountIds.length;offset+=10) {
+    const batch=accountIds.slice(offset,offset+10);
+    const outcomes=await Promise.allSettled(batch.map(async accountId=>{
+      const account=env.PAPER_ACCOUNTS.getByName(accountId);
+      const result=await account.monitorTradesInternal("XAUUSD",candle,5,checkedAt);
+      if(!result) throw new Error("Paper account monitor returned no result: "+accountId);
+      return result;
+    }));
+    for(let i=0;i<outcomes.length;i++) {
+      const outcome=outcomes[i];
+      if(outcome.status==="rejected") failures.push({account_id:batch[i],error:String(outcome.reason?.message||outcome.reason)});
+      else {
+        accountsChecked++;
+        processed+=outcome.value.processed||0;
+        closed+=outcome.value.closed||0;
+      }
+    }
+  }
+  if(failures.length) throw new Error("Scheduled paper monitoring partially failed: "+JSON.stringify({
+    accounts_checked:accountsChecked,failed_accounts:failures.length,failures:failures.slice(0,10)
+  }));
+  return {status:"OK",provider:market.provider,symbol:"XAUUSD",interval:"15m",
+    candle_at:market.last_candle_at,accounts_checked:accountsChecked,
+    trades_processed:processed,closed_trades:closed,scheduled_at:new Date(scheduledTime).toISOString(),
+    execution_enabled:false,mode:"PAPER_ONLY"};
+}
+
 export default {
+  async scheduled(controller, env) {
+    return runScheduledPaperMonitor(env,controller.scheduledTime);
+  },
   async fetch(request, env) {
     const url=new URL(request.url);
     if(request.method==="OPTIONS") return new Response(null,{headers:{
@@ -542,6 +586,7 @@ export default {
         const createdAt=new Date().toISOString();
         const account=env.PAPER_ACCOUNTS.getByName(accountId);
         const created=await account.createAccount(accountId,tokenHash,currency,startingCapital,createdAt);
+        await bootstrap.registerAccount(accountId,createdAt);
         return json({...created,access_token:accessToken,token_type:"Bearer",
           token_notice:"This token is shown once. Store it securely; it cannot be recovered.",
           execution_enabled:false},201);
