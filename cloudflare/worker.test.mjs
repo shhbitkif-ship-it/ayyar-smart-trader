@@ -1009,6 +1009,28 @@ function paperAccountEnv({allow=true}={}) {
             Object.assign(trade,{status:"CLOSED",closed_at:closedAt,exit_price:exitPrice,fees,realized_pnl:gross-fees});
             return {trade_id:tradeId,status:"CLOSED",exit_price:exitPrice,realized_pnl:gross-fees,fees,closed_at:closedAt};
           },
+          monitorTrades:async(tokenHash,symbol,candle,feeBps,checkedAt)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            a.trades??=[];
+            const results=[];
+            for(const trade of a.trades.filter(t=>t.status==="OPEN"&&t.symbol===symbol)){
+              if(trade.last_checked_at&&trade.last_checked_at>=candle.timestamp){results.push({trade_id:trade.trade_id,status:"UNCHANGED"});continue;}
+              const buy=trade.side==="BUY",stopHit=buy?candle.low<=trade.stop_loss:candle.high>=trade.stop_loss;
+              const targetHit=buy?candle.high>=trade.take_profit:candle.low<=trade.take_profit;
+              let exit=null,reason=null;
+              if(stopHit){reason="STOP_LOSS";exit=buy&&candle.open<trade.stop_loss?candle.open:!buy&&candle.open>trade.stop_loss?candle.open:trade.stop_loss;}
+              else if(targetHit){reason="TAKE_PROFIT";exit=trade.take_profit;}
+              trade.last_checked_at=candle.timestamp;
+              if(exit!==null){
+                const gross=(exit-trade.entry_price)*trade.quantity*(buy?1:-1);
+                const exitFee=exit*trade.quantity*feeBps/10000,fees=trade.fees+exitFee;
+                Object.assign(trade,{status:"CLOSED",closed_at:checkedAt,exit_price:exit,fees,realized_pnl:gross-fees});
+                results.push({trade_id:trade.trade_id,status:"CLOSED",exit_price:exit,realized_pnl:gross-fees,exit_reason:reason});
+              }else results.push({trade_id:trade.trade_id,status:"OPEN"});
+            }
+            return {checked_candle_at:candle.timestamp,processed:results.length,closed:results.filter(x=>x.status==="CLOSED").length,results,execution_enabled:false};
+          },
           listTrades:async(tokenHash)=>{
             const a=accounts.get(name);
             return !a||a.tokenHash!==tokenHash?null:(a.trades??[]);
@@ -1140,6 +1162,43 @@ test("paper trade close is authenticated and records realized PnL only in paper 
   assert.ok(body.realized_pnl>0);
 });
 
+
+test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.44"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const tradeUrl="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const opened=await worker.fetch(new Request(tradeUrl,{method:"POST",headers,body:JSON.stringify({
+    symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020
+  })}),env);
+  assert.equal(opened.status,201);
+  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:70},(_,i)=>{
+    const close=2000+i*0.01;
+    return {timestamp:new Date(lastClosed-(69-i)*intervalMs).toISOString(),open:close,high:close+0.5,low:close-0.5,close};
+  });
+  const last=candles[candles.length-1];
+  last.open=2000;last.high=2025;last.low=1985;last.close=2005;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/monitor",{
+      method:"POST",headers:{authorization:headers.authorization}
+    }),env);
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.provider,"XAUS");
+    assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.closed,1);
+    assert.equal(body.results[0].exit_reason,"STOP_LOSS");
+    assert.equal(body.results[0].exit_price,1990);
+    assert.equal(body.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
 
 test("Wrangler config preserves signal history and declares SQLite paper accounts",()=>{
   const config=JSON.parse(readFileSync(new URL("./wrangler.jsonc",import.meta.url),"utf8"));
