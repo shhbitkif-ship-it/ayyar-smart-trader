@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { calculatePaperEntryFee, calculatePaperSettlement } from "./ledger_math.mjs";
+import { calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 export class PaperAccount extends DurableObject {
   constructor(ctx, env) {
@@ -134,10 +134,10 @@ export class PaperAccount extends DurableObject {
       typeof createdAt!=="string"||!Number.isFinite(Date.parse(createdAt)))
       throw new Error("INVALID_LEDGER_EVENT");
     const existing=this.ctx.storage.sql.exec(
-      "SELECT event_type,amount FROM ledger_entries WHERE event_id=? LIMIT 1",eventId
+      "SELECT event_type,amount,metadata_json,created_at FROM ledger_entries WHERE event_id=? LIMIT 1",eventId
     ).toArray()[0];
     if(existing) {
-      if(existing.event_type!==eventType||Math.abs(Number(existing.amount)-amount)>1e-8*Math.max(1,Math.abs(amount)))
+      if(!ledgerEventReplayMatches(existing,{eventType,amount,metadata,createdAt}))
         throw new Error("LEDGER_IDEMPOTENCY_CONFLICT");
       return false;
     }
