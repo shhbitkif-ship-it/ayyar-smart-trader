@@ -692,7 +692,7 @@ export default {
           status:"UNAVAILABLE",execution_enabled:false},502);
       }
     }
-    const paperAccountAuxMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})\/(notifications|report\/daily|report\/performance|analytics\/strategy)$/);
+    const paperAccountAuxMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})\/(notifications|report\/daily|report\/performance|analytics\/strategy|integrity)$/);
     if(paperAccountAuxMatch&&request.method==="GET") {
       const accountId=paperAccountAuxMatch[1],resource=paperAccountAuxMatch[2];
       const auth=request.headers.get("authorization")||"";
@@ -702,6 +702,11 @@ export default {
       const tokenHash=await sha256Hex(bearer);
       const account=env.PAPER_ACCOUNTS.getByName(accountId);
       try {
+        if(resource==="integrity") {
+          const report=await account.getIntegrityReport(tokenHash);
+          if(report===null) return json({error:"Account not found or access denied"},404);
+          return json(report);
+        }
         if(resource==="notifications") {
           const notifications=await account.listNotifications(tokenHash,30);
           if(notifications===null) return json({error:"Account not found or access denied"},404);
