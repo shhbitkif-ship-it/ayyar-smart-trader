@@ -557,8 +557,8 @@ test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps
     let close=2600;
     candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
       const previous=close;close+=i%2===0?0.5:-0.3;if(i===count-1)close=previous+0.5;
-      const skipped=i>=60?1:0;
-      return {timestamp:new Date(lastClosed-(count-1-i+skipped)*intervalMs).toISOString(),
+      const historicalOffset=i<60?1:0;
+      return {timestamp:new Date(lastClosed-(count-1-i+historicalOffset)*intervalMs).toISOString(),
         open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
     });
   }
