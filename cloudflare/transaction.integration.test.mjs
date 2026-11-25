@@ -64,7 +64,6 @@ test("Durable Object restart recovers paper trades ledger and notifications", as
     cf: false
   };
   let firstMf;
-  let restartedMf;
   try {
     firstMf = new Miniflare(options);
     await firstMf.ready;
@@ -89,12 +88,10 @@ test("Durable Object restart recovers paper trades ledger and notifications", as
     assert.equal(before.open_trades,1);
     assert.equal(before.ledger_events,4);
     assert.equal((await firstStub.listNotifications(tokenHash)).length,1);
-    await firstMf.dispose();
-    firstMf = null;
-
-    restartedMf = new Miniflare(options);
-    await restartedMf.ready;
-    const restartedNs = await restartedMf.getDurableObjectNamespace("PAPER_ACCOUNTS");
+    // Miniflare restarts its workerd runtime while retaining the configured DO persistence directory.
+    // Re-fetch the namespace after setOptions; old stubs are intentionally invalidated.
+    await firstMf.setOptions(options);
+    const restartedNs = await firstMf.getDurableObjectNamespace("PAPER_ACCOUNTS");
     const recovered = restartedNs.get(restartedNs.idFromName(accountId));
     const after = await recovered.getSummary(tokenHash);
     assert.equal(after.balance,before.balance);
@@ -111,7 +108,6 @@ test("Durable Object restart recovers paper trades ledger and notifications", as
     assert.equal(integrity.execution_enabled,false);
   } finally {
     await firstMf?.dispose();
-    await restartedMf?.dispose();
     await rm(persistencePath,{recursive:true,force:true});
   }
 });
