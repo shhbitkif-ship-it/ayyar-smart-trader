@@ -76,7 +76,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
  val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.2",color=muted,fontSize=12.sp) }
+   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.4",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
@@ -398,18 +398,26 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
 }
 
 private fun fetchLiveBacktest():BacktestUi{
- val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/ema-crossover/live?symbol=xau&interval=60m").openConnection() as HttpURLConnection
- connection.requestMethod="GET"; connection.connectTimeout=12000; connection.readTimeout=25000
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/paper-trading/backtest").openConnection() as HttpURLConnection
+ connection.requestMethod="POST";connection.connectTimeout=12000;connection.readTimeout=30000
+ connection.doOutput=true
+ connection.setRequestProperty("Content-Type","application/json")
  try {
+   val request=JSONObject().put("symbol","xau").put("interval","60m")
+     .put("fast_period",20).put("slow_period",50)
+     .put("starting_capital",10000).put("risk_fraction",0.01)
+     .put("contract_value_per_price_unit",1).put("fee_bps",10).put("slippage_bps",5)
+   connection.outputStream.use{it.write(request.toString().toByteArray(Charsets.UTF_8))}
    val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
    val root=JSONObject(stream.bufferedReader().use{it.readText()})
    if(connection.responseCode !in 200..299) throw IllegalStateException(root.optString("error","Backtest unavailable"))
-   val profitFactor=if(root.isNull("profit_factor")) "نامشخص" else root.optString("profit_factor")
-   return BacktestUi(root.optString("market_interval","60m"),root.optInt("candle_count"),
+   val warning=listOf(root.optString("warning"),root.optString("history_note"))
+     .filter{it.isNotBlank()&&it!="null"}.joinToString(" ")
+   return BacktestUi(root.optString("interval","60m"),root.optInt("candle_count",root.optJSONObject("data_quality")?.optInt("candle_count")?:0),
      root.optDouble("starting_capital"),root.optDouble("final_equity"),
      root.optDouble("net_return_pct"),root.optDouble("max_drawdown_pct"),
-     root.optInt("closed_trades"),root.optDouble("win_rate_pct"),profitFactor,
-     root.optString("market_last_candle_at",""),root.optString("warning","آزمون پژوهشی؛ نتیجه تضمین‌کننده عملکرد آینده نیست."))
+     root.optInt("closed_trades"),root.optDouble("win_rate_pct"),"در این نسخه محاسبه نشده",
+     root.optString("last_candle_at",""),warning.ifBlank{"آزمون پژوهشی؛ نتیجه تضمین‌کننده عملکرد آینده نیست."})
  } finally { connection.disconnect() }
 }
 
