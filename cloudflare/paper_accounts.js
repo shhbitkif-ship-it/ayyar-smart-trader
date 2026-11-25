@@ -149,7 +149,7 @@ export class PaperAccount extends DurableObject {
       "SELECT trade_id,side FROM paper_trades WHERE status='OPEN' AND symbol=? LIMIT 1",
       trade.symbol
     ).toArray()[0];
-    if(openSameSymbol) throw new Error("DUPLICATE_OPEN_SYMBOL");
+    if(openSameSymbol) throw new Error("An open paper trade already exists for this symbol. Close it before opening another.");
     const summary=this.getSummary(tokenHash);
     const open=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(quantity*entry_price),0) AS exposure FROM paper_trades WHERE status='OPEN'").toArray()[0];
     const notional=trade.quantity*trade.entry_price;
