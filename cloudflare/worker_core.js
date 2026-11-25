@@ -638,6 +638,32 @@ export default {
           status:"UNAVAILABLE",execution_enabled:false},502);
       }
     }
+    const paperAccountAuxMatch=url.pathname.match(/^\\/v1\\/paper\\/accounts\\/([a-f0-9]{32})\\/(notifications|report\\/daily)$/);
+    if(paperAccountAuxMatch&&request.method==="GET") {
+      const accountId=paperAccountAuxMatch[1],resource=paperAccountAuxMatch[2];
+      const auth=request.headers.get("authorization")||"";
+      if(!auth.startsWith("Bearer ")) return json({error:"Bearer authorization required"},401);
+      const bearer=auth.slice(7);
+      if(bearer.length<32||bearer.length>256) return json({error:"Invalid bearer token"},401);
+      const tokenHash=await sha256Hex(bearer);
+      const account=env.PAPER_ACCOUNTS.getByName(accountId);
+      try {
+        if(resource==="notifications") {
+          const notifications=await account.listNotifications(tokenHash,30);
+          if(notifications===null) return json({error:"Account not found or access denied"},404);
+          return json({notifications,execution_enabled:false,mode:"PAPER_ONLY"});
+        }
+        const day=url.searchParams.get("date")||new Date().toISOString().slice(0,10);
+        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+"T00:00:00.000Z"))||
+          new Date(Date.parse(day+"T00:00:00.000Z")).toISOString().slice(0,10)!==day)
+          return json({error:"date must be a valid YYYY-MM-DD UTC date"},400);
+        const report=await account.getDailyReport(tokenHash,day);
+        if(report===null) return json({error:"Account not found or access denied"},404);
+        return json(report);
+      } catch(e) {
+        return json({error:String(e?.message||"Paper account report unavailable"),execution_enabled:false},503);
+      }
+    }
     const paperAccountMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})(?:\/(trades)(?:\/([a-f0-9]{32})\/close)?)?$/);
     if(paperAccountMatch) {
       const accountId=paperAccountMatch[1],isTrades=paperAccountMatch[2]==="trades",closeId=paperAccountMatch[3];
