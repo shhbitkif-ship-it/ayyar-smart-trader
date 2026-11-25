@@ -749,6 +749,29 @@ export default {
     if(url.pathname==="/telegram/webhook" && request.method==="POST")
       return handleTelegramWebhook(request, env, snapshot, json);
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
+    if(url.pathname==="/v1/paper-trading/backtest"&&request.method==="POST") {
+      try {
+        const length=Number(request.headers.get("content-length")||0);
+        if(length>2048) return json({error:"Backtest configuration is too large"},413);
+        const payload=await request.json();
+        if(!payload||typeof payload!=="object"||Array.isArray(payload))
+          return json({error:"Request body must be a JSON object"},400);
+        const symbol=payload.symbol??"xau",interval=payload.interval??"60m";
+        if(symbol!=="xau"||!["15m","60m","1d"].includes(interval))
+          return json({error:"Historical backtest currently supports global XAU/USD only, at 15m, 60m, or 1d intervals."},400);
+        const market=await fetchGoldCandles(symbol,interval);
+        if(market.candles.length<60)
+          return json({error:"Not enough verified completed candles for backtest",available_candles:market.candles.length,required_candles:60},422);
+        const result=simulatePaperTrading({...payload,candles:market.candles});
+        return json({...result,symbol,interval,provider:market.provider,
+          source_url:market.source_url,retrieved_at:market.retrieved_at,
+          last_candle_at:market.last_candle_at,data_quality:market.data_quality,
+          history_note:"Backtest uses only the historical window currently supplied by the public XAUS chart feed; this is not a multi-year or statistically conclusive test."});
+      } catch(e) {
+        return json({error:String(e?.message||"Historical paper backtest failed"),
+          mode:"PAPER_ONLY",execution_enabled:false},502);
+      }
+    }
     if(url.pathname==="/v1/paper-trading/simulate"&&request.method==="POST") {
       try {
         const payload=await request.json();
