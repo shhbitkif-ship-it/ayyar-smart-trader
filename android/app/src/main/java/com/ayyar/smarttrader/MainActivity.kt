@@ -1,6 +1,7 @@
 package com.ayyar.smarttrader
 
 import android.os.Bundle
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -11,6 +12,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -20,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -74,6 +79,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
    } } }
    item { MarketDataHealthCard(marketHealth) }
+   item { PaperAccountCard() }
    if(snapshot?.isSuccess==true){ items(snapshot!!.getOrThrow()){ q -> QuoteCard(q) } }
    item { Text("تاریخچه و نمودار روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
@@ -553,4 +559,178 @@ private fun calculateIndicators(values:List<Double>):IndicatorUi?{
  if(signalLine.isEmpty()) return null
  val macd=macdLine.last(); val signal=signalLine.last()
  return IndicatorUi(e20,e50,rsi,macd,signal,macd-signal)
+}
+
+
+private fun securePaperPrefs(context:Context)=run {
+ val master=MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+ EncryptedSharedPreferences.create(context,"ayyar_paper_account_secure",master,
+  EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+  EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+}
+
+private fun paperApi(method:String,path:String,token:String?=null,body:JSONObject?=null):JSONObject {
+ val connection=URL(BuildConfig.API_BASE_URL+path).openConnection() as HttpURLConnection
+ connection.requestMethod=method;connection.connectTimeout=10000;connection.readTimeout=15000
+ connection.setRequestProperty("Accept","application/json")
+ if(body!=null){connection.doOutput=true;connection.setRequestProperty("Content-Type","application/json");connection.outputStream.use{it.write(body.toString().toByteArray(Charsets.UTF_8))}}
+ if(!token.isNullOrBlank()) connection.setRequestProperty("Authorization","Bearer "+token)
+ try{
+  val code=connection.responseCode
+  val stream=if(code in 200..299) connection.inputStream else connection.errorStream
+  val result=JSONObject(stream.bufferedReader().use{it.readText()})
+  if(code !in 200..299) throw IllegalStateException(result.optString("error","HTTP $code"))
+  return result
+ }finally{connection.disconnect()}
+}
+
+@Composable private fun PaperAccountCard(){
+ val context=LocalContext.current
+ val prefs=remember{runCatching{securePaperPrefs(context)}.getOrNull()}
+ var accountId by remember{mutableStateOf(prefs?.getString("account_id","")?:"")}
+ var token by remember{mutableStateOf(prefs?.getString("access_token","")?:"")}
+ var capital by remember{mutableStateOf("10000")}
+ var currency by remember{mutableStateOf("USD")}
+ var symbol by remember{mutableStateOf("XAUUSD")}
+ var side by remember{mutableStateOf("BUY")}
+ var quantity by remember{mutableStateOf("0.01")}
+ var entry by remember{mutableStateOf("")}
+ var stop by remember{mutableStateOf("")}
+ var target by remember{mutableStateOf("")}
+ var exitPrice by remember{mutableStateOf("")}
+ var summary by remember{mutableStateOf<JSONObject?>(null)}
+ var trades by remember{mutableStateOf<JSONArray?>(null)}
+ var status by remember{mutableStateOf(if(prefs==null) "ذخیره‌سازی رمزگذاری‌شده دستگاه در دسترس نیست." else "حساب آزمایشی ایجاد نشده است.")}
+ var busy by remember{mutableStateOf(false)}
+ val scope= rememberCoroutineScope()
+
+ fun reload(){
+  if(accountId.isBlank()||token.isBlank()) return
+  scope.launch{
+   busy=true
+   try{
+    val result=withContext(Dispatchers.IO){
+     val s=paperApi("GET","/v1/paper/accounts/$accountId",token)
+     val t=paperApi("GET","/v1/paper/accounts/$accountId/trades",token)
+     Pair(s,t.optJSONArray("trades")?:JSONArray())
+    }
+    summary=result.first;trades=result.second;status="حساب آزمایشی همگام شد."
+   }catch(e:Exception){status=e.message?:"خطا در دریافت حساب آزمایشی."}
+   finally{busy=false}
+  }
+ }
+
+ LaunchedEffect(accountId,token){
+  if(accountId.isNotBlank()&&token.isNotBlank()){
+   try{
+    val result=withContext(Dispatchers.IO){
+     val s=paperApi("GET","/v1/paper/accounts/$accountId",token)
+     val t=paperApi("GET","/v1/paper/accounts/$accountId/trades",token)
+     Pair(s,t.optJSONArray("trades")?:JSONArray())
+    }
+    summary=result.first;trades=result.second;status="حساب آزمایشی بازیابی شد."
+   }catch(e:Exception){status=e.message?:"بازیابی حساب ناموفق بود."}
+  }
+ }
+
+ Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){
+  Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
+   Text("حساب آزمایشی پایدار",color=gold,fontSize=18.sp,fontWeight=FontWeight.Bold)
+   Text("ذخیره روی Cloudflare SQLite • بدون اتصال به بروکر • بدون سفارش واقعی",color=muted,fontSize=11.sp)
+   if(accountId.isBlank()){
+    OutlinedTextField(value=capital,onValueChange={capital=it},label={Text("سرمایه اولیه مجازی")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+     FilterChip(selected=currency=="USD",onClick={currency="USD"},label={Text("USD")})
+     FilterChip(selected=currency=="IRT",onClick={currency="IRT"},label={Text("تومان")})
+    }
+    Button(enabled=!busy&&prefs!=null&&capital.toDoubleOrNull()?.let{it>0.0}==true,onClick={
+     scope.launch{
+      busy=true
+      try{
+       val created=withContext(Dispatchers.IO){paperApi("POST","/v1/paper/accounts",body=JSONObject().put("starting_capital",capital.toDouble()).put("currency",currency))}
+       val id=created.getString("account_id");val access=created.getString("access_token")
+       withContext(Dispatchers.IO){prefs?.edit()?.putString("account_id",id)?.putString("access_token",access)?.apply()}
+       accountId=id;token=access;status="حساب ساخته شد؛ توکن در حافظه رمزگذاری‌شده دستگاه ذخیره شد."
+      }catch(e:Exception){status=e.message?:"ساخت حساب ناموفق بود."}
+      finally{busy=false}
+     }
+    },modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(busy)"در حال ایجاد…" else "ایجاد حساب آزمایشی")}
+   }else{
+    Text("شناسه حساب: "+accountId,color=muted,fontSize=10.sp)
+    summary?.let{s->
+     Text("موجودی: "+String.format(Locale.US,"%,.2f",s.optDouble("balance"))+" "+s.optString("currency"),color=Color.White,fontSize=22.sp,fontWeight=FontWeight.Bold)
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+      Text("سود/زیان تحقق‌یافته",color=muted,fontSize=11.sp)
+      Text(String.format(Locale.US,"%,.2f",s.optDouble("realized_pnl")),color=if(s.optDouble("realized_pnl")>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+     }
+     Text("معاملات باز: ${s.optInt("open_trades")} • بسته: ${s.optInt("closed_trades")}",color=muted,fontSize=11.sp)
+    }
+    OutlinedButton(onClick={reload()},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text("به‌روزرسانی حساب و دفتر معاملات")}
+    Divider(color=Color(0xFF303746))
+    Text("ثبت موقعیت فرضی",color=gold,fontWeight=FontWeight.SemiBold)
+    OutlinedTextField(value=symbol,onValueChange={symbol=it.uppercase(Locale.US)},label={Text("نماد (مثلاً XAUUSD)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+     FilterChip(selected=side=="BUY",onClick={side="BUY"},label={Text("خرید")})
+     FilterChip(selected=side=="SELL",onClick={side="SELL"},label={Text("فروش")})
+    }
+    OutlinedTextField(value=quantity,onValueChange={quantity=it},label={Text("حجم")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    OutlinedTextField(value=entry,onValueChange={entry=it},label={Text("قیمت ورود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    OutlinedTextField(value=stop,onValueChange={stop=it},label={Text("حد ضرر")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    OutlinedTextField(value=target,onValueChange={target=it},label={Text("حد سود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    val valid=quantity.toDoubleOrNull()?.let{it>0}==true&&entry.toDoubleOrNull()?.let{it>0}==true&&stop.toDoubleOrNull()?.let{it>0}==true&&target.toDoubleOrNull()?.let{it>0}==true
+    Button(enabled=!busy&&valid,onClick={
+     scope.launch{
+      busy=true
+      try{
+       withContext(Dispatchers.IO){paperApi("POST","/v1/paper/accounts/$accountId/trades",token,
+        JSONObject().put("symbol",symbol.trim()).put("side",side).put("quantity",quantity.toDouble())
+         .put("entry_price",entry.toDouble()).put("stop_loss",stop.toDouble()).put("take_profit",target.toDouble())
+         .put("idempotency_key",java.util.UUID.randomUUID().toString()))}
+       status="موقعیت آزمایشی ثبت شد."
+       val result=withContext(Dispatchers.IO){
+        val s=paperApi("GET","/v1/paper/accounts/$accountId",token)
+        val t=paperApi("GET","/v1/paper/accounts/$accountId/trades",token)
+        Pair(s,t.optJSONArray("trades")?:JSONArray())
+       }
+       summary=result.first;trades=result.second
+      }catch(e:Exception){status=e.message?:"ثبت موقعیت ناموفق بود."}
+      finally{busy=false}
+     }
+    },modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("ثبت معامله آزمایشی")}
+    Text("ریسک هر موقعیت حداکثر ۱٪ موجودی است؛ قیمت‌ها را فقط از داده معتبر بازار وارد کن.",color=muted,fontSize=10.sp)
+    OutlinedTextField(value=exitPrice,onValueChange={exitPrice=it},label={Text("قیمت خروج برای بستن موقعیت")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    Text("دفتر معاملات",color=gold,fontWeight=FontWeight.SemiBold)
+    val rows=trades
+    if(rows==null||rows.length()==0) Text("هنوز معامله‌ای ثبت نشده است.",color=muted,fontSize=11.sp)
+    else for(i in 0 until rows.length()){
+     val trade=rows.optJSONObject(i)?:continue
+     Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+      Text("${trade.optString("symbol")} • ${if(trade.optString("side")=="BUY")"خرید" else "فروش"} • ${trade.optString("status")}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+      Text("حجم ${trade.optDouble("quantity")} • ورود ${trade.optDouble("entry_price")} • حدضرر ${trade.optDouble("stop_loss")} • هدف ${trade.optDouble("take_profit")}",color=muted,fontSize=10.sp)
+      if(trade.optString("status")=="OPEN"){
+       OutlinedButton(enabled=!busy&&exitPrice.toDoubleOrNull()?.let{it>0}==true,onClick={
+        scope.launch{
+         busy=true
+         try{
+          withContext(Dispatchers.IO){paperApi("POST","/v1/paper/accounts/$accountId/trades/${trade.getString("trade_id")}/close",token,JSONObject().put("exit_price",exitPrice.toDouble()))}
+          val result=withContext(Dispatchers.IO){
+           val s=paperApi("GET","/v1/paper/accounts/$accountId",token)
+           val t=paperApi("GET","/v1/paper/accounts/$accountId/trades",token)
+           Pair(s,t.optJSONArray("trades")?:JSONArray())
+          }
+          summary=result.first;trades=result.second;status="معامله آزمایشی بسته شد."
+         }catch(e:Exception){status=e.message?:"بستن معامله ناموفق بود."}
+         finally{busy=false}
+        }
+       },modifier=Modifier.fillMaxWidth()){Text("بستن با قیمت واردشده")}
+      }else{
+       Text("سود/زیان تحقق‌یافته: "+String.format(Locale.US,"%.2f",trade.optDouble("realized_pnl")),color=muted,fontSize=10.sp)
+      }
+     }
+     Divider(color=Color(0xFF303746))
+    }
+   }
+   Text(status,color=if(status.contains("ناموفق")||status.contains("خطا")||status.contains("حد")||status.contains("موجودی")) Color(0xFFFFB86B) else muted,fontSize=11.sp)
+  }
+ }
 }
