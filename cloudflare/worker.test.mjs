@@ -905,7 +905,7 @@ test("walk-forward backtest rejects short history instead of reporting misleadin
 });
 
 test("market regime identifies trend and blocks range and high volatility", async () => {
-  const make=(mode)=>{let close=2500;return Array.from({length:120},(_,i)=>{const prev=close;close+=mode==="trend"?0.9:mode==="range"?(i%2===0?0.12:-0.12):(i%2===0?25:-25);return {timestamp:new Date(Date.now()-(119-i)*3600000).toISOString(),open:prev,high:Math.max(prev,close)+(mode==="volatile"?10:0.2),low:Math.min(prev,close)-(mode==="volatile"?10:0.2),close};});};
+  const make=(mode)=>{let close=2500;const lastClosed=Math.floor(Date.now()/3600000)*3600000-3600000;return Array.from({length:120},(_,i)=>{const prev=close;close+=mode==="trend"?0.9:mode==="range"?(i%2===0?0.12:-0.12):(i%2===0?25:-25);return {timestamp:new Date(lastClosed-(119-i)*3600000).toISOString(),open:prev,high:Math.max(prev,close)+(mode==="volatile"?10:0.2),low:Math.min(prev,close)-(mode==="volatile"?10:0.2),close};});};
   const original=globalThis.fetch;let mode="trend";
   globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(make(mode))),{status:200,headers:{"content-type":"application/json"}});
   try { const get=async()=>(await worker.fetch(new Request("https://unit.test/v1/market/regime?symbol=xau&interval=60m"))).json();
@@ -945,7 +945,10 @@ test("SELL signal performance reports non-negative favorable and adverse excursi
     return {timestamp:new Date(lastClosed-(39-i)*intervalMs).toISOString(),
       open,high:open+2,low:i===11?open:open-1,close:open+1};
   });
-  store.set("xau:latest:sell-sample",{signal:"SELL",last_candle_at:candles[10].timestamp});
+  store.set("xau:latest:sell-sample",{signal:"SELL",symbol:"xau",confidence:80,entry:2610,stop_loss:2620,take_profit:2590,
+    market_data_status:"LIVE",execution_enabled:false,
+    archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    last_candle_at:candles[10].timestamp,recorded_at:new Date(Date.parse(candles[10].timestamp)+1000).toISOString()});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)||null;}};
   globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),
