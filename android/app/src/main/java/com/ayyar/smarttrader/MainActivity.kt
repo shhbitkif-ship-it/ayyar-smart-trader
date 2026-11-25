@@ -666,6 +666,26 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
      Text("معاملات باز: ${s.optInt("open_trades")} • بسته: ${s.optInt("closed_trades")}",color=muted,fontSize=11.sp)
     }
     OutlinedButton(onClick={reload()},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text("به‌روزرسانی حساب و دفتر معاملات")}
+    OutlinedButton(enabled=!busy,onClick={
+     scope.launch{
+      busy=true
+      try{
+       val result=withContext(Dispatchers.IO){
+        paperApi("POST","/v1/paper/accounts/$accountId/monitor",token,JSONObject())
+       }
+       val closed=result.optInt("closed")
+       status="پایش کندل ۱۵ دقیقه‌ای XAUS انجام شد؛ $closed معامله با حد ضرر/سود بسته شد."
+       val refreshed=withContext(Dispatchers.IO){
+        val s=paperApi("GET","/v1/paper/accounts/$accountId",token)
+        val t=paperApi("GET","/v1/paper/accounts/$accountId/trades",token)
+        Pair(s,t.optJSONArray("trades")?:JSONArray())
+       }
+       summary=refreshed.first;trades=refreshed.second
+      }catch(e:Exception){status=e.message?:"داده بازار در دسترس نیست؛ هیچ معامله‌ای بسته نشد."}
+      finally{busy=false}
+     }
+    },modifier=Modifier.fillMaxWidth()){Text("پایش حد ضرر و حد سود با کندل زنده")}
+    Text("این دکمه آخرین کندل کامل ۱۵ دقیقه‌ای XAU/USD را بررسی می‌کند؛ پایش پیوسته پس‌زمینه هنوز فعال نیست.",color=muted,fontSize=10.sp)
     Divider(color=Color(0xFF303746))
     Text("ثبت موقعیت فرضی",color=gold,fontWeight=FontWeight.SemiBold)
     OutlinedTextField(value=symbol,onValueChange={symbol=it.uppercase(Locale.US)},label={Text("نماد (مثلاً XAUUSD)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
