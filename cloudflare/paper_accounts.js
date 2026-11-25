@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { calculatePaperEntryFee, calculatePaperSettlement } from "./ledger_math.mjs";
 
 export class PaperAccount extends DurableObject {
   constructor(ctx, env) {
@@ -366,7 +367,7 @@ export class PaperAccount extends DurableObject {
       throw new Error("INSUFFICIENT_PAPER_BALANCE");
     if(!Number.isFinite(risk)||risk>summary.balance*0.01+1e-8)
       throw new Error("RISK_LIMIT_EXCEEDED");
-    const entryFee=notional*trade.fee_bps/10000;
+    const entryFee=calculatePaperEntryFee(trade.quantity,trade.entry_price,trade.fee_bps);
     this.ctx.storage.sql.exec(
       `INSERT INTO paper_trades
        (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,idempotency_key,
@@ -529,13 +530,11 @@ export class PaperAccount extends DurableObject {
   _closeTradeAtomic(account,tradeId,exitPrice,feeBps,closedAt) {
     const trade=this.ctx.storage.sql.exec("SELECT * FROM paper_trades WHERE trade_id=? AND status='OPEN' LIMIT 1",tradeId).toArray()[0];
     if(!trade) return {error:"TRADE_NOT_OPEN"};
-    const direction=trade.side==="BUY"?1:-1;
-    const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
-    const exitFee=exitPrice*trade.quantity*feeBps/10000;
     const entryFee=Number(trade.fees||0);
-    const fees=entryFee+exitFee;
-    const realized=gross-fees;
-    if(![gross,exitFee,entryFee,fees,realized].every(Number.isFinite)) throw new Error("TRADE_VALUE_OUT_OF_RANGE");
+    const exitFee=calculatePaperEntryFee(trade.quantity,exitPrice,feeBps);
+    const settlement=calculatePaperSettlement({side:trade.side,quantity:trade.quantity,
+      entryPrice:trade.entry_price,exitPrice,entryFee,exitFee});
+    const {gross,totalFees:fees,realizedPnl:realized,ledgerCloseAmount}=settlement;
     const updated=this.ctx.storage.sql.exec(
       `UPDATE paper_trades SET status='CLOSED',closed_at=?,exit_price=?,realized_pnl=?,fees=?
        WHERE trade_id=? AND status='OPEN'
@@ -543,7 +542,7 @@ export class PaperAccount extends DurableObject {
       closedAt,exitPrice,realized,fees,tradeId
     ).toArray()[0];
     if(updated) {
-      this._appendLedgerEntry(account,"TRADE_CLOSED:"+tradeId,"TRADE_CLOSED",gross-exitFee,
+      this._appendLedgerEntry(account,"TRADE_CLOSED:"+tradeId,"TRADE_CLOSED",ledgerCloseAmount,
         {trade_id:tradeId,symbol:trade.symbol,side:trade.side,gross_pnl:gross,
           exit_fee:exitFee,entry_fee:entryFee,realized_pnl:realized},closedAt);
       this._recordClosedNotification(trade,updated,"MANUAL",closedAt);
@@ -617,13 +616,11 @@ export class PaperAccount extends DurableObject {
           exitPrice=trade.take_profit;
         }
         if(exitPrice!==null) {
-          const direction=isBuy?1:-1;
-          const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
-          const exitFee=exitPrice*trade.quantity*feeBps/10000;
-          const fees=Number(trade.fees||0)+exitFee;
-          const realized=gross-fees;
-          if(![gross,exitFee,fees,realized].every(Number.isFinite))
-            throw new Error("TRADE_VALUE_OUT_OF_RANGE");
+          const entryFee=Number(trade.fees||0);
+          const exitFee=calculatePaperEntryFee(trade.quantity,exitPrice,feeBps);
+          const settlement=calculatePaperSettlement({side:trade.side,quantity:trade.quantity,
+            entryPrice:trade.entry_price,exitPrice,entryFee,exitFee});
+          const {gross,totalFees:fees,realizedPnl:realized,ledgerCloseAmount}=settlement;
           closedRow=this.ctx.storage.sql.exec(
             `UPDATE paper_trades SET status='CLOSED',closed_at=?,exit_price=?,realized_pnl=?,fees=?,last_checked_at=?
              WHERE trade_id=? AND status='OPEN'
@@ -632,9 +629,7 @@ export class PaperAccount extends DurableObject {
           ).toArray()[0];
           if(closedRow) {
             closedRow.exit_reason=reason;
-            const gross=(exitPrice-trade.entry_price)*trade.quantity*(trade.side==="BUY"?1:-1);
-            const exitFee=exitPrice*trade.quantity*feeBps/10000;
-            this._appendLedgerEntry(account,"TRADE_CLOSED:"+trade.trade_id,"TRADE_CLOSED",gross-exitFee,
+            this._appendLedgerEntry(account,"TRADE_CLOSED:"+trade.trade_id,"TRADE_CLOSED",ledgerCloseAmount,
               {trade_id:trade.trade_id,symbol:trade.symbol,side:trade.side,gross_pnl:gross,
                 exit_fee:exitFee,entry_fee:Number(trade.fees||0),realized_pnl:realized,reason},checkedAt);
             this._recordClosedNotification(trade,closedRow,reason,checkedAt);
