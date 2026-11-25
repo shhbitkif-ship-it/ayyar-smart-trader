@@ -406,14 +406,50 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0];
     if(openSameSymbol) throw new Error("An open paper trade already exists for this symbol. Close it before opening another.");
     const summary=this.getSummary(tokenHash);
-    const open=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(quantity*entry_price),0) AS exposure FROM paper_trades WHERE status='OPEN'").toArray()[0];
+    const open=this.ctx.storage.sql.exec(
+      `SELECT COALESCE(SUM(quantity*entry_price),0) AS exposure,
+       COALESCE(SUM(quantity*ABS(entry_price-stop_loss)+fees),0) AS risk
+       FROM paper_trades WHERE status='OPEN'`
+    ).toArray()[0];
     const notional=trade.quantity*trade.entry_price;
-    const risk=trade.quantity*Math.abs(trade.entry_price-trade.stop_loss);
+    const entryFee=calculatePaperEntryFee(trade.quantity,trade.entry_price,trade.fee_bps);
+    const stopFee=calculatePaperEntryFee(trade.quantity,trade.stop_loss,trade.fee_bps);
+    const risk=trade.quantity*Math.abs(trade.entry_price-trade.stop_loss)+entryFee+stopFee;
     if(!Number.isFinite(notional)||notional<=0||notional+Number(open.exposure||0)>summary.balance)
       throw new Error("INSUFFICIENT_PAPER_BALANCE");
     if(!Number.isFinite(risk)||risk>summary.balance*0.01+1e-8)
       throw new Error("RISK_LIMIT_EXCEEDED");
-    const entryFee=calculatePaperEntryFee(trade.quantity,trade.entry_price,trade.fee_bps);
+    if(Number(open.risk||0)+risk>summary.balance*0.02+1e-8)
+      throw new Error("TOTAL_OPEN_RISK_LIMIT_EXCEEDED");
+
+    const day=createdAt.slice(0,10);
+    const dayStart=day+"T00:00:00.000Z";
+    const dayEnd=new Date(Date.parse(dayStart)+86400000).toISOString();
+    const daily=this.ctx.storage.sql.exec(
+      `SELECT COALESCE(SUM(CASE WHEN status='CLOSED' THEN realized_pnl ELSE 0 END),0) -
+       COALESCE(SUM(CASE WHEN status='OPEN' THEN fees ELSE 0 END),0) AS pnl
+       FROM paper_trades
+       WHERE (status='CLOSED' AND closed_at>=? AND closed_at<?)
+          OR (status='OPEN' AND opened_at>=? AND opened_at<?)`,
+      dayStart,dayEnd,dayStart,dayEnd
+    ).toArray()[0];
+    const dailyLoss=Math.max(0,-Number(daily.pnl||0));
+    if(dailyLoss>=Number(account.starting_capital)*0.03-1e-8)
+      throw new Error("DAILY_LOSS_LIMIT_EXCEEDED");
+
+    const closed=this.ctx.storage.sql.exec(
+      "SELECT realized_pnl FROM paper_trades WHERE status='CLOSED' ORDER BY closed_at ASC,trade_id ASC"
+    ).toArray();
+    let equity=Number(account.starting_capital),peak=equity;
+    for(const row of closed) {
+      const pnl=Number(row.realized_pnl);
+      if(!Number.isFinite(pnl)) throw new Error("INVALID_STORED_REALIZED_PNL");
+      equity+=pnl;
+      peak=Math.max(peak,equity);
+    }
+    const drawdown=peak>0?Math.max(0,(peak-Number(summary.balance))/peak):0;
+    if(drawdown>=0.08)
+      throw new Error("MAX_DRAWDOWN_LIMIT_EXCEEDED");
     this.ctx.storage.sql.exec(
       `INSERT INTO paper_trades
        (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,idempotency_key,
