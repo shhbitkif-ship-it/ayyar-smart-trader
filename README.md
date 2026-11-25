@@ -107,3 +107,10 @@ API محاسبه حجم، ورودی‌های اختیاری `lot_step`، `min_l
 - XAUS completed-candle ingestion rejects malformed completed OHLC rows and duplicate timestamps instead of silently treating them as valid.
 - Candle gaps are reported with counts and largest missing interval; gaps are never synthetically filled and may reflect market closures.
 - Candle freshness and completed-bucket checks remain enforced. Data-quality metadata is exposed by the candles endpoint; all signal/order execution remains disabled.
+
+
+## Strategy and signal attribution (paper only)
+
+Paper-trade creation accepts optional `strategy_id`, `signal_id`, and `signal_type` (`BUY`, `SELL`, or `NO_TRADE`). These fields are stored only when explicitly supplied; historical trades and trades without metadata remain `UNATTRIBUTED` rather than being matched by approximate timestamps.
+
+Authenticated endpoint: `GET /v1/paper/accounts/{account_id}/analytics/strategy`. It groups closed paper trades by strategy and signal type and reports sample count, win rate, net PnL, fees, profit factor, and expectancy. Advisory risk guidance is withheld until at least 20 closed trades in a group; then negative net PnL or win rate below 35% suggests considering half risk. This is advisory only: it never changes the risk engine, never increases risk, and does not enable live execution. Small samples must not be treated as statistically reliable.
