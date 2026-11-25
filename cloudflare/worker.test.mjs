@@ -1634,6 +1634,27 @@ test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("manual paper monitor does not update positions when XAUS feed is unavailable",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.79"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/monitor",{
+      method:"POST",headers:{authorization:"Bearer "+account.access_token}
+    }),env);
+    const body=await response.json();
+    assert.equal(response.status,502);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("paper monitor processes each completed candle only once",async()=>{
   const env=paperAccountEnv();
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
