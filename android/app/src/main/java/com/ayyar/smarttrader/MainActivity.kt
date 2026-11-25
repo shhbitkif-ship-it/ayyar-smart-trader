@@ -45,6 +45,7 @@ data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPc
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
 data class WalkForwardUi(val totalReturnPct:Double,val worstDrawdownPct:Double,val totalTrades:Int,val winRate:Double,val folds:List<WalkForwardFold>)
 data class MarketDataHealthUi(val status:String,val quality:String,val provider:String,val interval:String,val candleCount:Int,val ageSeconds:Long,val gapCount:Int,val missingIntervals:Int,val largestGap:Int,val lastCandle:String,val note:String)
+data class PaperMonitorStatusUi(val status:String,val provider:String,val interval:String,val accountsChecked:Int,val tradesProcessed:Int,val closedTrades:Int,val candleAt:String,val completedAt:String,val error:String,val mode:String)
 data class SignalPerformanceHorizon(val horizon:Int,val scored:Int,val wins:Int,val losses:Int,val flats:Int,val winRate:Double?,val averageReturn:Double?,val averageFavorable:Double?,val averageAdverse:Double?)
 data class SignalPerformanceUi(val horizons:List<SignalPerformanceHorizon>,val directionalSignals:Int,val pending:Int,val unavailable:Int,val lastCandle:String,val warning:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
@@ -65,6 +66,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  LaunchedEffect(Unit) { while (true) { delay(60000); refresh++ } }
  val snapshot by produceState<Result<List<QuoteUi>>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchQuotes() } } }
  val marketHealth by produceState<Result<MarketDataHealthUi>?>(null, refresh) { value=runCatching { withContext(Dispatchers.IO) { fetchMarketDataHealth() } } }
+ val paperMonitor by produceState<Result<PaperMonitorStatusUi>?>(null, refresh) { value=runCatching { withContext(Dispatchers.IO) { fetchPaperMonitorStatus() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
@@ -79,6 +81,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
    } } }
    item { MarketDataHealthCard(marketHealth) }
+   item { PaperMonitorHealthCard(paperMonitor) }
    item { PaperAccountCard() }
    if(snapshot?.isSuccess==true){ items(snapshot!!.getOrThrow()){ q -> QuoteCard(q) } }
    item { Text("تاریخچه و نمودار روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
@@ -480,6 +483,49 @@ private fun fetchMarketDataHealth():MarketDataHealthUi{
  } finally {connection.disconnect()}
 }
 
+private fun fetchPaperMonitorStatus():PaperMonitorStatusUi{
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/paper/monitor/status").openConnection() as HttpURLConnection
+ connection.requestMethod="GET";connection.connectTimeout=7000;connection.readTimeout=7000
+ try{
+  if(connection.responseCode !in 200..299) throw IllegalStateException("Monitor status HTTP "+connection.responseCode)
+  val root=JSONObject(connection.inputStream.bufferedReader().use{it.readText()})
+  val monitor=root.optJSONObject("monitor")?:JSONObject()
+  return PaperMonitorStatusUi(root.optString("status","NOT_RUN"),
+   monitor.optString("provider",""),monitor.optString("interval",root.optString("monitor_interval","")),
+   monitor.optInt("accounts_checked"),monitor.optInt("trades_processed"),monitor.optInt("closed_trades"),
+   monitor.optString("candle_at",""),monitor.optString("completed_at",""),
+   monitor.optString("error",""),monitor.optString("mode",root.optString("mode","PAPER_ONLY")))
+ }finally{connection.disconnect()}
+}
+
+@Composable private fun PaperMonitorHealthCard(state:Result<PaperMonitorStatusUi>?){
+ Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){
+  Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){
+   Text("سلامت پایش خودکار معاملات",color=gold,fontWeight=FontWeight.Bold,fontSize=16.sp)
+   when{
+    state==null -> Text("در حال دریافت وضعیت موتور پایش…",color=muted,fontSize=12.sp)
+    state.isFailure -> Text("وضعیت موتور دریافت نشد؛ اتصال سرور را بررسی کن.",color=Color(0xFFFFB86B),fontSize=12.sp)
+    else -> {
+     val s=state.getOrThrow()
+     val healthy=s.status=="OK"||s.status=="IDLE"
+     Text(when(s.status){"OK"->"آخرین اجرا موفق بود";"IDLE"->"موتور فعال است؛ هنوز حسابی برای پایش ثبت نشده";"ERROR"->"آخرین اجرای پایش با خطا مواجه شد";else->"هنوز اجرای موفقی ثبت نشده است"},
+      color=if(healthy) Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+      Text("حساب‌های بررسی‌شده: ${s.accountsChecked}",color=muted,fontSize=11.sp)
+      Text("معاملات بررسی‌شده: ${s.tradesProcessed}",color=muted,fontSize=11.sp)
+     }
+     Text("معاملات بسته‌شده در آخرین اجرا: ${s.closedTrades}",color=Color.White,fontSize=12.sp)
+     if(s.completedAt.isNotBlank()) Text("آخرین بررسی: ${formatLocalTimestamp(s.completedAt)}",color=muted,fontSize=10.sp)
+     if(s.candleAt.isNotBlank()) Text("آخرین کندل بازار: ${formatLocalTimestamp(s.candleAt)}",color=muted,fontSize=10.sp)
+     if(s.error.isNotBlank()) Text(s.error,color=Color(0xFFFFB86B),fontSize=10.sp)
+     Text("زمان‌بندی هر ۵ دقیقه • تحلیل بر اساس کندل کامل ۱۵ دقیقه‌ای • فقط معاملات آزمایشی",
+      color=muted,fontSize=10.sp)
+    }
+   }
+  }
+ }
+}
+
 private fun fetchQuotes():List<QuoteUi>{
  val connection=URL(BuildConfig.API_BASE_URL+"/v1/market/quotes").openConnection() as HttpURLConnection
  connection.requestMethod="GET"; connection.connectTimeout=7000; connection.readTimeout=7000
@@ -685,7 +731,7 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
       finally{busy=false}
      }
     },modifier=Modifier.fillMaxWidth()){Text("پایش حد ضرر و حد سود با کندل زنده")}
-    Text("این دکمه آخرین کندل کامل ۱۵ دقیقه‌ای XAU/USD را بررسی می‌کند؛ پایش پیوسته پس‌زمینه هنوز فعال نیست.",color=muted,fontSize=10.sp)
+    Text("این دکمه آخرین کندل کامل ۱۵ دقیقه‌ای XAU/USD را بررسی می‌کند؛ پایش خودکار سرور هر ۵ دقیقه فعال است؛ بستن معامله بر اساس کندل کامل ۱۵ دقیقه‌ای ممکن است تا بسته‌شدن کندل تأخیر داشته باشد.",color=muted,fontSize=10.sp)
     Divider(color=Color(0xFF303746))
     Text("ثبت موقعیت فرضی",color=gold,fontWeight=FontWeight.SemiBold)
     OutlinedTextField(value=symbol,onValueChange={symbol=it.uppercase(Locale.US)},label={Text("نماد (مثلاً XAUUSD)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
