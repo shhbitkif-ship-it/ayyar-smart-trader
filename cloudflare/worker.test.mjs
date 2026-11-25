@@ -1858,6 +1858,91 @@ test("manual paper monitor does not update positions when XAUS feed is unavailab
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("manual paper monitor preserves positions during outage and resumes on fresh continuous feed",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.81"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const tradeUrl="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const opened=await worker.fetch(new Request(tradeUrl,{method:"POST",headers,body:JSON.stringify({
+    symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020
+  })}),env);
+  assert.equal(opened.status,201);
+  const trade=env.__accounts.get(account.account_id).trades[0];
+  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:70},(_,i)=>{
+    const close=2000+i*.01;
+    return {timestamp:new Date(lastClosed-(69-i)*intervalMs).toISOString(),open:close,high:close+.5,low:close-.5,close};
+  });
+  trade.opened_at=new Date(Date.parse(candles.at(-1).timestamp)-intervalMs).toISOString();
+  const originalFetch=globalThis.fetch;
+  try {
+    globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
+    const unavailable=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/monitor",{
+      method:"POST",headers:{authorization:headers.authorization}
+    }),env);
+    const unavailableBody=await unavailable.json();
+    assert.equal(unavailable.status,502);
+    assert.equal(unavailableBody.status,"UNAVAILABLE");
+    assert.equal(trade.status,"OPEN");
+    assert.equal(trade.last_checked_at,undefined);
+    assert.equal(env.__accounts.get(account.account_id).notifications?.length||0,0);
+
+    globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+    const recovered=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/monitor",{
+      method:"POST",headers:{authorization:headers.authorization}
+    }),env);
+    const recoveredBody=await recovered.json();
+    assert.equal(recovered.status,200,JSON.stringify(recoveredBody));
+    assert.equal(recoveredBody.market_data_status,"LIVE");
+    assert.equal(recoveredBody.closed,0);
+    assert.equal(trade.status,"OPEN");
+    assert.equal(trade.last_checked_at,candles.at(-1).timestamp);
+    assert.equal(recoveredBody.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("manual paper monitor blocks gapped live candles without changing positions",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.82"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
+    method:"POST",headers,body:JSON.stringify({
+      symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020
+    })
+  }),env);
+  assert.equal(opened.status,201);
+  const trade=env.__accounts.get(account.account_id).trades[0];
+  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:70},(_,i)=>{
+    const close=2000+i*.01;
+    return {timestamp:new Date(lastClosed-(69-i)*intervalMs).toISOString(),open:close,high:close+.5,low:close-.5,close};
+  });
+  trade.opened_at=new Date(Date.parse(candles.at(-1).timestamp)-intervalMs).toISOString();
+  candles.splice(30,1);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/monitor",{
+      method:"POST",headers:{authorization:headers.authorization}
+    }),env);
+    const body=await response.json();
+    assert.equal(response.status,502);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.match(body.error,/continuous XAUS 15m candles/i);
+    assert.equal(trade.status,"OPEN");
+    assert.equal(trade.last_checked_at,undefined);
+    assert.equal(env.__accounts.get(account.account_id).notifications?.length||0,0);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
 test("paper monitor processes each completed candle only once",async()=>{
   const env=paperAccountEnv();
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
