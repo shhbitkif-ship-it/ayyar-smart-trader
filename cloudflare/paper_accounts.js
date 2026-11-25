@@ -40,9 +40,11 @@ export class PaperAccount extends DurableObject {
         exit_price REAL,
         realized_pnl REAL,
         fees REAL NOT NULL DEFAULT 0,
-        idempotency_key TEXT UNIQUE
+        idempotency_key TEXT UNIQUE,
+        last_checked_at TEXT
       );
     `);
+    try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN last_checked_at TEXT"); } catch {}
   }
 
   allowCreation(ipHash, day) {
@@ -133,7 +135,7 @@ export class PaperAccount extends DurableObject {
     const direction=trade.side==="BUY"?1:-1;
     const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
     const exitFee=exitPrice*trade.quantity*feeBps/10000;
-    const entryFee=trade.entry_price*trade.quantity*feeBps/10000;
+    const entryFee=Number(trade.fees||0);
     const fees=entryFee+exitFee;
     const realized=gross-fees;
     if(![gross,exitFee,entryFee,fees,realized].every(Number.isFinite)) throw new Error("TRADE_VALUE_OUT_OF_RANGE");
@@ -145,6 +147,58 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0];
     return updated??{error:"TRADE_NOT_OPEN"};
   }
+  monitorTrades(tokenHash,candle,feeBps,checkedAt) {
+    if(!this.authorizedAccount(tokenHash)) return null;
+    const rows=this.ctx.storage.sql.exec(
+      "SELECT * FROM paper_trades WHERE status='OPEN' ORDER BY opened_at ASC"
+    ).toArray();
+    const results=[];
+    for(const trade of rows) {
+      if(trade.last_checked_at && trade.last_checked_at>=candle.timestamp) {
+        results.push({trade_id:trade.trade_id,status:"UNCHANGED",reason:"CANDLE_ALREADY_PROCESSED"});
+        continue;
+      }
+      const isBuy=trade.side==="BUY";
+      const stopHit=isBuy?candle.low<=trade.stop_loss:candle.high>=trade.stop_loss;
+      const targetHit=isBuy?candle.high>=trade.take_profit:candle.low<=trade.take_profit;
+      let exitPrice=null,reason=null;
+      // Conservative same-candle rule: stop takes precedence over target.
+      if(stopHit) {
+        reason="STOP_LOSS";
+        exitPrice=isBuy&&candle.open<trade.stop_loss?candle.open:
+          !isBuy&&candle.open>trade.stop_loss?candle.open:trade.stop_loss;
+      } else if(targetHit) {
+        reason="TAKE_PROFIT";
+        exitPrice=isBuy&&candle.open>trade.take_profit?trade.take_profit:
+          !isBuy&&candle.open<trade.take_profit?trade.take_profit:trade.take_profit;
+      }
+      if(exitPrice!==null) {
+        const direction=isBuy?1:-1;
+        const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
+        const exitFee=exitPrice*trade.quantity*feeBps/10000;
+        const fees=Number(trade.fees||0)+exitFee;
+        const realized=gross-fees;
+        if(![gross,exitFee,fees,realized].every(Number.isFinite))
+          throw new Error("TRADE_VALUE_OUT_OF_RANGE");
+        const closed=this.ctx.storage.sql.exec(
+          `UPDATE paper_trades SET status='CLOSED',closed_at=?,exit_price=?,realized_pnl=?,fees=?,last_checked_at=?
+           WHERE trade_id=? AND status='OPEN'
+           RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
+          checkedAt,exitPrice,realized,fees,candle.timestamp,trade.trade_id
+        ).toArray()[0];
+        results.push({...closed,exit_reason:reason});
+      } else {
+        this.ctx.storage.sql.exec(
+          "UPDATE paper_trades SET last_checked_at=? WHERE trade_id=? AND status='OPEN'",
+          candle.timestamp,trade.trade_id
+        );
+        results.push({trade_id:trade.trade_id,status:"OPEN",checked_candle_at:candle.timestamp});
+      }
+    }
+    return {checked_candle_at:candle.timestamp,checked_at:checkedAt,processed:results.length,
+      closed:results.filter(x=>x.status==="CLOSED").length,results,execution_enabled:false};
+  }
+
   listTrades(tokenHash,limit=50) {
     if(!this.authorizedAccount(tokenHash)) return null;
     const safeLimit=Math.max(1,Math.min(Number.isInteger(limit)?limit:50,100));
