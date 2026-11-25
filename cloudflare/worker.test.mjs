@@ -1559,6 +1559,35 @@ test("paper trade close is authenticated and records realized PnL only in paper 
 });
 
 
+test("repeated manual close does not duplicate realized PnL or notifications",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.22"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const opened=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify({
+    symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020
+  })}),env);
+  const trade=await opened.json();
+  const closeRequest=()=>new Request(url+"/"+trade.trade_id+"/close",{
+    method:"POST",headers,body:JSON.stringify({exit_price:2010,fee_bps:5})
+  });
+  const first=await worker.fetch(closeRequest(),env);
+  const firstBody=await first.json();
+  const second=await worker.fetch(closeRequest(),env);
+  const secondBody=await second.json();
+  assert.equal(first.status,200);
+  assert.equal(second.status,409);
+  assert.equal(secondBody.error,"TRADE_NOT_OPEN");
+  const state=env.__accounts.get(account.account_id);
+  assert.equal(state.trades.filter(t=>t.status==="CLOSED").length,1);
+  assert.equal(state.notifications.filter(n=>n.trade_id===trade.trade_id).length,1);
+  assert.equal(state.trades[0].realized_pnl,firstBody.realized_pnl);
+});
+
 test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution",async()=>{
   const env=paperAccountEnv();
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
