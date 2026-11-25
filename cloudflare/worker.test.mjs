@@ -969,10 +969,15 @@ test("paper trade journal reports bounded risk, fees and supported exit reasons"
 
 function paperAccountEnv({allow=true}={}) {
   const accounts=new Map();
+  const registeredIds=new Set();
   return {
     PAPER_ACCOUNTS:{
       getByName(name) {
-        if(name==="__paper_bootstrap_guard__") return {allowCreation:async()=>allow};
+        if(name==="__paper_bootstrap_guard__") return {
+          allowCreation:async()=>allow,
+          registerAccount:async(accountId)=>{registeredIds.add(accountId);return {registered:true};},
+          listAccountIds:async()=>[...registeredIds]
+        };
         return {
           createAccount:async(accountId,tokenHash,currency,capital,createdAt)=>{
             accounts.set(accountId,{tokenHash,currency,capital,createdAt});
@@ -1052,6 +1057,11 @@ function paperAccountEnv({allow=true}={}) {
               }else results.push({trade_id:trade.trade_id,status:"OPEN"});
             }
             return {checked_candle_at:candle.timestamp,processed:results.length,closed:results.filter(x=>x.status==="CLOSED").length,results,execution_enabled:false};
+          },
+          monitorTradesInternal(symbol,candle,feeBps,checkedAt){
+            const a=accounts.get(name);
+            if(!a)return null;
+            return this.monitorTrades(a.tokenHash,symbol,candle,feeBps,checkedAt);
           },
           listTrades:async(tokenHash)=>{
             const a=accounts.get(name);
@@ -1256,6 +1266,37 @@ test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution
     assert.equal(body.results[0].exit_reason,"STOP_LOSS");
     assert.equal(body.results[0].exit_price,1990);
     assert.equal(body.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("scheduled monitor checks every registered paper account using fresh completed XAUS candle",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.55"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const tradeUrl="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const opened=await worker.fetch(new Request(tradeUrl,{method:"POST",
+    headers:{"content-type":"application/json",authorization:"Bearer "+account.access_token},
+    body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020})
+  }),env);
+  assert.equal(opened.status,201);
+  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:70},(_,i)=>{
+    const close=2000+i*.01;
+    return {timestamp:new Date(lastClosed-(69-i)*intervalMs).toISOString(),open:close,high:close+.5,low:close-.5,close};
+  });
+  Object.assign(candles.at(-1),{open:2000,high:2005,low:1985,close:1995});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
+  try{
+    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env);
+    assert.equal(result.status,"OK");
+    assert.equal(result.accounts_checked,1);
+    assert.equal(result.closed_trades,1);
+    assert.equal(result.provider,"XAUS");
+    assert.equal(result.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
 
