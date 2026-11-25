@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
+import { calculateLegacyPaperBalance, calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 export class PaperAccount extends DurableObject {
   constructor(ctx, env) {
@@ -215,7 +215,10 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0];
     const realized=Number(stats.realized_pnl||0);
     const openFees=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(fees),0) AS amount FROM paper_trades WHERE status='OPEN'").toArray()[0];
-    const legacyBalance=account.starting_capital+Number(ledger.net_ledger_change||0)+realized-Number(openFees.amount||0);
+    // PARTIAL_UNKNOWN may contain only a subset of historical events. Exclude it
+    // from the legacy balance to avoid counting realized PnL twice.
+    const legacyBalance=calculateLegacyPaperBalance({startingCapital:Number(account.starting_capital),
+      realizedPnl:realized,openFees:Number(openFees.amount||0)});
     const balance=ledgerStatus==="PARTIAL_UNKNOWN"?legacyBalance:Number(ledger.net_ledger_change||0);
     if(!Number.isFinite(balance)) throw new Error("Stored paper balance is invalid");
     return {account_id:account.account_id,currency:account.currency,
@@ -319,8 +322,25 @@ export class PaperAccount extends DurableObject {
       if(row.event_type==="TRADE_CLOSED"&&!trades.some(trade=>trade.trade_id===row.trade_id&&trade.status==="CLOSED"))
         discrepancies.push({code:"ORPHAN_CLOSED_TRADE_NOTIFICATION",trade_id:row.trade_id});
     }
+    // An unverified partial ledger is deliberately excluded from the legacy balance.
+    const tradesById=new Map(trades.map(trade=>[trade.trade_id,trade]));
+    for(const row of ledgerRows) {
+      if(row.event_type==="TRADE_OPENED"||row.event_type==="TRADE_CLOSED") {
+        let metadata={};
+        try { metadata=JSON.parse(row.metadata_json||"{}"); } catch {}
+        const tradeId=metadata.trade_id||String(row.event_id||"").split(":").slice(1).join(":");
+        const trade=tradesById.get(tradeId);
+        if(!trade) discrepancies.push({code:"ORPHAN_TRADE_LEDGER_EVENT",ledger_id:row.id,
+          event_type:row.event_type,trade_id:tradeId||null});
+        else if(row.event_type==="TRADE_CLOSED"&&trade.status!=="CLOSED")
+          discrepancies.push({code:"OPEN_TRADE_HAS_CLOSE_LEDGER_EVENT",ledger_id:row.id,trade_id:tradeId});
+      } else if(row.event_type!=="ACCOUNT_OPENED") {
+        discrepancies.push({code:"UNKNOWN_LEDGER_EVENT_TYPE",ledger_id:row.id,event_type:row.event_type});
+      }
+    }
     const expectedBalance=ledgerStatus==="PARTIAL_UNKNOWN"?
-      Number(account.starting_capital)+ledgerChange+realizedPnl-openFees:ledgerBalance;
+      calculateLegacyPaperBalance({startingCapital:Number(account.starting_capital),
+        realizedPnl,openFees}):ledgerBalance;
     if(ledgerStatus==="PARTIAL_UNKNOWN")
       discrepancies.push({code:"LEDGER_MIGRATION_INCOMPLETE"});
     if(!Number.isFinite(expectedBalance))
