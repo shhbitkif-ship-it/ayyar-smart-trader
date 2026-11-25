@@ -1150,10 +1150,7 @@ test("paper account creation validates JSON number types, currency and per-netwo
 });
 
 test("paper account trade journal endpoint requires a valid account token",async()=>{
-  const statusStore=new Map();
   const env=paperAccountEnv();
-  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
-    get:async(key)=>statusStore.get(key)||null};
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
     method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.14"},
     body:JSON.stringify({})
