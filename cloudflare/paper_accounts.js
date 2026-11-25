@@ -381,7 +381,8 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0] : null;
     if(existing) {
       const expectedFee=calculatePaperEntryFee(trade.quantity,trade.entry_price,trade.fee_bps);
-      const sameReplay=existing.symbol===trade.symbol&&existing.side===trade.side&&
+      const sameReplay=existing.trade_id===trade.trade_id&&
+        existing.symbol===trade.symbol&&existing.side===trade.side&&
         Number(existing.quantity)===Number(trade.quantity)&&
         Number(existing.entry_price)===Number(trade.entry_price)&&
         Number(existing.stop_loss)===Number(trade.stop_loss)&&
