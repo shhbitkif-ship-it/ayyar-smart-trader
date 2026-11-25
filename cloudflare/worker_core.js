@@ -392,6 +392,23 @@ async function archiveSignal(env,symbol,result) {
   return {saved:true,alert_status:alertStatus};
 }
 
+function isValidArchivedSignal(record) {
+  if(!record || typeof record!=="object" || Array.isArray(record)) return false;
+  if(!["BUY","SELL","NO_TRADE"].includes(record.signal)) return false;
+  if(record.execution_enabled!==false || record.market_data_status!=="LIVE") return false;
+  if(typeof record.symbol!=="string" || !/^[a-z0-9_-]{1,20}$/i.test(record.symbol)) return false;
+  if(record.archive_source!=="XAUS completed OHLC multi-timeframe evaluation") return false;
+  const candleTime=Date.parse(record.last_candle_at),recordedTime=Date.parse(record.recorded_at);
+  if(!Number.isFinite(candleTime)||!Number.isFinite(recordedTime)||recordedTime<candleTime) return false;
+  if(!Number.isFinite(record.confidence)||record.confidence<0||record.confidence>100) return false;
+  if(["BUY","SELL"].includes(record.signal)) {
+    if(![record.entry,record.stop_loss,record.take_profit].every(v=>typeof v==="number"&&Number.isFinite(v)&&v>0)) return false;
+    if(record.signal==="BUY" && !(record.stop_loss<record.entry&&record.take_profit>record.entry)) return false;
+    if(record.signal==="SELL" && !(record.stop_loss>record.entry&&record.take_profit<record.entry)) return false;
+  }
+  return true;
+}
+
 function calculateSignalPerformance(records,candles) {
   const horizons=[1,4,24];
   const times=new Map(candles.map((c,i)=>[Date.parse(c.timestamp),i]));
@@ -399,7 +416,7 @@ function calculateSignalPerformance(records,candles) {
     win_rate_pct:null,average_return_pct:null,average_favorable_pct:null,average_adverse_pct:null}]));
   const outcomes=[];
   let pending=0,unavailable=0;
-  const ordered=[...records].filter(r=>r&&["BUY","SELL"].includes(r.signal)&&r.last_candle_at)
+  const ordered=[...records].filter(r=>isValidArchivedSignal(r)&&["BUY","SELL"].includes(r.signal))
     .sort((a,b)=>Date.parse(b.last_candle_at)-Date.parse(a.last_candle_at));
   for(const record of ordered) {
     const signalTime=Date.parse(record.last_candle_at);
@@ -950,7 +967,7 @@ export default {
           const value=await env.SIGNAL_HISTORY.get(item.name,"json");
           return value&&typeof value==="object"?value:null;
         }));
-        const valid=records.filter(Boolean).sort((a,b)=>Date.parse(b.recorded_at)-Date.parse(a.recorded_at));
+        const valid=records.filter(isValidArchivedSignal).sort((a,b)=>Date.parse(b.recorded_at)-Date.parse(a.recorded_at));
         return json({status:"OK",symbol:"xau",count:valid.length,records:valid,
           retention_days:90,execution_enabled:false});
       } catch(e) {
