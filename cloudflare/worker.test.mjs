@@ -1013,6 +1013,10 @@ function paperAccountEnv({allow=true}={}) {
             const gross=(exitPrice-trade.entry_price)*trade.quantity*(trade.side==="BUY"?1:-1);
             const fees=(trade.entry_price+exitPrice)*trade.quantity*feeBps/10000;
             Object.assign(trade,{status:"CLOSED",closed_at:closedAt,exit_price:exitPrice,fees,realized_pnl:gross-fees});
+            a.notifications??=[];
+            a.notifications.unshift({notification_id:"closed:"+tradeId,event_type:"TRADE_CLOSED",trade_id:tradeId,
+              title:"موقعیت آزمایشی بسته شد",message:trade.symbol+" • سود/زیان: "+(gross-fees).toFixed(2),
+              realized_pnl:gross-fees,created_at:closedAt,metadata:{}});
             return {trade_id:tradeId,status:"CLOSED",exit_price:exitPrice,realized_pnl:gross-fees,fees,closed_at:closedAt};
           },
           monitorTrades:async(tokenHash,symbol,candle,feeBps,checkedAt)=>{
@@ -1079,6 +1083,10 @@ function paperAccountEnv({allow=true}={}) {
                   const gross=(exit-trade.entry_price)*trade.quantity*(buy?1:-1);
                   const exitFee=exit*trade.quantity*feeBps/10000,fees=trade.fees+exitFee;
                   Object.assign(trade,{status:"CLOSED",closed_at:checkedAt,exit_price:exit,fees,realized_pnl:gross-fees});
+                  a.notifications??=[];
+                  a.notifications.unshift({notification_id:"closed:"+trade.trade_id,event_type:"TRADE_CLOSED",trade_id:trade.trade_id,
+                    title:reason==="STOP_LOSS"?"موقعیت با حد ضرر بسته شد":"موقعیت با حد سود بسته شد",
+                    message:trade.symbol+" • سود/زیان: "+(gross-fees).toFixed(2),realized_pnl:gross-fees,created_at:checkedAt,metadata:{}});
                   results.push({trade_id:trade.trade_id,status:"CLOSED",exit_price:exit,realized_pnl:gross-fees,exit_reason:reason});
                   break;
                 }
@@ -1090,6 +1098,18 @@ function paperAccountEnv({allow=true}={}) {
           listTrades:async(tokenHash)=>{
             const a=accounts.get(name);
             return !a||a.tokenHash!==tokenHash?null:(a.trades??[]);
+          },
+          listNotifications:async(tokenHash)=>{
+            const a=accounts.get(name);
+            return !a||a.tokenHash!==tokenHash?null:(a.notifications??[]);
+          },
+          getDailyReport:async(tokenHash,day)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            const rows=(a.trades??[]).filter(t=>t.status==="CLOSED"&&t.closed_at?.slice(0,10)===day);
+            return {date:day,timezone:"UTC",closed_trades:rows.length,wins:rows.filter(t=>t.realized_pnl>0).length,
+              losses:rows.filter(t=>t.realized_pnl<0).length,realized_pnl:rows.reduce((sum,t)=>sum+(t.realized_pnl||0),0),
+              fees:rows.reduce((sum,t)=>sum+(t.fees||0),0),mode:"PAPER_ONLY",execution_enabled:false};
           }
         };
       }
