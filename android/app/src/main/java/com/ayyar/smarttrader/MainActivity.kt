@@ -60,6 +60,9 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var historyRefresh by remember { mutableIntStateOf(0) }
  var selectedSymbol by remember { mutableStateOf("gold-18k") }
  var backtestRefresh by remember { mutableIntStateOf(0) }
+ var backtestInterval by remember { mutableStateOf("60m") }
+ var backtestFast by remember { mutableIntStateOf(20) }
+ var backtestSlow by remember { mutableIntStateOf(50) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
  var walkForwardRefresh by remember { mutableIntStateOf(0) }
@@ -70,13 +73,13 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val paperMonitor by produceState<Result<PaperMonitorStatusUi>?>(null, refresh) { value=runCatching { withContext(Dispatchers.IO) { fetchPaperMonitorStatus() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
- val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest() } } }
+ val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh,backtestInterval,backtestFast,backtestSlow) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest(backtestInterval,backtestFast,backtestSlow) } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
  val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.4",color=muted,fontSize=12.sp) }
+   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.5",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
@@ -185,8 +188,20 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
    } } }
    item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-      Text("بک‌تست EMA20/EMA50 روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
-      Text("بازه پیش‌فرض ۶۰ دقیقه • سرمایه فرضی ۱۰٬۰۰۰ واحد • کارمزد و لغزش در هر سمت لحاظ می‌شود",color=muted,fontSize=11.sp)
+      Text("بک‌تست EMA روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
+      Text("تایم‌فریم و پارامترها را تغییر بده؛ هر اجرا فقط داده XAUS را بررسی می‌کند.",color=muted,fontSize=11.sp)
+      var intervalExpanded by remember { mutableStateOf(false) }
+      ExposedDropdownMenuBox(expanded=intervalExpanded,onExpandedChange={intervalExpanded=it}) {
+        OutlinedTextField(value=when(backtestInterval){"15m"->"۱۵ دقیقه";"1d"->"روزانه";else->"۶۰ دقیقه"},onValueChange={},readOnly=true,label={Text("تایم‌فریم")},modifier=Modifier.fillMaxWidth().menuAnchor())
+        ExposedDropdownMenu(expanded=intervalExpanded,onDismissRequest={intervalExpanded=false}) {
+          listOf("15m" to "۱۵ دقیقه","60m" to "۶۰ دقیقه","1d" to "روزانه").forEach{(id,label)->DropdownMenuItem(text={Text(label)},onClick={backtestInterval=id;intervalExpanded=false})}
+        }
+      }
+      Text("EMA سریع: $backtestFast",color=Color.White,fontSize=12.sp)
+      Slider(value=backtestFast.toFloat(),onValueChange={backtestFast=it.toInt().coerceIn(3,backtestSlow-1)},valueRange=3f..59f,steps=55)
+      Text("EMA کند: $backtestSlow",color=Color.White,fontSize=12.sp)
+      Slider(value=backtestSlow.toFloat(),onValueChange={backtestSlow=it.toInt().coerceIn(backtestFast+1,100)},valueRange=4f..100f,steps=95)
+      Text("ریسک ثابت ۱٪ • سرمایه فرضی ۱۰٬۰۰۰ • کارمزد ۱۰ و لغزش ۵ واحد پایه در هر سمت",color=muted,fontSize=10.sp)
       when {
         backtestRefresh==0 -> Text("برای دریافت داده واقعی و اجرای آزمون، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
         backtest==null -> Text("در حال دریافت کندل‌ها و اجرای بک‌تست…",color=muted)
@@ -397,14 +412,14 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
  } finally {connection.disconnect()}
 }
 
-private fun fetchLiveBacktest():BacktestUi{
+private fun fetchLiveBacktest(interval:String,fastPeriod:Int,slowPeriod:Int):BacktestUi{
  val connection=URL(BuildConfig.API_BASE_URL+"/v1/paper-trading/backtest").openConnection() as HttpURLConnection
  connection.requestMethod="POST";connection.connectTimeout=12000;connection.readTimeout=30000
  connection.doOutput=true
  connection.setRequestProperty("Content-Type","application/json")
  try {
-   val request=JSONObject().put("symbol","xau").put("interval","60m")
-     .put("fast_period",20).put("slow_period",50)
+   val request=JSONObject().put("symbol","xau").put("interval",interval)
+     .put("fast_period",fastPeriod).put("slow_period",slowPeriod)
      .put("starting_capital",10000).put("risk_fraction",0.01)
      .put("contract_value_per_price_unit",1).put("fee_bps",10).put("slippage_bps",5)
    connection.outputStream.use{it.write(request.toString().toByteArray(Charsets.UTF_8))}
