@@ -71,6 +71,62 @@ test("SQLite transaction rolls back a newly inserted trade when opening ledger w
   assert.equal(created.status, "OPEN");
   assert.equal((await stub.listTrades(tokenHash)).length, 1);
 });
+test("concurrent paper trade retries are idempotent and conflicting payloads are rejected", async () => {
+  const accountId = "sqlite-concurrent-idempotency";
+  const tokenHash = "token-hash-concurrent-idempotency";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId, tokenHash, "USD", 100000, "2026-11-25T09:00:00.000Z");
+  const trade = {
+    trade_id: "trade-concurrent-one", symbol: "XAUUSD", side: "BUY",
+    quantity: 1, entry_price: 100, stop_loss: 90, take_profit: 120,
+    fee_bps: 5, idempotency_key: "idem-concurrent-one"
+  };
+  const createdAt = "2026-11-25T09:01:00.000Z";
+  const [first, second] = await Promise.all([
+    stub.createTrade(tokenHash, trade, createdAt),
+    stub.createTrade(tokenHash, trade, createdAt)
+  ]);
+  assert.equal([first, second].filter(x => x.duplicate === false).length, 1);
+  assert.equal([first, second].filter(x => x.duplicate === true).length, 1);
+  assert.equal((await stub.listTrades(tokenHash)).length, 1);
+  const summary = await stub.getSummary(tokenHash);
+  assert.equal(summary.ledger_events, 2);
+  assert.equal(summary.open_trades, 1);
+
+  const conflicting = { ...trade, quantity: 1.5 };
+  const replay = await stub.runCreateTradeWithFault(tokenHash, conflicting, createdAt);
+  assert.equal(replay.ok, false);
+  assert.match(replay.error, /TRADE_IDEMPOTENCY_CONFLICT/);
+  assert.equal((await stub.listTrades(tokenHash)).length, 1);
+  assert.equal((await stub.getSummary(tokenHash)).ledger_events, 2);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled, false);
+});
+
+test("concurrent different idempotency keys cannot open duplicate symbol positions", async () => {
+  const accountId = "sqlite-concurrent-symbol-lock";
+  const tokenHash = "token-hash-concurrent-symbol-lock";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId, tokenHash, "USD", 100000, "2026-11-25T10:00:00.000Z");
+  const makeTrade = (id) => ({
+    trade_id: id, symbol: "XAUUSD", side: "BUY", quantity: 1,
+    entry_price: 100, stop_loss: 90, take_profit: 120,
+    fee_bps: 5, idempotency_key: "idem-" + id
+  });
+  const results = await Promise.all([
+    stub.runCreateTradeWithFault(tokenHash, makeTrade("parallel-a"), "2026-11-25T10:01:00.000Z"),
+    stub.runCreateTradeWithFault(tokenHash, makeTrade("parallel-b"), "2026-11-25T10:01:01.000Z")
+  ]);
+  assert.equal(results.filter(x => x.ok).length, 1);
+  assert.equal(results.filter(x => !x.ok).length, 1);
+  assert.match(results.find(x => !x.ok).error, /open paper trade already exists/);
+  assert.equal((await stub.listTrades(tokenHash)).length, 1);
+  assert.equal((await stub.getSummary(tokenHash)).ledger_events, 2);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
+});
+
 for (const fault of ["after-close-ledger", "after-close-notification"]) {
   test("SQLite transaction rolls back trade, ledger and notification when failure occurs " + fault, async () => {
     const { stub, tokenHash, tradeId } = await makeAccount();
