@@ -374,10 +374,31 @@ export class PaperAccount extends DurableObject {
   _createTradeAtomic(account,tokenHash,trade,createdAt) {
     if(!account) return null;
     const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
-      "SELECT trade_id,status FROM paper_trades WHERE idempotency_key=? LIMIT 1",
+      `SELECT trade_id,status,symbol,side,quantity,entry_price,stop_loss,take_profit,
+       fees,opened_at,strategy_id,signal_id,signal_type
+       FROM paper_trades WHERE idempotency_key=? LIMIT 1`,
       trade.idempotency_key
     ).toArray()[0] : null;
-    if(existing) return { ...existing, duplicate:true };
+    if(existing) {
+      const expectedFee=calculatePaperEntryFee(trade.quantity,trade.entry_price,trade.fee_bps);
+      const sameReplay=existing.symbol===trade.symbol&&existing.side===trade.side&&
+        Number(existing.quantity)===Number(trade.quantity)&&
+        Number(existing.entry_price)===Number(trade.entry_price)&&
+        Number(existing.stop_loss)===Number(trade.stop_loss)&&
+        Number(existing.take_profit)===Number(trade.take_profit)&&
+        Number(existing.fees)===expectedFee&&existing.opened_at===createdAt&&
+        (existing.strategy_id??null)===(trade.strategy_id??null)&&
+        (existing.signal_id??null)===(trade.signal_id??null)&&
+        (existing.signal_type??null)===(trade.signal_type??null);
+      if(!sameReplay) throw new Error("TRADE_IDEMPOTENCY_CONFLICT");
+      return {trade_id:existing.trade_id,status:existing.status,duplicate:true,
+        symbol:existing.symbol,side:existing.side,quantity:existing.quantity,
+        entry_price:existing.entry_price,stop_loss:existing.stop_loss,
+        take_profit:existing.take_profit,opened_at:existing.opened_at,
+        fees:existing.fees,strategy_id:existing.strategy_id,
+        signal_id:existing.signal_id,signal_type:existing.signal_type,
+        execution_enabled:false};
+    }
     const openSameSymbol=this.ctx.storage.sql.exec(
       "SELECT trade_id,side FROM paper_trades WHERE status='OPEN' AND symbol=? LIMIT 1",
       trade.symbol
