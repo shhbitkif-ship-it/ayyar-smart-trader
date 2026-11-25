@@ -196,6 +196,39 @@ test("partial legacy ledger is never auto-repaired or trusted as account balance
   assert.equal(integrity.execution_enabled, false);
 });
 
+test("single-trade risk accepts the exact one percent boundary and rejects any excess", async () => {
+  const acceptedId = "sqlite-risk-one-percent-boundary";
+  const acceptedToken = "token-hash-risk-one-percent-boundary";
+  const accepted = namespace.get(namespace.idFromName(acceptedId));
+  await accepted.createAccount(acceptedId,acceptedToken,"USD",100000,"2026-11-25T06:00:00.000Z");
+  const atLimit = await accepted.createTrade(acceptedToken,{
+    trade_id:"risk-exact-one-percent",symbol:"XAUUSD",side:"BUY",quantity:100,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:0,
+    idempotency_key:"idem-risk-exact-one-percent"
+  },"2026-11-25T06:01:00.000Z");
+  assert.equal(atLimit.status,"OPEN");
+  assert.equal((await accepted.getIntegrityReport(acceptedToken)).integrity_status,"CLEAN");
+
+  const rejectedId = "sqlite-risk-over-one-percent";
+  const rejectedToken = "token-hash-risk-over-one-percent";
+  const rejected = namespace.get(namespace.idFromName(rejectedId));
+  await rejected.createAccount(rejectedId,rejectedToken,"USD",100000,"2026-11-25T06:00:00.000Z");
+  const overLimit = await rejected.runCreateTradeWithFault(rejectedToken,{
+    trade_id:"risk-over-one-percent",symbol:"XAGUSD",side:"BUY",quantity:100.01,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:0,
+    idempotency_key:"idem-risk-over-one-percent"
+  },"2026-11-25T06:01:00.000Z");
+  assert.equal(overLimit.ok,false);
+  assert.match(overLimit.error,/RISK_LIMIT_EXCEEDED/);
+  assert.equal((await rejected.listTrades(rejectedToken)).length,0);
+  const summary = await rejected.getSummary(rejectedToken);
+  assert.equal(summary.balance,100000);
+  assert.equal(summary.ledger_events,1);
+  const integrity = await rejected.getIntegrityReport(rejectedToken);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled,false);
+});
+
 test("aggregate open risk is capped at two percent of paper equity", async () => {
   const accountId = "sqlite-aggregate-risk";
   const tokenHash = "token-hash-aggregate-risk";
