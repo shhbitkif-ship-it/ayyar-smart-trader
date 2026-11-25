@@ -176,54 +176,67 @@ export class PaperAccount extends DurableObject {
     return this._monitorTrades(symbol,candle,feeBps,checkedAt);
   }
 
-  _monitorTrades(symbol,candle,feeBps,checkedAt) {
+  _monitorTrades(symbol,candleInput,feeBps,checkedAt) {
+    const candles=(Array.isArray(candleInput)?candleInput:[candleInput])
+      .filter(Boolean).slice().sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+    if(!candles.length) throw new Error("NO_COMPLETED_CANDLES");
     const rows=this.ctx.storage.sql.exec(
       "SELECT * FROM paper_trades WHERE status='OPEN' AND symbol=? ORDER BY opened_at ASC",symbol
     ).toArray();
     const results=[];
     for(const trade of rows) {
-      if(trade.last_checked_at && trade.last_checked_at>=candle.timestamp) {
-        results.push({trade_id:trade.trade_id,status:"UNCHANGED",reason:"CANDLE_ALREADY_PROCESSED"});
-        continue;
-      }
-      const isBuy=trade.side==="BUY";
-      const stopHit=isBuy?candle.low<=trade.stop_loss:candle.high>=trade.stop_loss;
-      const targetHit=isBuy?candle.high>=trade.take_profit:candle.low<=trade.take_profit;
-      let exitPrice=null,reason=null;
-      // Conservative same-candle rule: stop takes precedence over target.
-      if(stopHit) {
-        reason="STOP_LOSS";
-        exitPrice=isBuy&&candle.open<trade.stop_loss?candle.open:
-          !isBuy&&candle.open>trade.stop_loss?candle.open:trade.stop_loss;
-      } else if(targetHit) {
-        reason="TAKE_PROFIT";
-        exitPrice=isBuy&&candle.open>trade.take_profit?trade.take_profit:
-          !isBuy&&candle.open<trade.take_profit?trade.take_profit:trade.take_profit;
-      }
-      if(exitPrice!==null) {
-        const direction=isBuy?1:-1;
-        const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
-        const exitFee=exitPrice*trade.quantity*feeBps/10000;
-        const fees=Number(trade.fees||0)+exitFee;
-        const realized=gross-fees;
-        if(![gross,exitFee,fees,realized].every(Number.isFinite))
-          throw new Error("TRADE_VALUE_OUT_OF_RANGE");
-        const closed=this.ctx.storage.sql.exec(
-          `UPDATE paper_trades SET status='CLOSED',closed_at=?,exit_price=?,realized_pnl=?,fees=?,last_checked_at=?
-           WHERE trade_id=? AND status='OPEN'
-           RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
-          checkedAt,exitPrice,realized,fees,candle.timestamp,trade.trade_id
-        ).toArray()[0];
-        results.push({...closed,exit_reason:reason});
-      } else {
+      let processedAny=false, closedRow=null, lastChecked=trade.last_checked_at||null;
+      const openedAt=Date.parse(trade.opened_at);
+      for(const candle of candles) {
+        const candleAt=Date.parse(candle.timestamp);
+        if(!Number.isFinite(candleAt)||!Number.isFinite(openedAt)) throw new Error("INVALID_TRADE_OR_CANDLE_TIMESTAMP");
+        // Never use an OHLC candle that began before this position was opened.
+        if(candleAt<=openedAt) continue;
+        if(lastChecked&&lastChecked>=candle.timestamp) continue;
+        processedAny=true;
+        const isBuy=trade.side==="BUY";
+        const stopHit=isBuy?candle.low<=trade.stop_loss:candle.high>=trade.stop_loss;
+        const targetHit=isBuy?candle.high>=trade.take_profit:candle.low<=trade.take_profit;
+        let exitPrice=null,reason=null;
+        // Conservative same-candle rule: stop takes precedence over target.
+        if(stopHit) {
+          reason="STOP_LOSS";
+          exitPrice=isBuy&&candle.open<trade.stop_loss?candle.open:
+            !isBuy&&candle.open>trade.stop_loss?candle.open:trade.stop_loss;
+        } else if(targetHit) {
+          reason="TAKE_PROFIT";
+          exitPrice=trade.take_profit;
+        }
+        if(exitPrice!==null) {
+          const direction=isBuy?1:-1;
+          const gross=(exitPrice-trade.entry_price)*trade.quantity*direction;
+          const exitFee=exitPrice*trade.quantity*feeBps/10000;
+          const fees=Number(trade.fees||0)+exitFee;
+          const realized=gross-fees;
+          if(![gross,exitFee,fees,realized].every(Number.isFinite))
+            throw new Error("TRADE_VALUE_OUT_OF_RANGE");
+          closedRow=this.ctx.storage.sql.exec(
+            `UPDATE paper_trades SET status='CLOSED',closed_at=?,exit_price=?,realized_pnl=?,fees=?,last_checked_at=?
+             WHERE trade_id=? AND status='OPEN'
+             RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
+            checkedAt,exitPrice,realized,fees,candle.timestamp,trade.trade_id
+          ).toArray()[0];
+          if(closedRow) closedRow.exit_reason=reason;
+          break;
+        }
         this.ctx.storage.sql.exec(
           "UPDATE paper_trades SET last_checked_at=? WHERE trade_id=? AND status='OPEN'",
           candle.timestamp,trade.trade_id
         );
-        results.push({trade_id:trade.trade_id,status:"OPEN",checked_candle_at:candle.timestamp});
+        lastChecked=candle.timestamp;
       }
+      if(closedRow) results.push(closedRow);
+      else if(processedAny) results.push({trade_id:trade.trade_id,status:"OPEN",checked_candle_at:lastChecked});
+      else results.push({trade_id:trade.trade_id,status:"UNCHANGED",
+        reason:lastChecked?"CANDLE_ALREADY_PROCESSED":"NO_CANDLE_AFTER_TRADE_OPEN"});
     }
-    return {checked_candle_at:candle.timestamp,checked_at:checkedAt,processed:results.length,
+    const lastCandle=candles[candles.length-1];
+    return {checked_candle_at:lastCandle.timestamp,checked_at:checkedAt,processed:results.length,
       closed:results.filter(x=>x.status==="CLOSED").length,results,execution_enabled:false};
   }
 
