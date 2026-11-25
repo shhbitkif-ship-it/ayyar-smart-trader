@@ -26,3 +26,22 @@ export function calculatePaperSettlement({side,quantity,entryPrice,exitPrice,ent
     throw new Error("PAPER_SETTLEMENT_OUT_OF_RANGE");
   return {gross,entryFee,exitFee,totalFees,realizedPnl,ledgerCloseAmount};
 }
+
+function stableLedgerJson(value) {
+  if(Array.isArray(value)) return "["+value.map(stableLedgerJson).join(",")+"]";
+  if(value&&typeof value==="object")
+    return "{"+Object.keys(value).sort().map(key=>JSON.stringify(key)+":"+stableLedgerJson(value[key])).join(",")+"}";
+  return JSON.stringify(value);
+}
+
+export function ledgerEventReplayMatches(existing,{eventType,amount,metadata,createdAt}) {
+  if(!existing||typeof existing!=="object") return false;
+  if(existing.event_type!==eventType||!Number.isFinite(Number(existing.amount))||
+    Math.abs(Number(existing.amount)-amount)>1e-8*Math.max(1,Math.abs(amount))||
+    existing.created_at!==createdAt) return false;
+  try {
+    return stableLedgerJson(JSON.parse(existing.metadata_json))===stableLedgerJson(metadata);
+  } catch {
+    return false;
+  }
+}
