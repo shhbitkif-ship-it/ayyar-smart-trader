@@ -448,6 +448,26 @@ test("global gold candle endpoint returns only completed validated OHLC candles"
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("global gold candle endpoint rejects timestamps misaligned to declared interval", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{
+    const close=2600+i;
+    return {timestamp:new Date(lastClosed-(79-i)*intervalMs+(i===79?1000:0)).toISOString(),
+      open:close,high:close+1,low:close-1,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,502);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.deepEqual(body.candles,[]);
+    assert.match(body.error,/not aligned/i);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("global gold candle endpoint rejects stale upstream OHLC data", async () => {
   const originalFetch=globalThis.fetch;
   const old=Date.now()-24*3600000;
