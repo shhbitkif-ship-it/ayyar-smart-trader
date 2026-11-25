@@ -84,9 +84,15 @@ test("Durable Object restart recovers paper trades ledger and notifications", as
       idempotency_key:"restart-open-idem"
     },"2026-11-25T13:03:00.000Z");
     const before = await firstStub.getSummary(tokenHash);
-    assert.equal(before.closed_trades,1);
-    assert.equal(before.open_trades,1);
-    assert.equal(before.ledger_events,4);
+    const expected = {
+      balance: Number(before.balance),
+      closedTrades: Number(before.closed_trades),
+      openTrades: Number(before.open_trades),
+      ledgerEvents: Number(before.ledger_events)
+    };
+    assert.equal(expected.closedTrades,1);
+    assert.equal(expected.openTrades,1);
+    assert.equal(expected.ledgerEvents,4);
     assert.equal((await firstStub.listNotifications(tokenHash)).length,1);
     // Miniflare restarts its workerd runtime while retaining the configured DO persistence directory.
     // Re-fetch the namespace after setOptions; old stubs are intentionally invalidated.
@@ -94,7 +100,7 @@ test("Durable Object restart recovers paper trades ledger and notifications", as
     const restartedNs = await firstMf.getDurableObjectNamespace("PAPER_ACCOUNTS");
     const recovered = restartedNs.get(restartedNs.idFromName(accountId));
     const after = await recovered.getSummary(tokenHash);
-    assert.equal(after.balance,before.balance);
+    assert.equal(Number(after.balance),expected.balance);
     assert.equal(after.closed_trades,1);
     assert.equal(after.open_trades,1);
     assert.equal(after.ledger_events,4);
