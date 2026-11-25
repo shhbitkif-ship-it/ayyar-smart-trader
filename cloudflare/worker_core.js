@@ -508,44 +508,65 @@ async function snapshot(env={}) {
   return cached;
 }
 
+async function savePaperMonitorStatus(env, status) {
+  if(env?.SIGNAL_HISTORY) {
+    await env.SIGNAL_HISTORY.put("paper-monitor:latest",JSON.stringify(status),{expirationTtl:60*60*24*30});
+  }
+  return status;
+}
+
 async function runScheduledPaperMonitor(env, scheduledTime) {
-  const registry=env?.PAPER_ACCOUNTS?.getByName("__paper_bootstrap_guard__");
-  if(!registry?.listAccountIds) throw new Error("Paper account registry is unavailable");
-  const accountIds=await registry.listAccountIds(5000);
-  if(!accountIds.length) return {status:"IDLE",accounts_checked:0,closed_trades:0,
-    scheduled_at:new Date(scheduledTime).toISOString(),execution_enabled:false};
-  const market=await fetchGoldCandles("xau","15m");
-  if(market.status!=="LIVE"||market.provider!=="XAUS"||!market.candles?.length)
-    throw new Error("Fresh completed XAUS 15m candle unavailable; no paper positions were changed");
-  const candle=market.candles[market.candles.length-1];
-  const checkedAt=new Date().toISOString();
-  let accountsChecked=0,processed=0,closed=0;
-  const failures=[];
-  for(let offset=0;offset<accountIds.length;offset+=10) {
-    const batch=accountIds.slice(offset,offset+10);
-    const outcomes=await Promise.allSettled(batch.map(async accountId=>{
-      const account=env.PAPER_ACCOUNTS.getByName(accountId);
-      const result=await account.monitorTradesInternal("XAUUSD",market.candles,5,checkedAt);
-      if(!result) throw new Error("Paper account monitor returned no result: "+accountId);
-      return result;
-    }));
-    for(let i=0;i<outcomes.length;i++) {
-      const outcome=outcomes[i];
-      if(outcome.status==="rejected") failures.push({account_id:batch[i],error:String(outcome.reason?.message||outcome.reason)});
-      else {
-        accountsChecked++;
-        processed+=outcome.value.processed||0;
-        closed+=outcome.value.closed||0;
+  const startedAt=new Date().toISOString();
+  try {
+    const registry=env?.PAPER_ACCOUNTS?.getByName("__paper_bootstrap_guard__");
+    if(!registry?.listAccountIds) throw new Error("Paper account registry is unavailable");
+    const accountIds=await registry.listAccountIds(5000);
+    if(!accountIds.length) return await savePaperMonitorStatus(env,{
+      status:"IDLE",accounts_checked:0,trades_processed:0,closed_trades:0,
+      scheduled_at:new Date(scheduledTime).toISOString(),completed_at:new Date().toISOString(),
+      execution_enabled:false,mode:"PAPER_ONLY"
+    });
+    const market=await fetchGoldCandles("xau","15m");
+    if(market.status!=="LIVE"||market.provider!=="XAUS"||!market.candles?.length)
+      throw new Error("Fresh completed XAUS 15m candle unavailable; no paper positions were changed");
+    const checkedAt=new Date().toISOString();
+    let accountsChecked=0,processed=0,closed=0;
+    const failures=[];
+    for(let offset=0;offset<accountIds.length;offset+=10) {
+      const batch=accountIds.slice(offset,offset+10);
+      const outcomes=await Promise.allSettled(batch.map(async accountId=>{
+        const account=env.PAPER_ACCOUNTS.getByName(accountId);
+        const result=await account.monitorTradesInternal("XAUUSD",market.candles,5,checkedAt);
+        if(!result) throw new Error("Paper account monitor returned no result");
+        return result;
+      }));
+      for(const outcome of outcomes) {
+        if(outcome.status==="rejected") failures.push(String(outcome.reason?.message||outcome.reason));
+        else {
+          accountsChecked++;
+          processed+=outcome.value.processed||0;
+          closed+=outcome.value.closed||0;
+        }
       }
     }
+    if(failures.length) throw new Error("Scheduled paper monitoring partially failed: "+accountsChecked+
+      " accounts checked; "+failures.length+" account operations failed");
+    return await savePaperMonitorStatus(env,{
+      status:"OK",provider:market.provider,symbol:"XAUUSD",interval:"15m",
+      candle_at:market.last_candle_at,accounts_checked:accountsChecked,
+      trades_processed:processed,closed_trades:closed,
+      scheduled_at:new Date(scheduledTime).toISOString(),started_at:startedAt,
+      completed_at:new Date().toISOString(),execution_enabled:false,mode:"PAPER_ONLY"
+    });
+  } catch(error) {
+    await savePaperMonitorStatus(env,{
+      status:"ERROR",scheduled_at:new Date(scheduledTime).toISOString(),
+      started_at:startedAt,completed_at:new Date().toISOString(),
+      error:String(error?.message||"Scheduled paper monitor failed").slice(0,300),
+      execution_enabled:false,mode:"PAPER_ONLY"
+    }).catch(()=>{});
+    throw error;
   }
-  if(failures.length) throw new Error("Scheduled paper monitoring partially failed: "+JSON.stringify({
-    accounts_checked:accountsChecked,failed_accounts:failures.length,failures:failures.slice(0,10)
-  }));
-  return {status:"OK",provider:market.provider,symbol:"XAUUSD",interval:"15m",
-    candle_at:market.last_candle_at,accounts_checked:accountsChecked,
-    trades_processed:processed,closed_trades:closed,scheduled_at:new Date(scheduledTime).toISOString(),
-    execution_enabled:false,mode:"PAPER_ONLY"};
 }
 
 export default {
@@ -828,6 +849,17 @@ export default {
         return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
           reason:String(e?.message||"OHLC data unavailable"),execution_enabled:false,
           warning:"No valid completed OHLC feed. No signal or order is produced."});
+      }
+    }
+    if(url.pathname==="/v1/paper/monitor/status"&&request.method==="GET") {
+      if(!env?.SIGNAL_HISTORY) return json({status:"UNAVAILABLE",error:"Monitor status storage is not configured",execution_enabled:false},503);
+      try {
+        const record=await env.SIGNAL_HISTORY.get("paper-monitor:latest","json");
+        return json({status:record?.status||"NOT_RUN",monitor:record||null,
+          schedule:"*/5 * * * * UTC",monitor_interval:"15m completed candles",
+          execution_enabled:false,mode:"PAPER_ONLY"});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",error:"Monitor status could not be read",execution_enabled:false},503);
       }
     }
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
