@@ -674,7 +674,13 @@ export default {
       const symbol="XAUUSD";
       try {
         const market=await fetchGoldCandles("xau","15m");
+        if(market.status!=="LIVE"||market.provider!=="XAUS"||
+          !Array.isArray(market.candles)||market.candles.length===0)
+          throw new Error("Fresh completed XAUS 15m candle unavailable; paper positions were not changed");
         const candle=market.candles[market.candles.length-1];
+        if(!candle||!Number.isFinite(Date.parse(candle.timestamp))||
+          (market.last_candle_at&&market.last_candle_at!==candle.timestamp))
+          throw new Error("Latest XAUS candle timestamp is invalid; paper positions were not changed");
         const account=env.PAPER_ACCOUNTS.getByName(accountId);
         const result=await account.monitorTrades(tokenHash,symbol,candle,5,new Date().toISOString());
         if(result===null) return json({error:"Account not found or access denied"},404);
