@@ -1298,7 +1298,10 @@ test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution
 });
 
 test("scheduled monitor checks every registered paper account using fresh completed XAUS candle",async()=>{
+  const statusStore=new Map();
   const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
     method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.55"},
     body:JSON.stringify({starting_capital:10000})
