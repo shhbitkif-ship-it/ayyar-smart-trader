@@ -638,7 +638,7 @@ export default {
           status:"UNAVAILABLE",execution_enabled:false},502);
       }
     }
-    const paperAccountAuxMatch=url.pathname.match(/^\\/v1\\/paper\\/accounts\\/([a-f0-9]{32})\\/(notifications|report\\/daily)$/);
+    const paperAccountAuxMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})\/(notifications|report\/daily)$/);
     if(paperAccountAuxMatch&&request.method==="GET") {
       const accountId=paperAccountAuxMatch[1],resource=paperAccountAuxMatch[2];
       const auth=request.headers.get("authorization")||"";
@@ -654,7 +654,7 @@ export default {
           return json({notifications,execution_enabled:false,mode:"PAPER_ONLY"});
         }
         const day=url.searchParams.get("date")||new Date().toISOString().slice(0,10);
-        if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+"T00:00:00.000Z"))||
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day+"T00:00:00.000Z"))||
           new Date(Date.parse(day+"T00:00:00.000Z")).toISOString().slice(0,10)!==day)
           return json({error:"date must be a valid YYYY-MM-DD UTC date"},400);
         const report=await account.getDailyReport(tokenHash,day);
