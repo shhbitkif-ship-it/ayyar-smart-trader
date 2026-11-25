@@ -93,6 +93,7 @@ test("legacy account migration backfills ledger once and preserves derived balan
   assert.equal(first.closed_trades, 1);
   assert.equal(first.open_trades, 1);
   assert.equal(first.ledger_events, 3);
+  assert.equal(await stub.getTradeFeeRate("legacy-open"), 5);
   const integrity = await stub.getIntegrityReport(tokenHash);
   assert.equal(integrity.ledger.migration_status, "LEGACY_BACKFILLED");
   assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
