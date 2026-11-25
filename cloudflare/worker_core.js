@@ -502,12 +502,15 @@ async function snapshot(env={}) {
     if(!payload || !Array.isArray(payload.items)) throw new Error("Unexpected provider schema");
     const byId=new Map(payload.items.filter(x=>x&&typeof x==="object").map(x=>[x.id,x]));
     const quotes=SYMBOLS.map(def=>normalise(byId.get(def[2]),def,provider));
-    cached={status:quotes.some(q=>q.status==="LIVE")?"LIVE":"UNAVAILABLE",
+    const liveQuotes=quotes.filter(q=>q.status==="LIVE").length;
+    const status=liveQuotes===quotes.length?"LIVE":liveQuotes>0?"PARTIAL":"UNAVAILABLE";
+    cached={status,live_quotes:liveQuotes,total_quotes:quotes.length,
       as_of:new Date().toISOString(),provider_generated_at:parseStamp(payload.generated_utc)?.toISOString()??null,
       quotes,notice:provider==="Talasanj"?"Talasanj indicative market data refreshes about every 20 seconds; not broker execution quotes. Stale or unavailable prices never produce signals.":"NerkhAra refreshes its snapshot every ten minutes. Indicative market data only, not broker execution quotes. Stale or unavailable prices never produce signals.",
       attribution:provider==="Talasanj"?"قیمت‌ها از طلاسنج — https://talasanj.info":"NerkhAra — https://nerkhara.com"};
   } catch(e) {
     cached={status:"UNAVAILABLE",as_of:new Date().toISOString(),provider_generated_at:null,
+      live_quotes:0,total_quotes:SYMBOLS.length,
       quotes:SYMBOLS.map(def=>normalise(null,def)),
       notice:"Market data provider is unavailable. No synthetic prices are displayed.",
       error:String(e?.name||"ProviderError"),attribution:"NerkhAra — https://nerkhara.com"};
