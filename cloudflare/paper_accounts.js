@@ -30,6 +30,11 @@ export class PaperAccount extends DurableObject {
         metadata_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS ledger_state (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        status TEXT NOT NULL CHECK(status IN ('READY','LEGACY_BACKFILLED','PARTIAL_UNKNOWN')),
+        initialized_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS paper_trades (
         trade_id TEXT PRIMARY KEY,
         symbol TEXT NOT NULL,
@@ -97,11 +102,19 @@ export class PaperAccount extends DurableObject {
   }
 
   createAccount(accountId,tokenHash,currency,startingCapital,createdAt) {
-    this.ctx.storage.sql.exec(
-      `INSERT INTO accounts(account_id,token_hash,currency,starting_capital,created_at)
-       VALUES(?,?,?,?,?)`,
-      accountId,tokenHash,currency,startingCapital,createdAt
-    );
+    this.ctx.storage.transactionSync(()=>{
+      this.ctx.storage.sql.exec(
+        `INSERT INTO accounts(account_id,token_hash,currency,starting_capital,created_at)
+         VALUES(?,?,?,?,?)`,
+        accountId,tokenHash,currency,startingCapital,createdAt
+      );
+      this._appendLedgerEntry({account_id:accountId,starting_capital:startingCapital},
+        "ACCOUNT_OPENED:"+accountId,"ACCOUNT_OPENED",startingCapital,
+        {account_id:accountId},createdAt);
+      this.ctx.storage.sql.exec(
+        "INSERT INTO ledger_state(id,status,initialized_at) VALUES(1,'READY',?)",createdAt
+      );
+    });
     return {account_id:accountId,currency,starting_capital:startingCapital,
       balance:startingCapital,created_at:createdAt,trading_enabled:false};
   }
@@ -114,9 +127,79 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0]??null;
   }
 
+  _appendLedgerEntry(account,eventId,eventType,amount,metadata,createdAt) {
+    if(typeof eventId!=="string"||!eventId||typeof eventType!=="string"||!eventType||
+      !Number.isFinite(amount)||!metadata||typeof metadata!=="object"||Array.isArray(metadata)||
+      typeof createdAt!=="string"||!Number.isFinite(Date.parse(createdAt)))
+      throw new Error("INVALID_LEDGER_EVENT");
+    const existing=this.ctx.storage.sql.exec(
+      "SELECT event_type,amount FROM ledger_entries WHERE event_id=? LIMIT 1",eventId
+    ).toArray()[0];
+    if(existing) {
+      if(existing.event_type!==eventType||Math.abs(Number(existing.amount)-amount)>1e-8*Math.max(1,Math.abs(amount)))
+        throw new Error("LEDGER_IDEMPOTENCY_CONFLICT");
+      return false;
+    }
+    const last=this.ctx.storage.sql.exec(
+      "SELECT balance_after FROM ledger_entries ORDER BY id DESC LIMIT 1"
+    ).toArray()[0];
+    const before=last?Number(last.balance_after):0;
+    const after=before+amount;
+    if(!Number.isFinite(before)||!Number.isFinite(after)) throw new Error("LEDGER_BALANCE_OUT_OF_RANGE");
+    this.ctx.storage.sql.exec(
+      `INSERT INTO ledger_entries(event_id,event_type,amount,balance_after,metadata_json,created_at)
+       VALUES(?,?,?,?,?,?)`,
+      eventId,eventType,amount,after,JSON.stringify(metadata),createdAt
+    );
+    return true;
+  }
+
+  _ensureLedgerInitialized(account) {
+    const state=this.ctx.storage.sql.exec("SELECT status FROM ledger_state WHERE id=1").toArray()[0];
+    if(state) return state.status;
+    return this.ctx.storage.transactionSync(()=>{
+      const current=this.ctx.storage.sql.exec("SELECT status FROM ledger_state WHERE id=1").toArray()[0];
+      if(current) return current.status;
+      const existing=this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM ledger_entries").toArray()[0];
+      if(Number(existing.count||0)>0) {
+        this.ctx.storage.sql.exec(
+          "INSERT INTO ledger_state(id,status,initialized_at) VALUES(1,'PARTIAL_UNKNOWN',?)",
+          new Date().toISOString()
+        );
+        return "PARTIAL_UNKNOWN";
+      }
+      this._appendLedgerEntry(account,"ACCOUNT_OPENED:"+account.account_id,"ACCOUNT_OPENED",
+        Number(account.starting_capital),{account_id:account.account_id,legacy_backfill:true},account.created_at);
+      const trades=this.ctx.storage.sql.exec(
+        "SELECT trade_id,symbol,side,quantity,entry_price,status,opened_at,closed_at,realized_pnl,fees FROM paper_trades ORDER BY opened_at ASC"
+      ).toArray();
+      const events=[];
+      for(const trade of trades) {
+        if(trade.status==="OPEN"&&Number.isFinite(Number(trade.fees))&&Number(trade.fees)>=0) {
+          events.push({id:"TRADE_OPENED:"+trade.trade_id,type:"TRADE_OPENED",
+            amount:-Number(trade.fees),at:trade.opened_at,
+            metadata:{trade_id:trade.trade_id,legacy_backfill:true}});
+        } else if(trade.status==="CLOSED"&&Number.isFinite(Number(trade.realized_pnl))) {
+          events.push({id:"TRADE_CLOSED:"+trade.trade_id,type:"TRADE_CLOSED",
+            amount:Number(trade.realized_pnl),at:trade.closed_at,
+            metadata:{trade_id:trade.trade_id,legacy_backfill:true}});
+        }
+      }
+      events.sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)||a.id.localeCompare(b.id));
+      for(const event of events)
+        this._appendLedgerEntry(account,event.id,event.type,event.amount,event.metadata,event.at);
+      this.ctx.storage.sql.exec(
+        "INSERT INTO ledger_state(id,status,initialized_at) VALUES(1,'LEGACY_BACKFILLED',?)",
+        new Date().toISOString()
+      );
+      return "LEGACY_BACKFILLED";
+    });
+  }
+
   getSummary(tokenHash) {
     const account=this.authorizedAccount(tokenHash);
     if(!account) return null;
+    const ledgerStatus=this._ensureLedgerInitialized(account);
     const ledger=this.ctx.storage.sql.exec(
       "SELECT COALESCE(SUM(amount),0) AS net_ledger_change,COUNT(*) AS ledger_events FROM ledger_entries"
     ).toArray()[0];
@@ -129,7 +212,8 @@ export class PaperAccount extends DurableObject {
     ).toArray()[0];
     const realized=Number(stats.realized_pnl||0);
     const openFees=this.ctx.storage.sql.exec("SELECT COALESCE(SUM(fees),0) AS amount FROM paper_trades WHERE status='OPEN'").toArray()[0];
-    const balance=account.starting_capital+Number(ledger.net_ledger_change||0)+realized-Number(openFees.amount||0);
+    const legacyBalance=account.starting_capital+Number(ledger.net_ledger_change||0)+realized-Number(openFees.amount||0);
+    const balance=ledgerStatus==="PARTIAL_UNKNOWN"?legacyBalance:Number(ledger.net_ledger_change||0);
     if(!Number.isFinite(balance)) throw new Error("Stored paper balance is invalid");
     return {account_id:account.account_id,currency:account.currency,
       starting_capital:account.starting_capital,balance,realized_pnl:realized,
@@ -141,6 +225,7 @@ export class PaperAccount extends DurableObject {
   getIntegrityReport(tokenHash) {
     const account=this.authorizedAccount(tokenHash);
     if(!account) return null;
+    const ledgerStatus=this._ensureLedgerInitialized(account);
     const discrepancies=[];
     const tolerance=1e-8;
     const closeEnough=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&
@@ -155,7 +240,11 @@ export class PaperAccount extends DurableObject {
       "SELECT trade_id,event_type,COUNT(*) AS event_count FROM paper_notifications GROUP BY trade_id,event_type"
     ).toArray();
     const notificationCounts=new Map(notifications.map(row=>[row.trade_id+":"+row.event_type,Number(row.event_count||0)]));
-    let ledgerChange=0,ledgerBalance=Number(account.starting_capital);
+    let ledgerChange=0,ledgerBalance=0;
+    const ledgerByEvent=new Map(ledgerRows.map(row=>[row.event_id,row]));
+    const accountEvent=ledgerByEvent.get("ACCOUNT_OPENED:"+account.account_id);
+    if(!accountEvent||!closeEnough(Number(accountEvent.amount),Number(account.starting_capital)))
+      discrepancies.push({code:"ACCOUNT_OPENING_LEDGER_EVENT_MISSING_OR_INVALID"});
     for(const row of ledgerRows) {
       const amount=Number(row.amount),balanceAfter=Number(row.balance_after);
       let metadataValid=false;
@@ -187,6 +276,9 @@ export class PaperAccount extends DurableObject {
         openFees+=fees;
         if(trade.closed_at!==null||trade.exit_price!==null||trade.realized_pnl!==null)
           discrepancies.push({code:"OPEN_TRADE_HAS_CLOSING_FIELDS",trade_id:trade.trade_id});
+        const openEvent=ledgerByEvent.get("TRADE_OPENED:"+trade.trade_id);
+        if(!openEvent||!closeEnough(Number(openEvent.amount),-fees))
+          discrepancies.push({code:"TRADE_OPEN_LEDGER_EVENT_MISSING_OR_INVALID",trade_id:trade.trade_id});
         if(notificationCounts.get(trade.trade_id+":TRADE_CLOSED")>0)
           discrepancies.push({code:"OPEN_TRADE_HAS_CLOSE_NOTIFICATION",trade_id:trade.trade_id});
       } else if(trade.status==="CLOSED") {
@@ -203,6 +295,13 @@ export class PaperAccount extends DurableObject {
           discrepancies.push({code:"REALIZED_PNL_MISMATCH",trade_id:trade.trade_id,
             expected_realized_pnl:expectedRealized,recorded_realized_pnl:realized});
         realizedPnl+=realized;
+        const closeEvent=ledgerByEvent.get("TRADE_CLOSED:"+trade.trade_id);
+        const openEvent=ledgerByEvent.get("TRADE_OPENED:"+trade.trade_id);
+        const closeMetadata=(()=>{try{return JSON.parse(closeEvent?.metadata_json||"{}");}catch{return {};}})();
+        const expectedCloseAmount=closeMetadata.legacy_backfill?realized:
+          realized+(openEvent?-Number(openEvent.amount):0);
+        if(!closeEvent||!closeEnough(Number(closeEvent.amount),expectedCloseAmount))
+          discrepancies.push({code:"TRADE_CLOSE_LEDGER_EVENT_MISSING_OR_INVALID",trade_id:trade.trade_id});
         const count=notificationCounts.get(trade.trade_id+":TRADE_CLOSED")||0;
         if(count!==1) discrepancies.push({code:count===0?"CLOSED_TRADE_NOTIFICATION_MISSING":"DUPLICATE_CLOSED_TRADE_NOTIFICATIONS",
           trade_id:trade.trade_id,count});
@@ -214,26 +313,36 @@ export class PaperAccount extends DurableObject {
       if(row.event_type==="TRADE_CLOSED"&&!trades.some(trade=>trade.trade_id===row.trade_id&&trade.status==="CLOSED"))
         discrepancies.push({code:"ORPHAN_CLOSED_TRADE_NOTIFICATION",trade_id:row.trade_id});
     }
-    const expectedBalance=Number(account.starting_capital)+ledgerChange+realizedPnl-openFees;
+    const expectedBalance=ledgerStatus==="PARTIAL_UNKNOWN"?
+      Number(account.starting_capital)+ledgerChange+realizedPnl-openFees:ledgerBalance;
+    if(ledgerStatus==="PARTIAL_UNKNOWN")
+      discrepancies.push({code:"LEDGER_MIGRATION_INCOMPLETE"});
     if(!Number.isFinite(expectedBalance))
       discrepancies.push({code:"NON_FINITE_DERIVED_BALANCE"});
-    const ledgerImplemented=ledgerRows.length>0;
+    const ledgerImplemented=ledgerStatus==="READY"||ledgerStatus==="LEGACY_BACKFILLED";
     return {account_id:account.account_id,currency:account.currency,
       integrity_status:discrepancies.length?"NEEDS_REVIEW":ledgerImplemented?"CLEAN":"PARTIAL",
-      integrity_note:ledgerImplemented?null:"Trade-derived balance checks are active, but ledger_entries is not yet populated by the paper-trading lifecycle; ledger reconciliation is therefore unavailable.",
+      integrity_note:ledgerImplemented?null:"Ledger contains pre-existing entries without a verifiable migration marker; reconciliation remains partial.",
       discrepancy_count:discrepancies.length,discrepancies,starting_capital:Number(account.starting_capital),
       derived_balance:Number.isFinite(expectedBalance)?Number(expectedBalance.toFixed(8)):null,
       ledger:{events:ledgerRows.length,net_change:Number(ledgerChange.toFixed(8)),
         recorded_running_balance:Number(ledgerBalance.toFixed(8)),
-        status:ledgerImplemented?"ACTIVE":"NOT_IMPLEMENTED",
-        mode:ledgerImplemented?"ACTIVE":"EMPTY"},
+        status:ledgerImplemented?"ACTIVE":"PARTIAL_UNKNOWN",
+        mode:ledgerRows.length?"ACTIVE":"EMPTY"},
       trades:{total:trades.length,open:openTrades,closed:closedTrades,
         realized_pnl:Number(realizedPnl.toFixed(8)),open_fees:Number(openFees.toFixed(8))},
       checked_at:new Date().toISOString(),mode:"PAPER_ONLY",execution_enabled:false};
   }
 
   createTrade(tokenHash,trade,createdAt) {
-    if(!this.authorizedAccount(tokenHash)) return null;
+    const account=this.authorizedAccount(tokenHash);
+    if(!account) return null;
+    this._ensureLedgerInitialized(account);
+    return this.ctx.storage.transactionSync(()=>this._createTradeAtomic(account,trade,createdAt));
+  }
+
+  _createTradeAtomic(account,trade,createdAt) {
+    if(!account) return null;
     const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
       "SELECT trade_id,status FROM paper_trades WHERE idempotency_key=? LIMIT 1",
       trade.idempotency_key
@@ -262,6 +371,8 @@ export class PaperAccount extends DurableObject {
       trade.stop_loss,trade.take_profit,createdAt,entryFee,trade.idempotency_key,
       trade.strategy_id??null,trade.signal_id??null,trade.signal_type??null
     );
+    this._appendLedgerEntry(account,"TRADE_OPENED:"+trade.trade_id,"TRADE_OPENED",-entryFee,
+      {trade_id:trade.trade_id,symbol:trade.symbol,side:trade.side,entry_fee:entryFee},createdAt);
     return {trade_id:trade.trade_id,symbol:trade.symbol,side:trade.side,quantity:trade.quantity,
       entry_price:trade.entry_price,stop_loss:trade.stop_loss,take_profit:trade.take_profit,
       status:"OPEN",opened_at:createdAt,fees:entryFee,duplicate:false,
@@ -404,7 +515,13 @@ export class PaperAccount extends DurableObject {
   }
 
   closeTrade(tokenHash,tradeId,exitPrice,feeBps,closedAt) {
-    if(!this.authorizedAccount(tokenHash)) return null;
+    const account=this.authorizedAccount(tokenHash);
+    if(!account) return null;
+    this._ensureLedgerInitialized(account);
+    return this.ctx.storage.transactionSync(()=>this._closeTradeAtomic(account,tradeId,exitPrice,feeBps,closedAt));
+  }
+
+  _closeTradeAtomic(account,tradeId,exitPrice,feeBps,closedAt) {
     const trade=this.ctx.storage.sql.exec("SELECT * FROM paper_trades WHERE trade_id=? AND status='OPEN' LIMIT 1",tradeId).toArray()[0];
     if(!trade) return {error:"TRADE_NOT_OPEN"};
     const direction=trade.side==="BUY"?1:-1;
@@ -420,7 +537,12 @@ export class PaperAccount extends DurableObject {
        RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
       closedAt,exitPrice,realized,fees,tradeId
     ).toArray()[0];
-    if(updated) this._recordClosedNotification(trade,updated,"MANUAL",closedAt);
+    if(updated) {
+      this._appendLedgerEntry(account,"TRADE_CLOSED:"+tradeId,"TRADE_CLOSED",gross-exitFee,
+        {trade_id:tradeId,symbol:trade.symbol,side:trade.side,gross_pnl:gross,
+          exit_fee:exitFee,entry_fee:entryFee,realized_pnl:realized},closedAt);
+      this._recordClosedNotification(trade,updated,"MANUAL",closedAt);
+    }
     return updated??{error:"TRADE_NOT_OPEN"};
   }
   monitorTrades(tokenHash,symbol,candle,feeBps,checkedAt) {
@@ -433,6 +555,15 @@ export class PaperAccount extends DurableObject {
   }
 
   _monitorTrades(symbol,candleInput,feeBps,checkedAt) {
+    const account=this.ctx.storage.sql.exec(
+      "SELECT account_id,starting_capital,created_at FROM accounts LIMIT 1"
+    ).toArray()[0];
+    if(!account) throw new Error("PAPER_ACCOUNT_NOT_FOUND");
+    this._ensureLedgerInitialized(account);
+    return this.ctx.storage.transactionSync(()=>this._monitorTradesAtomic(account,symbol,candleInput,feeBps,checkedAt));
+  }
+
+  _monitorTradesAtomic(account,symbol,candleInput,feeBps,checkedAt) {
     if(typeof symbol!=="string"||!/^[A-Z0-9_-]{1,20}$/.test(symbol))
       throw new Error("INVALID_MONITOR_SYMBOL");
     if(typeof feeBps!=="number"||!Number.isFinite(feeBps)||feeBps<0||feeBps>1000)
@@ -496,6 +627,11 @@ export class PaperAccount extends DurableObject {
           ).toArray()[0];
           if(closedRow) {
             closedRow.exit_reason=reason;
+            const gross=(exitPrice-trade.entry_price)*trade.quantity*(trade.side==="BUY"?1:-1);
+            const exitFee=exitPrice*trade.quantity*feeBps/10000;
+            this._appendLedgerEntry(account,"TRADE_CLOSED:"+trade.trade_id,"TRADE_CLOSED",gross-exitFee,
+              {trade_id:trade.trade_id,symbol:trade.symbol,side:trade.side,gross_pnl:gross,
+                exit_fee:exitFee,entry_fee:Number(trade.fees||0),realized_pnl:realized,reason},checkedAt);
             this._recordClosedNotification(trade,closedRow,reason,checkedAt);
           }
           break;
