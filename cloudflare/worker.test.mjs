@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import worker from "./worker_core.js";
+import { calculatePaperEntryFee, calculatePaperSettlement } from "./ledger_math.mjs";
 
 const originalFetch = globalThis.fetch;
 const freshItems = [
@@ -10,6 +11,38 @@ const freshItems = [
   ["coin-half","IRT",42000000],["coin-quarter","IRT",25000000],
   ["usd","IRT",70000],["xau","USD",2650]
 ].map(([id,unit,price]) => ({id,unit,price,updated_utc:new Date().toISOString(),stale:false}));
+
+test("paper ledger fee and settlement math reconciles BUY and SELL positions",()=>{
+  const buyEntryFee=calculatePaperEntryFee(0.1,2000,5);
+  const buyExitFee=calculatePaperEntryFee(0.1,2010,5);
+  const buy=calculatePaperSettlement({side:"BUY",quantity:0.1,entryPrice:2000,
+    exitPrice:2010,entryFee:buyEntryFee,exitFee:buyExitFee});
+  assert.equal(buyEntryFee,0.1);
+  assert.equal(buy.gross,1);
+  assert.equal(buy.totalFees,0.2005);
+  assert.equal(buy.realizedPnl,0.7995);
+  assert.equal(buy.ledgerCloseAmount,0.8995);
+  assert.ok(Math.abs((10000-buyEntryFee+buy.ledgerCloseAmount)-(10000+buy.realizedPnl))<1e-10);
+
+  const sellEntryFee=calculatePaperEntryFee(0.2,100,10);
+  const sellExitFee=calculatePaperEntryFee(0.2,105,10);
+  const sell=calculatePaperSettlement({side:"SELL",quantity:0.2,entryPrice:100,
+    exitPrice:105,entryFee:sellEntryFee,exitFee:sellExitFee});
+  assert.equal(sell.gross,-1);
+  assert.equal(sell.realizedPnl,-1.041);
+  assert.equal(sell.ledgerCloseAmount,-1.021);
+  assert.ok(Math.abs((5000-sellEntryFee+sell.ledgerCloseAmount)-(5000+sell.realizedPnl))<1e-10);
+});
+
+test("paper ledger fee and settlement math rejects invalid and non-finite values",()=>{
+  assert.throws(()=>calculatePaperEntryFee(0,100,5),/INVALID_PAPER_FEE_INPUT/);
+  assert.throws(()=>calculatePaperEntryFee(1,100,1001),/INVALID_PAPER_FEE_INPUT/);
+  assert.throws(()=>calculatePaperEntryFee(1,Infinity,5),/INVALID_PAPER_FEE_INPUT/);
+  assert.throws(()=>calculatePaperSettlement({side:"HOLD",quantity:1,entryPrice:100,
+    exitPrice:101,entryFee:0,exitFee:0}),/INVALID_PAPER_SETTLEMENT_INPUT/);
+  assert.throws(()=>calculatePaperSettlement({side:"BUY",quantity:1,entryPrice:100,
+    exitPrice:101,entryFee:-1,exitFee:0}),/INVALID_PAPER_SETTLEMENT_INPUT/);
+});
 
 test("health endpoint responds", async () => {
   const response = await worker.fetch(new Request("https://unit.test/health"));
