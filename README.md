@@ -114,3 +114,8 @@ API محاسبه حجم، ورودی‌های اختیاری `lot_step`، `min_l
 Paper-trade creation accepts optional `strategy_id`, `signal_id`, and `signal_type` (`BUY`, `SELL`, or `NO_TRADE`). These fields are stored only when explicitly supplied; historical trades and trades without metadata remain `UNATTRIBUTED` rather than being matched by approximate timestamps.
 
 Authenticated endpoint: `GET /v1/paper/accounts/{account_id}/analytics/strategy`. It groups closed paper trades by strategy and signal type and reports sample count, win rate, net PnL, fees, profit factor, and expectancy. Advisory risk guidance is withheld until at least 20 closed trades in a group; then negative net PnL or win rate below 35% suggests considering half risk. This is advisory only: it never changes the risk engine, never increases risk, and does not enable live execution. Small samples must not be treated as statistically reliable.
+
+
+## Duplicate open-position guard
+
+The paper account rejects opening a second position for the same symbol while an existing position on that symbol is still open (HTTP 409). Close the open position first. This avoids accidental stacking or simultaneous opposing positions in the paper journal; it does not place real orders.
