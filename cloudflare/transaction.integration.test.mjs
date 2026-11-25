@@ -270,6 +270,93 @@ test("eight percent peak-to-current drawdown blocks new paper positions", async 
   assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
 });
 
+test("full paper lifecycle settles take-profit and stop-loss once and reconciles reports and ledger", async () => {
+  const accountId = "sqlite-full-paper-lifecycle";
+  const tokenHash = "token-hash-full-paper-lifecycle";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  const openedAt = "2026-11-25T08:00:00.000Z";
+  await stub.createAccount(accountId,tokenHash,"USD",100000,openedAt);
+
+  const takeProfitTrade = {
+    trade_id:"lifecycle-take-profit",symbol:"XAUUSD",side:"BUY",quantity:1,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:5,
+    idempotency_key:"lifecycle-take-profit-idem"
+  };
+  const stopLossTrade = {
+    trade_id:"lifecycle-stop-loss",symbol:"XAGUSD",side:"SELL",quantity:1,
+    entry_price:100,stop_loss:110,take_profit:80,fee_bps:5,
+    idempotency_key:"lifecycle-stop-loss-idem"
+  };
+  const firstOpen = await stub.createTrade(tokenHash,takeProfitTrade,"2026-11-25T08:01:00.000Z");
+  const secondOpen = await stub.createTrade(tokenHash,stopLossTrade,"2026-11-25T08:02:00.000Z");
+  assert.equal(firstOpen.status,"OPEN");
+  assert.equal(secondOpen.status,"OPEN");
+  assert.equal((await stub.getSummary(tokenHash)).ledger_events,3);
+
+  const noExit = await stub.monitorTrades(tokenHash,"XAUUSD",{
+    timestamp:"2026-11-25T08:15:00.000Z",open:100,high:115,low:95,close:110
+  },5,"2026-11-25T08:16:00.000Z");
+  assert.equal(noExit.closed,0);
+  assert.equal(noExit.results[0].status,"OPEN");
+
+  const takeProfit = await stub.monitorTrades(tokenHash,"XAUUSD",{
+    timestamp:"2026-11-25T08:30:00.000Z",open:110,high:121,low:105,close:120
+  },5,"2026-11-25T08:31:00.000Z");
+  assert.equal(takeProfit.closed,1);
+  assert.equal(takeProfit.results[0].status,"CLOSED");
+  assert.equal(Number(takeProfit.results[0].exit_price),120);
+
+  const stopLoss = await stub.monitorTrades(tokenHash,"XAGUSD",{
+    timestamp:"2026-11-25T08:15:00.000Z",open:100,high:111,low:95,close:105
+  },5,"2026-11-25T08:16:00.000Z");
+  assert.equal(stopLoss.closed,1);
+  assert.equal(stopLoss.results[0].status,"CLOSED");
+  assert.equal(Number(stopLoss.results[0].exit_price),110);
+
+  const repeatedTakeProfit = await stub.monitorTrades(tokenHash,"XAUUSD",{
+    timestamp:"2026-11-25T08:30:00.000Z",open:110,high:121,low:105,close:120
+  },5,"2026-11-25T08:32:00.000Z");
+  assert.equal(repeatedTakeProfit.closed,0);
+  assert.equal((await stub.closeTrade(tokenHash,takeProfitTrade.trade_id,120,5,
+    "2026-11-25T08:33:00.000Z")).error,"TRADE_NOT_OPEN");
+
+  const trades = await stub.listTrades(tokenHash);
+  assert.equal(trades.length,2);
+  assert.ok(trades.every(trade=>trade.status==="CLOSED"));
+  const notifications = await stub.listNotifications(tokenHash);
+  assert.equal(notifications.length,2);
+  assert.equal(new Set(notifications.map(item=>item.trade_id)).size,2);
+
+  const summary = await stub.getSummary(tokenHash);
+  assert.equal(summary.open_trades,0);
+  assert.equal(summary.closed_trades,2);
+  assert.equal(summary.ledger_events,5);
+  assert.ok(Math.abs(Number(summary.balance)-100009.785)<1e-8);
+  assert.ok(Math.abs(Number(summary.realized_pnl)-9.785)<1e-8);
+
+  const daily = await stub.getDailyReport(tokenHash,"2026-11-25");
+  assert.equal(daily.closed_trades,2);
+  assert.equal(daily.wins,1);
+  assert.equal(daily.losses,1);
+  assert.ok(Math.abs(daily.realized_pnl-9.785)<1e-8);
+  assert.ok(Math.abs(daily.fees-0.215)<1e-8);
+
+  const performance = await stub.getPerformanceReport(tokenHash,"week","2026-11-25");
+  assert.equal(performance.closed_trades,2);
+  assert.equal(performance.wins,1);
+  assert.equal(performance.losses,1);
+  assert.ok(Math.abs(performance.net_pnl-9.785)<1e-8);
+  assert.ok(Math.abs(performance.ending_balance-100009.785)<1e-8);
+  assert.equal(performance.execution_enabled,false);
+
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.trades.total,2);
+  assert.equal(integrity.trades.closed,2);
+  assert.equal(integrity.ledger.events,5);
+  assert.equal(integrity.execution_enabled,false);
+});
+
 test("stress: 30 concurrent create and close retries settle exactly once", async () => {
   const accountId = "sqlite-stress-retries";
   const tokenHash = "token-hash-stress-retries";
