@@ -1095,6 +1095,28 @@ function paperAccountEnv({allow=true}={}) {
             return {processed:results.length,closed:results.filter(x=>x.status==="CLOSED").length,
               checked_candle_at:candles.at(-1)?.timestamp,results,execution_enabled:false};
           },
+          getStrategyAttribution:async(tokenHash)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            const rows=(a.trades??[]).filter(x=>x.status==="CLOSED");
+            const grouped=new Map();
+            for(const trade of rows){
+              const key=(trade.strategy_id||"UNATTRIBUTED")+"|"+(trade.signal_type||"UNATTRIBUTED");
+              const g=grouped.get(key)||{strategy_id:trade.strategy_id||"UNATTRIBUTED",
+                signal_type:trade.signal_type||"UNATTRIBUTED",closed_trades:0,wins:0,losses:0,net_pnl:0,fees:0,gross_profit:0,gross_loss:0};
+              const pnl=Number(trade.realized_pnl||0);g.closed_trades++;g.net_pnl+=pnl;g.fees+=Number(trade.fees||0);
+              if(pnl>0){g.wins++;g.gross_profit+=pnl;}else if(pnl<0){g.losses++;g.gross_loss-=pnl;}
+              grouped.set(key,g);
+            }
+            const groups=[...grouped.values()].map(g=>({...g,win_rate_pct:g.closed_trades?g.wins/g.closed_trades*100:0,
+              profit_factor:g.gross_loss?g.gross_profit/g.gross_loss:null,expectancy:g.closed_trades?g.net_pnl/g.closed_trades:0,
+              sample_quality:g.closed_trades>=20?"MINIMUM_SAMPLE_MET":"INSUFFICIENT_SAMPLE",
+              risk_guidance:g.closed_trades>=20&&(g.net_pnl<0||g.wins/g.closed_trades<0.35)?"CONSIDER_HALF_RISK":"NO_AUTOMATIC_CHANGE"}));
+            const total=rows.length,attributed=rows.filter(x=>x.strategy_id).length;
+            return {groups,total_closed_trades:total,attributed_closed_trades:attributed,
+              unattributed_closed_trades:total-attributed,minimum_sample_for_guidance:20,
+              guidance_policy:"Advisory only; no automatic risk changes.",mode:"PAPER_ONLY",execution_enabled:false};
+          },
           listTrades:async(tokenHash)=>{
             const a=accounts.get(name);
             return !a||a.tokenHash!==tokenHash?null:(a.trades??[]);
@@ -1156,6 +1178,41 @@ test("paper account creation returns a one-time bearer token and virtual balance
   assert.equal(summary.status,200);
   assert.equal(account.account_id,body.account_id);
   assert.equal(account.balance,12500);
+});
+
+test("strategy attribution requires explicit metadata and returns advisory-only risk guidance",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.88"},
+    body:JSON.stringify({starting_capital:10000,currency:"USD"})
+  }),env);
+  const account=await created.json();
+  const headers={authorization:"Bearer "+account.access_token,"content-type":"application/json"};
+  const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
+    method:"POST",headers,body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.01,
+      entry_price:2000,stop_loss:1990,take_profit:2020,strategy_id:"EMA20_50",
+      signal_id:"sig-20261125-001",signal_type:"BUY",idempotency_key:"strategy-test-001"})
+  }),env);
+  assert.equal(opened.status,201);
+  const trade=await opened.json();
+  assert.equal(trade.strategy_id,"EMA20_50");
+  assert.equal(trade.signal_id,"sig-20261125-001");
+  await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+
+    "/trades/"+trade.trade_id+"/close",{method:"POST",headers,body:JSON.stringify({exit_price:2010})}),env);
+  const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/analytics/strategy",{headers}),env);
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.total_closed_trades,1);
+  assert.equal(body.attributed_closed_trades,1);
+  assert.equal(body.groups[0].strategy_id,"EMA20_50");
+  assert.equal(body.groups[0].signal_type,"BUY");
+  assert.equal(body.groups[0].sample_quality,"INSUFFICIENT_SAMPLE");
+  assert.equal(body.groups[0].risk_guidance,"NO_AUTOMATIC_CHANGE");
+  assert.equal(body.execution_enabled,false);
+  const denied=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/analytics/strategy",{headers:{authorization:"Bearer "+"a".repeat(64)}}),env);
+  assert.equal(denied.status,404);
 });
 
 test("paper trade closure creates authenticated in-app notification and daily PnL report",async()=>{
