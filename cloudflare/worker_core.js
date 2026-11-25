@@ -609,6 +609,7 @@ export default {
         const account=env.PAPER_ACCOUNTS.getByName(accountId);
         const result=await account.monitorTrades(tokenHash,symbol,candle,5,new Date().toISOString());
         if(result===null) return json({error:"Account not found or access denied"},404);
+        await env.PAPER_ACCOUNTS.getByName("__paper_bootstrap_guard__").registerAccount(accountId,new Date().toISOString());
         return json({...result,symbol,provider:market.provider,market_data_status:market.status,
           market_candle_at:market.last_candle_at,mode:"PAPER_ONLY",execution_enabled:false});
       } catch(e) {
