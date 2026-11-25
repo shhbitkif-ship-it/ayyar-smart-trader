@@ -549,6 +549,38 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps", async () => {
+  const originalFetch=globalThis.fetch;
+  const candlesByInterval={};
+  for(const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]){
+    const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    let close=2600;
+    candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
+      const previous=close;close+=i%2===0?0.5:-0.3;if(i===count-1)close=previous+0.5;
+      const skipped=i>=60?1:0;
+      return {timestamp:new Date(lastClosed-(count-1-i+skipped)*intervalMs).toISOString(),
+        open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
+    });
+  }
+  globalThis.fetch=async url=>{
+    const interval=new URL(String(url)).searchParams.get("interval");
+    return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
+      {status:200,headers:{"content-type":"application/json"}});
+  };
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.market_data_status,"DEGRADED");
+    assert.equal(body.timeframes["15m"].data_status,"GAPPED");
+    assert.equal(body.signal_quality.status,"BLOCKED");
+    assert.equal(body.signal_quality.checks.find(x=>x.id==="all_timeframe_data_quality").passed,false);
+    assert.ok(body.signal_quality.blocked_reasons.some(x=>/candle gaps/i.test(x)));
+    assert.equal(body.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("multi-timeframe signal is archived once per completed 60m candle and history is retrievable", async () => {
   const originalFetch=globalThis.fetch;
   const store=new Map();
