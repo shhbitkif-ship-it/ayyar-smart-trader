@@ -655,7 +655,10 @@ test("signal performance uses next candle open, completed horizons and refuses c
   const signalTime=candles[10].timestamp;
   // Equivalent UTC offset notation must match the same candle timestamp.
   const signalTimeWithOffset=signalTime.replace("Z","+00:00");
-  store.set("xau:latest:sample",{signal:"BUY",last_candle_at:signalTimeWithOffset,recorded_at:signalTimeWithOffset});
+  store.set("xau:latest:sample",{signal:"BUY",symbol:"xau",confidence:80,entry:2610,stop_loss:2600,take_profit:2630,
+    market_data_status:"LIVE",execution_enabled:false,
+    archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    last_candle_at:signalTimeWithOffset,recorded_at:new Date(Date.parse(signalTime)+1000).toISOString()});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)||null;}};
   globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(candles)),
@@ -685,6 +688,42 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(gapBody.horizons.find(x=>x.horizon_candles===1).scored,0);
     assert.equal(gapBody.horizons.find(x=>x.horizon_candles===4).scored,0);
   } finally { globalThis.fetch=originalFetch; }
+});
+
+test("signal history and performance ignore malformed or execution-enabled archived records", async () => {
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:40},(_,i)=>{
+    const open=2600+i;
+    return {timestamp:new Date(lastClosed-(39-i)*intervalMs).toISOString(),
+      open,high:open+2,low:open-1,close:open+1};
+  });
+  const valid={signal:"BUY",symbol:"xau",confidence:80,entry:2610,stop_loss:2600,take_profit:2630,
+    market_data_status:"LIVE",execution_enabled:false,
+    archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    last_candle_at:candles[10].timestamp,recorded_at:new Date(Date.parse(candles[10].timestamp)+1000).toISOString()};
+  const store=new Map([
+    ["xau:latest:valid",valid],
+    ["xau:latest:forged",{...valid,execution_enabled:true}],
+    ["xau:latest:bad-price",{...valid,entry:NaN}],
+    ["xau:latest:bad-source",{...valid,archive_source:"untrusted"}]
+  ]);
+  const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
+    async get(key){return store.get(key)||null;}};
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),
+    {status:200,headers:{"content-type":"application/json"}});
+  try{
+    const env={SIGNAL_HISTORY:kv};
+    const history=await worker.fetch(new Request("https://unit.test/v1/signals/history?limit=20"),env);
+    const historyBody=await history.json();
+    assert.equal(historyBody.count,1);
+    assert.equal(historyBody.records[0].signal,"BUY");
+    const performance=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),env);
+    const performanceBody=await performance.json();
+    assert.equal(performanceBody.directional_signals,1);
+    assert.equal(performanceBody.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("signal performance returns unavailable without storage or when the candle provider fails", async () => {
