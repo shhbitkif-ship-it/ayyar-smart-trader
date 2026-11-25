@@ -57,10 +57,9 @@ test("SQLite transaction rolls back a newly inserted trade when opening ledger w
     quantity: 1, entry_price: 100, stop_loss: 90, take_profit: 120,
     fee_bps: 5, idempotency_key: "idem-open-rollback"
   };
-  await assert.rejects(
-    async () => await stub.createTrade(tokenHash, trade, "2026-11-25T08:01:00.000Z"),
-    /INJECTED_FAILURE_AFTER_OPEN_LEDGER_WRITE/
-  );
+  const failedOpen = await stub.runCreateTradeWithFault(tokenHash, trade, "2026-11-25T08:01:00.000Z");
+  assert.equal(failedOpen.ok, false);
+  assert.match(failedOpen.error, /INJECTED_FAILURE_AFTER_OPEN_LEDGER_WRITE/);
   await stub.setFaultMode("none");
   assert.equal((await stub.listTrades(tokenHash)).length, 0);
   const summary = await stub.getSummary(tokenHash);
@@ -78,12 +77,13 @@ for (const fault of ["after-close-ledger", "after-close-notification"]) {
     const before = await stub.getSummary(tokenHash);
     await stub.setFaultMode(fault);
 
-    await assert.rejects(
-      async () => await stub.closeTrade(tokenHash, tradeId, 110, 5, "2026-11-25T08:02:00.000Z"),
-      new RegExp(fault === "after-close-ledger"
-        ? "INJECTED_FAILURE_AFTER_LEDGER_WRITE"
-        : "INJECTED_FAILURE_AFTER_NOTIFICATION_WRITE")
+    const failedClose = await stub.runCloseTradeWithFault(
+      tokenHash, tradeId, 110, 5, "2026-11-25T08:02:00.000Z"
     );
+    assert.equal(failedClose.ok, false);
+    assert.match(failedClose.error, new RegExp(fault === "after-close-ledger"
+      ? "INJECTED_FAILURE_AFTER_LEDGER_WRITE"
+      : "INJECTED_FAILURE_AFTER_NOTIFICATION_WRITE"));
 
     await stub.setFaultMode("none");
     const tradesAfterFailure = await stub.listTrades(tokenHash);
