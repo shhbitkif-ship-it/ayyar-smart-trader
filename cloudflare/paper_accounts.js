@@ -45,7 +45,10 @@ export class PaperAccount extends DurableObject {
         realized_pnl REAL,
         fees REAL NOT NULL DEFAULT 0,
         idempotency_key TEXT UNIQUE,
-        last_checked_at TEXT
+        last_checked_at TEXT,
+        strategy_id TEXT,
+        signal_id TEXT,
+        signal_type TEXT
       );
       CREATE TABLE IF NOT EXISTS paper_notifications (
         notification_id TEXT PRIMARY KEY,
@@ -61,6 +64,9 @@ export class PaperAccount extends DurableObject {
         ON paper_notifications(created_at DESC);
     `);
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN last_checked_at TEXT"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN strategy_id TEXT"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN signal_id TEXT"); } catch {}
+    try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN signal_type TEXT"); } catch {}
   }
 
   registerAccount(accountId, createdAt) {
@@ -150,14 +156,18 @@ export class PaperAccount extends DurableObject {
     const entryFee=notional*trade.fee_bps/10000;
     this.ctx.storage.sql.exec(
       `INSERT INTO paper_trades
-       (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,idempotency_key)
-       VALUES(?,?,?,?,?,?,?,'OPEN',?,?,?)`,
+       (trade_id,symbol,side,quantity,entry_price,stop_loss,take_profit,status,opened_at,fees,idempotency_key,
+        strategy_id,signal_id,signal_type)
+       VALUES(?,?,?,?,?,?,?,'OPEN',?,?,?,?,?,?)`,
       trade.trade_id,trade.symbol,trade.side,trade.quantity,trade.entry_price,
-      trade.stop_loss,trade.take_profit,createdAt,entryFee,trade.idempotency_key
+      trade.stop_loss,trade.take_profit,createdAt,entryFee,trade.idempotency_key,
+      trade.strategy_id??null,trade.signal_id??null,trade.signal_type??null
     );
     return {trade_id:trade.trade_id,symbol:trade.symbol,side:trade.side,quantity:trade.quantity,
       entry_price:trade.entry_price,stop_loss:trade.stop_loss,take_profit:trade.take_profit,
-      status:"OPEN",opened_at:createdAt,fees:entryFee,duplicate:false,execution_enabled:false};
+      status:"OPEN",opened_at:createdAt,fees:entryFee,duplicate:false,
+      strategy_id:trade.strategy_id??null,signal_id:trade.signal_id??null,
+      signal_type:trade.signal_type??null,execution_enabled:false};
   }
 
   _recordClosedNotification(trade,closed,reason,closedAt) {
@@ -253,6 +263,45 @@ export class PaperAccount extends DurableObject {
       expectancy:trades?Number((netPnl/trades).toFixed(8)):0,
       max_drawdown:Number(maxDrawdown.toFixed(8)),max_drawdown_pct:Number(maxDrawdownPct.toFixed(2)),
       equity_curve:equityCurve,mode:"PAPER_ONLY",execution_enabled:false};
+  }
+
+  getStrategyAttribution(tokenHash) {
+    if(!this.authorizedAccount(tokenHash)) return null;
+    const rows=this.ctx.storage.sql.exec(
+      `SELECT COALESCE(strategy_id,'UNATTRIBUTED') AS strategy_id,
+       COALESCE(signal_type,'UNATTRIBUTED') AS signal_type,
+       COUNT(*) AS closed_trades,
+       SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) AS wins,
+       SUM(CASE WHEN realized_pnl<0 THEN 1 ELSE 0 END) AS losses,
+       COALESCE(SUM(realized_pnl),0) AS net_pnl,
+       COALESCE(SUM(CASE WHEN realized_pnl>0 THEN realized_pnl ELSE 0 END),0) AS gross_profit,
+       COALESCE(SUM(CASE WHEN realized_pnl<0 THEN -realized_pnl ELSE 0 END),0) AS gross_loss,
+       COALESCE(SUM(fees),0) AS fees
+       FROM paper_trades WHERE status='CLOSED'
+       GROUP BY COALESCE(strategy_id,'UNATTRIBUTED'),COALESCE(signal_type,'UNATTRIBUTED')
+       ORDER BY closed_trades DESC`
+    ).toArray();
+    const groups=rows.map(row=>{
+      const count=Number(row.closed_trades||0),wins=Number(row.wins||0);
+      const grossProfit=Number(row.gross_profit||0),grossLoss=Number(row.gross_loss||0);
+      const net=Number(row.net_pnl||0);
+      const enough=count>=20;
+      const weak=enough&&(net<0||(wins/count)<0.35);
+      return {strategy_id:row.strategy_id,signal_type:row.signal_type,
+        closed_trades:count,wins,losses:Number(row.losses||0),
+        win_rate_pct:count?Number((wins/count*100).toFixed(2)):0,
+        net_pnl:Number(net.toFixed(8)),fees:Number(Number(row.fees||0).toFixed(8)),
+        profit_factor:grossLoss>0?Number((grossProfit/grossLoss).toFixed(4)):null,
+        expectancy:count?Number((net/count).toFixed(8)):0,
+        sample_quality:enough?"MINIMUM_SAMPLE_MET":"INSUFFICIENT_SAMPLE",
+        risk_guidance:weak?"CONSIDER_HALF_RISK":"NO_AUTOMATIC_CHANGE"};
+    });
+    const total=groups.reduce((sum,g)=>sum+g.closed_trades,0);
+    const attributed=groups.filter(g=>g.strategy_id!=="UNATTRIBUTED").reduce((sum,g)=>sum+g.closed_trades,0);
+    return {groups,total_closed_trades:total,attributed_closed_trades:attributed,
+      unattributed_closed_trades:total-attributed,minimum_sample_for_guidance:20,
+      guidance_policy:"Advisory only: after at least 20 closed trades, negative net PnL or win rate below 35% suggests considering half risk. Never increases risk and never changes execution settings.",
+      mode:"PAPER_ONLY",execution_enabled:false};
   }
 
   closeTrade(tokenHash,tradeId,exitPrice,feeBps,closedAt) {
