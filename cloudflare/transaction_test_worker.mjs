@@ -16,6 +16,15 @@ export class FaultInjectPaperAccount extends PaperAccount {
         trade.closed_at??null,trade.exit_price??null,trade.realized_pnl??null,
         trade.fees??0,trade.idempotency_key??null
       );
+      if (trade.status === "CLOSED") {
+        this.ctx.storage.sql.exec(
+          `INSERT INTO paper_notifications(notification_id,event_type,trade_id,title,message,
+            realized_pnl,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?)`,
+          "closed:"+trade.trade_id,"TRADE_CLOSED",trade.trade_id,"Legacy closed trade",
+          "Legacy migration fixture",trade.realized_pnl,trade.closed_at,
+          JSON.stringify({symbol:trade.symbol,side:trade.side,legacy_fixture:true})
+        );
+      }
     }
     return {seeded:true,trade_count:trades.length};
   }
