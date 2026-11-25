@@ -1150,7 +1150,10 @@ test("paper account creation validates JSON number types, currency and per-netwo
 });
 
 test("paper account trade journal endpoint requires a valid account token",async()=>{
+  const statusStore=new Map();
   const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
     method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.14"},
     body:JSON.stringify({})
@@ -1323,6 +1326,13 @@ test("scheduled monitor checks every registered paper account using fresh comple
     assert.equal(result.closed_trades,1,JSON.stringify(result));
     assert.equal(result.provider,"XAUS");
     assert.equal(result.execution_enabled,false);
+    assert.equal(statusStore.get("paper-monitor:latest").status,"OK");
+    const statusResponse=await worker.fetch(new Request("https://unit.test/v1/paper/monitor/status"),env);
+    const statusBody=await statusResponse.json();
+    assert.equal(statusResponse.status,200);
+    assert.equal(statusBody.status,"OK");
+    assert.equal(statusBody.monitor.closed_trades,1);
+    assert.equal(statusBody.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
 
