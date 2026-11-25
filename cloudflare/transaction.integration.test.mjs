@@ -1,6 +1,9 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Miniflare } from "miniflare";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 let mf;
 let namespace;
@@ -45,6 +48,73 @@ async function makeAccount() {
   await stub.createTrade(tokenHash, trade, "2026-11-25T08:01:00.000Z");
   return { stub, tokenHash, tradeId: trade.trade_id };
 }
+
+test("Durable Object restart recovers paper trades ledger and notifications", async () => {
+  const persistencePath = await mkdtemp(join(tmpdir(), "ayyar-do-restart-"));
+  const options = {
+    scriptPath: "./transaction_test_worker.mjs",
+    modules: true,
+    modulesRules: [{ type: "ESModule", include: ["**/*.js"], fallthrough: true }],
+    compatibilityDate: "2026-07-30",
+    durableObjects: {
+      PAPER_ACCOUNTS: { className: "FaultInjectPaperAccount", useSQLite: true }
+    },
+    kvNamespaces: ["SIGNAL_HISTORY"],
+    resourcePersistencePath: persistencePath,
+    cf: false
+  };
+  let firstMf;
+  let restartedMf;
+  try {
+    firstMf = new Miniflare(options);
+    await firstMf.ready;
+    const firstNs = await firstMf.getDurableObjectNamespace("PAPER_ACCOUNTS");
+    const accountId = "sqlite-restart-recovery";
+    const tokenHash = "token-hash-restart-recovery";
+    const firstStub = firstNs.get(firstNs.idFromName(accountId));
+    await firstStub.createAccount(accountId,tokenHash,"USD",100000,"2026-11-25T13:00:00.000Z");
+    await firstStub.createTrade(tokenHash,{
+      trade_id:"restart-closed",symbol:"XAUUSD",side:"BUY",quantity:1,
+      entry_price:100,stop_loss:90,take_profit:120,fee_bps:5,
+      idempotency_key:"restart-closed-idem"
+    },"2026-11-25T13:01:00.000Z");
+    await firstStub.closeTrade(tokenHash,"restart-closed",110,5,"2026-11-25T13:02:00.000Z");
+    await firstStub.createTrade(tokenHash,{
+      trade_id:"restart-open",symbol:"XAGUSD",side:"SELL",quantity:1,
+      entry_price:100,stop_loss:110,take_profit:80,fee_bps:5,
+      idempotency_key:"restart-open-idem"
+    },"2026-11-25T13:03:00.000Z");
+    const before = await firstStub.getSummary(tokenHash);
+    assert.equal(before.closed_trades,1);
+    assert.equal(before.open_trades,1);
+    assert.equal(before.ledger_events,4);
+    assert.equal((await firstStub.listNotifications(tokenHash)).length,1);
+    await firstMf.dispose();
+    firstMf = null;
+
+    restartedMf = new Miniflare(options);
+    await restartedMf.ready;
+    const restartedNs = await restartedMf.getDurableObjectNamespace("PAPER_ACCOUNTS");
+    const recovered = restartedNs.get(restartedNs.idFromName(accountId));
+    const after = await recovered.getSummary(tokenHash);
+    assert.equal(after.balance,before.balance);
+    assert.equal(after.closed_trades,1);
+    assert.equal(after.open_trades,1);
+    assert.equal(after.ledger_events,4);
+    const trades = await recovered.listTrades(tokenHash);
+    assert.equal(trades.length,2);
+    assert.equal(trades.filter(x=>x.status==="CLOSED").length,1);
+    assert.equal(trades.filter(x=>x.status==="OPEN").length,1);
+    assert.equal((await recovered.listNotifications(tokenHash)).length,1);
+    const integrity = await recovered.getIntegrityReport(tokenHash);
+    assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+    assert.equal(integrity.execution_enabled,false);
+  } finally {
+    await firstMf?.dispose();
+    await restartedMf?.dispose();
+    await rm(persistencePath,{recursive:true,force:true});
+  }
+});
 
 test("SQLite transaction rolls back a newly inserted trade when opening ledger write fails", async () => {
   const accountId = "sqlite-open-rollback";
