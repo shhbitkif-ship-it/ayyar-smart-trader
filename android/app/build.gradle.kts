@@ -13,8 +13,8 @@ android {
         applicationId = "com.ayyar.smarttrader"
         minSdk = 23
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.9.1"
+        versionCode = 11
+        versionName = "0.9.2"
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
     }
     buildFeatures { compose = true; buildConfig = true }
