@@ -1496,6 +1496,14 @@ test("paper account integrity endpoint is authenticated and read-only",async()=>
   const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/integrity";
   const unauthorized=await worker.fetch(new Request(url),env);
   assert.equal(unauthorized.status,401);
+  const malformed=await worker.fetch(new Request(url,{
+    headers:{authorization:"Bearer "+"short"}
+  }),env);
+  assert.equal(malformed.status,401);
+  const wrongToken=await worker.fetch(new Request(url,{
+    headers:{authorization:"Bearer "+"f".repeat(64)}
+  }),env);
+  assert.equal(wrongToken.status,404);
   const response=await worker.fetch(new Request(url,{
     headers:{authorization:"Bearer "+account.access_token}
   }),env);
@@ -1503,7 +1511,10 @@ test("paper account integrity endpoint is authenticated and read-only",async()=>
   assert.equal(response.status,200);
   assert.equal(report.integrity_status,"CLEAN");
   assert.equal(report.discrepancy_count,0);
+  assert.equal(report.derived_balance,12000);
+  assert.equal(report.mode,"PAPER_ONLY");
   assert.equal(report.execution_enabled,false);
+  assert.equal(report.ledger.events,0);
   assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
 });
 
