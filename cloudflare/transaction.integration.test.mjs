@@ -71,6 +71,58 @@ test("SQLite transaction rolls back a newly inserted trade when opening ledger w
   assert.equal(created.status, "OPEN");
   assert.equal((await stub.listTrades(tokenHash)).length, 1);
 });
+test("legacy account migration backfills ledger once and preserves derived balance", async () => {
+  const accountId = "sqlite-legacy-backfill";
+  const tokenHash = "token-hash-legacy-backfill";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.seedLegacyAccount({
+    accountId, tokenHash, startingCapital: 100000,
+    createdAt: "2026-11-25T07:00:00.000Z",
+    trades: [
+      { trade_id:"legacy-closed",symbol:"XAUUSD",side:"BUY",quantity:1,
+        entry_price:100,stop_loss:90,take_profit:120,status:"CLOSED",
+        opened_at:"2026-11-25T07:10:00.000Z",closed_at:"2026-11-25T07:20:00.000Z",
+        exit_price:110,realized_pnl:9.5,fees:0.5 },
+      { trade_id:"legacy-open",symbol:"XAUUSD",side:"SELL",quantity:1,
+        entry_price:100,stop_loss:110,take_profit:80,status:"OPEN",
+        opened_at:"2026-11-25T07:30:00.000Z",fees:0.05 }
+    ]
+  });
+  const first = await stub.getSummary(tokenHash);
+  assert.equal(first.balance, 100009.45);
+  assert.equal(first.closed_trades, 1);
+  assert.equal(first.open_trades, 1);
+  assert.equal(first.ledger_events, 3);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.ledger.migration_status, "LEGACY_BACKFILLED");
+  assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
+  const second = await stub.getSummary(tokenHash);
+  assert.equal(second.balance, first.balance);
+  assert.equal(second.ledger_events, first.ledger_events);
+  assert.equal(await stub.countLedgerRows(), 3);
+  assert.equal(integrity.execution_enabled, false);
+});
+
+test("partial legacy ledger is never auto-repaired or trusted as account balance", async () => {
+  const accountId = "sqlite-partial-ledger";
+  const tokenHash = "token-hash-partial-ledger";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.seedPartialLedger({
+    accountId, tokenHash, startingCapital: 50000,
+    createdAt: "2026-11-25T07:00:00.000Z"
+  });
+  const rowsBefore = await stub.countLedgerRows();
+  const summary = await stub.getSummary(tokenHash);
+  assert.equal(summary.balance, 50000);
+  assert.equal(summary.ledger_events, 1);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status, "NEEDS_REVIEW");
+  assert.equal(integrity.ledger.migration_status, "PARTIAL_UNKNOWN");
+  assert.ok(integrity.discrepancies.some(x => x.code === "LEDGER_MIGRATION_INCOMPLETE"));
+  assert.equal(await stub.countLedgerRows(), rowsBefore);
+  assert.equal(integrity.execution_enabled, false);
+});
+
 test("concurrent paper trade retries are idempotent and conflicting payloads are rejected", async () => {
   const accountId = "sqlite-concurrent-idempotency";
   const tokenHash = "token-hash-concurrent-idempotency";
