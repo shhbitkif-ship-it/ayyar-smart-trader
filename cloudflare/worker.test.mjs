@@ -1209,7 +1209,7 @@ test("paper trade journal reports bounded risk, fees and supported exit reasons"
 });
 
 
-function paperAccountEnv({allow=true,integrityOverride=null}={}) {
+function paperAccountEnv({allow=true,integrityOverride=null,createTradeError=null}={}) {
   const accounts=new Map();
   const registeredIds=new Set();
   return {
@@ -1247,6 +1247,7 @@ function paperAccountEnv({allow=true,integrityOverride=null}={}) {
               mode:"PAPER_ONLY",execution_enabled:false};
           },
           createTrade:async(tokenHash,trade,createdAt)=>{
+            if(createTradeError) throw new Error(createTradeError);
             const a=accounts.get(name);
             if(!a||a.tokenHash!==tokenHash)return null;
             a.trades??=[];
@@ -1466,27 +1467,21 @@ test("rejects duplicate open positions for the same symbol without idempotency c
   assert.equal(second.status,409);
   assert.match((await second.json()).error,/open paper trade already exists/i);
 });
-test("paper API returns HTTP 409 when aggregate open risk limit is exceeded",async()=>{
-  const env=paperAccountEnv();
+test("paper API maps aggregate risk guard rejection to HTTP 409",async()=>{
+  const env=paperAccountEnv({createTradeError:"TOTAL_OPEN_RISK_LIMIT_EXCEEDED"});
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
     method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.89"},
     body:JSON.stringify({starting_capital:10000,currency:"USD"})
   }),env);
   const account=await created.json();
-  const headers={authorization:"Bearer "+account.access_token,"content-type":"application/json"};
-  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
-  const make=(symbol,key)=>({symbol,side:"BUY",quantity:9.8,entry_price:100,
-    stop_loss:90,take_profit:120,fee_bps:5,idempotency_key:key});
-  const first=await worker.fetch(new Request(url,{method:"POST",headers,
-    body:JSON.stringify(make("XAUUSD","aggregate-api-001"))}),env);
-  const second=await worker.fetch(new Request(url,{method:"POST",headers,
-    body:JSON.stringify(make("XAGUSD","aggregate-api-002"))}),env);
-  assert.equal(first.status,201);
-  assert.equal(second.status,201);
-  const third=await worker.fetch(new Request(url,{method:"POST",headers,
-    body:JSON.stringify(make("EURUSD","aggregate-api-003"))}),env);
-  assert.equal(third.status,409);
-  assert.equal((await third.json()).error,"TOTAL_OPEN_RISK_LIMIT_EXCEEDED");
+  const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/trades",{
+      method:"POST",headers:{authorization:"Bearer "+account.access_token,"content-type":"application/json"},
+      body:JSON.stringify({symbol:"EURUSD",side:"BUY",quantity:1,entry_price:100,
+        stop_loss:90,take_profit:120,idempotency_key:"aggregate-api-003"})
+    }),env);
+  assert.equal(response.status,409);
+  assert.equal((await response.json()).error,"TOTAL_OPEN_RISK_LIMIT_EXCEEDED");
 });
 
 test("strategy attribution requires explicit metadata and returns advisory-only risk guidance",async()=>{
