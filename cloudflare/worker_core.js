@@ -862,7 +862,9 @@ export default {
           confidence:analyses[i].confidence,confluence_score:analyses[i].confluence_score,
           signal_quality:analyses[i].signal_quality,trend:analyses[i].trend,
           confidence_type:analyses[i].confidence_type,
-          last_candle_at:markets[i].last_candle_at,data_status:markets[i].status
+          last_candle_at:markets[i].last_candle_at,
+          data_status:analyses[i].data_status||markets[i].status,
+          data_quality:markets[i].data_quality
         }]));
         const regimes=markets.map(market=>classifyMarketRegime(market.candles));
         for(let i=0;i<intervals.length;i++) byInterval[intervals[i]].regime=regimes[i];
@@ -871,11 +873,14 @@ export default {
         const regimeAllowsTrade=regimes[1].tradeable&&regimes[1].trend===(intraday==="BUY"?"BULLISH":"BEARISH");
         const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
-        const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade;
+        const dataQualityClean=markets.every(market=>market.data_quality?.status==="CLEAN")&&
+          analyses.every(analysis=>analysis.data_status!=="STALE"&&analysis.data_status!=="GAPPED");
+        const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade&&dataQualityClean;
         const base=analyses[1];
         const blockedReasons=[];
         if(analyses.some(a=>a.signal==="NO_TRADE"&&a.proposed_signal!=="NO_TRADE"))
           blockedReasons.push("At least one timeframe produced a directional candidate that failed its market-regime quality gate.");
+        if(!dataQualityClean) blockedReasons.push("At least one timeframe has candle gaps or non-clean data quality.");
         if(!regimes[1].tradeable) blockedReasons.push("60m regime blocks entries: "+regimes[1].reason);
         if(intraday==="NO_TRADE") blockedReasons.push("60m timeframe has no qualified directional setup.");
         else if(!shortAligned) blockedReasons.push("15m and 60m directional signals disagree.");
@@ -884,7 +889,8 @@ export default {
           {id:"15m_signal",passed:analyses[0].signal!=="NO_TRADE"&&analyses[0].signal===intraday},
           {id:"60m_signal",passed:intraday!=="NO_TRADE"},
           {id:"daily_trend",passed:trendAligned},
-          {id:"60m_market_regime",passed:regimeAllowsTrade}
+          {id:"60m_market_regime",passed:regimeAllowsTrade},
+          {id:"all_timeframe_data_quality",passed:dataQualityClean}
         ];
         const result={
           signal:aligned?intraday:"NO_TRADE",
@@ -896,7 +902,7 @@ export default {
           trend:base.trend,rsi_14:base.rsi_14,macd_histogram:base.macd_histogram,atr_14:base.atr_14,
           entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
           take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
-          timeframes:byInterval,market_data_status:"LIVE",
+          timeframes:byInterval,market_data_status:dataQualityClean?"LIVE":"DEGRADED",
           market_provider:"XAUS",market_source_url:"https://xaus.com/api/v1/chart",
           last_candle_at:markets[1].last_candle_at,
           market_regime:regimes[1],
