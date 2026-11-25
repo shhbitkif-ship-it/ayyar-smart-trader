@@ -638,7 +638,7 @@ export default {
           status:"UNAVAILABLE",execution_enabled:false},502);
       }
     }
-    const paperAccountAuxMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})\/(notifications|report\/daily|report\/performance)$/);
+    const paperAccountAuxMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})\/(notifications|report\/daily|report\/performance|analytics\/strategy)$/);
     if(paperAccountAuxMatch&&request.method==="GET") {
       const accountId=paperAccountAuxMatch[1],resource=paperAccountAuxMatch[2];
       const auth=request.headers.get("authorization")||"";
