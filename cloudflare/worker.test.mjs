@@ -1591,3 +1591,33 @@ test("market snapshot reports PARTIAL instead of LIVE when only some instruments
     assert.equal(body.quotes.filter(q=>q.status==="LIVE").length,1);
   } finally { globalThis.fetch=originalFetch; }
 });
+
+
+test("market status endpoint exposes accurate partial quote counts", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-partial-test")).default;
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:new Date().toISOString(),
+    items:[{id:"gold-18k",price:7200000,unit:"IRT",updated_utc:new Date().toISOString(),stale:false}]
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"PARTIAL");
+    assert.equal(body.live_quotes,1);
+    assert.equal(body.total_quotes,8);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("market status endpoint reports zero live quotes when providers fail", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-unavailable-test")).default;
+  globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.live_quotes,0);
+    assert.equal(body.total_quotes,8);
+  } finally { globalThis.fetch=originalFetch; }
+});
