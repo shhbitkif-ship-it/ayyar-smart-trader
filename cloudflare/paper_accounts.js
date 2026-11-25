@@ -162,6 +162,10 @@ export class PaperAccount extends DurableObject {
   }
 
   _ensureLedgerInitialized(account) {
+    // Apply the legacy fee-rate migration after any pre-existing rows are visible.
+    this.ctx.storage.sql.exec(
+      "UPDATE paper_trades SET fee_bps=MIN(1000,fees*10000/(quantity*entry_price)) WHERE fee_bps=0 AND fees>0 AND quantity>0 AND entry_price>0"
+    );
     const state=this.ctx.storage.sql.exec("SELECT status FROM ledger_state WHERE id=1").toArray()[0];
     if(state) return state.status;
     return this.ctx.storage.transactionSync(()=>{
