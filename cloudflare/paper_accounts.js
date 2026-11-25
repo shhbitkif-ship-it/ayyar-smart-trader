@@ -121,7 +121,7 @@ export class PaperAccount extends DurableObject {
 
   authorizedAccount(tokenHash) {
     return this.ctx.storage.sql.exec(
-      `SELECT account_id,currency,starting_capital,created_at
+      `SELECT account_id,token_hash,currency,starting_capital,created_at
        FROM accounts WHERE token_hash=? LIMIT 1`,
       tokenHash
     ).toArray()[0]??null;
@@ -338,10 +338,10 @@ export class PaperAccount extends DurableObject {
     const account=this.authorizedAccount(tokenHash);
     if(!account) return null;
     this._ensureLedgerInitialized(account);
-    return this.ctx.storage.transactionSync(()=>this._createTradeAtomic(account,trade,createdAt));
+    return this.ctx.storage.transactionSync(()=>this._createTradeAtomic(account,tokenHash,trade,createdAt));
   }
 
-  _createTradeAtomic(account,trade,createdAt) {
+  _createTradeAtomic(account,tokenHash,trade,createdAt) {
     if(!account) return null;
     const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
       "SELECT trade_id,status FROM paper_trades WHERE idempotency_key=? LIMIT 1",
