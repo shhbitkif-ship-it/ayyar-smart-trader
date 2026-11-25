@@ -127,6 +127,28 @@ test("concurrent different idempotency keys cannot open duplicate symbol positio
   assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
 });
 
+test("concurrent close requests settle a paper trade exactly once", async () => {
+  const { stub, tokenHash, tradeId } = await makeAccount();
+  const [first, second] = await Promise.all([
+    stub.closeTrade(tokenHash, tradeId, 110, 5, "2026-11-25T11:02:00.000Z"),
+    stub.closeTrade(tokenHash, tradeId, 115, 5, "2026-11-25T11:02:01.000Z")
+  ]);
+  const results = [first, second];
+  assert.equal(results.filter(x => x.status === "CLOSED").length, 1);
+  assert.equal(results.filter(x => x.error === "TRADE_NOT_OPEN").length, 1);
+  const trades = await stub.listTrades(tokenHash);
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0].status, "CLOSED");
+  const notifications = await stub.listNotifications(tokenHash);
+  assert.equal(notifications.length, 1);
+  const summary = await stub.getSummary(tokenHash);
+  assert.equal(summary.closed_trades, 1);
+  assert.equal(summary.ledger_events, 3);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled, false);
+});
+
 for (const fault of ["after-close-ledger", "after-close-notification"]) {
   test("SQLite transaction rolls back trade, ledger and notification when failure occurs " + fault, async () => {
     const { stub, tokenHash, tradeId } = await makeAccount();
