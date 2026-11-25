@@ -47,6 +47,18 @@ export class PaperAccount extends DurableObject {
         idempotency_key TEXT UNIQUE,
         last_checked_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS paper_notifications (
+        notification_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        trade_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        realized_pnl REAL,
+        created_at TEXT NOT NULL,
+        metadata_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_paper_notifications_created
+        ON paper_notifications(created_at DESC);
     `);
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN last_checked_at TEXT"); } catch {}
   }
@@ -148,6 +160,50 @@ export class PaperAccount extends DurableObject {
       status:"OPEN",opened_at:createdAt,fees:entryFee,duplicate:false,execution_enabled:false};
   }
 
+  _recordClosedNotification(trade,closed,reason,closedAt) {
+    const pnl=Number(closed.realized_pnl||0);
+    const notificationId="closed:"+trade.trade_id;
+    const title=reason==="STOP_LOSS"?"موقعیت با حد ضرر بسته شد":
+      reason==="TAKE_PROFIT"?"موقعیت با حد سود بسته شد":"موقعیت آزمایشی بسته شد";
+    const message=trade.symbol+" • "+(trade.side==="BUY"?"خرید":"فروش")+
+      " • سود/زیان: "+pnl.toFixed(2);
+    this.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO paper_notifications
+       (notification_id,event_type,trade_id,title,message,realized_pnl,created_at,metadata_json)
+       VALUES(?,?,?,?,?,?,?,?)`,
+      notificationId,"TRADE_CLOSED",trade.trade_id,title,message,pnl,closedAt,
+      JSON.stringify({symbol:trade.symbol,side:trade.side,quantity:trade.quantity,
+        entry_price:trade.entry_price,exit_price:closed.exit_price,reason,fees:closed.fees})
+    );
+  }
+
+  listNotifications(tokenHash,limit=30) {
+    if(!this.authorizedAccount(tokenHash)) return null;
+    const safeLimit=Math.max(1,Math.min(Number.isInteger(limit)?limit:30,100));
+    return this.ctx.storage.sql.exec(
+      `SELECT notification_id,event_type,trade_id,title,message,realized_pnl,created_at,metadata_json
+       FROM paper_notifications ORDER BY created_at DESC LIMIT ?`,safeLimit
+    ).toArray().map(row=>({...row,metadata:JSON.parse(row.metadata_json||"{}")}));
+  }
+
+  getDailyReport(tokenHash,day) {
+    if(!this.authorizedAccount(tokenHash)) return null;
+    const start=day+"T00:00:00.000Z";
+    const end=new Date(Date.parse(start)+86400000).toISOString();
+    const row=this.ctx.storage.sql.exec(
+      `SELECT COUNT(*) AS closed_trades,
+       SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) AS wins,
+       SUM(CASE WHEN realized_pnl<0 THEN 1 ELSE 0 END) AS losses,
+       COALESCE(SUM(realized_pnl),0) AS realized_pnl,
+       COALESCE(SUM(fees),0) AS fees
+       FROM paper_trades WHERE status='CLOSED' AND closed_at>=? AND closed_at<?`,start,end
+    ).toArray()[0]||{};
+    return {date:day,timezone:"UTC",closed_trades:Number(row.closed_trades||0),
+      wins:Number(row.wins||0),losses:Number(row.losses||0),
+      realized_pnl:Number(row.realized_pnl||0),fees:Number(row.fees||0),
+      mode:"PAPER_ONLY",execution_enabled:false};
+  }
+
   closeTrade(tokenHash,tradeId,exitPrice,feeBps,closedAt) {
     if(!this.authorizedAccount(tokenHash)) return null;
     const trade=this.ctx.storage.sql.exec("SELECT * FROM paper_trades WHERE trade_id=? AND status='OPEN' LIMIT 1",tradeId).toArray()[0];
@@ -165,6 +221,7 @@ export class PaperAccount extends DurableObject {
        RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
       closedAt,exitPrice,realized,fees,tradeId
     ).toArray()[0];
+    if(updated) this._recordClosedNotification(trade,updated,"MANUAL",closedAt);
     return updated??{error:"TRADE_NOT_OPEN"};
   }
   monitorTrades(tokenHash,symbol,candle,feeBps,checkedAt) {
@@ -221,7 +278,10 @@ export class PaperAccount extends DurableObject {
              RETURNING trade_id,status,exit_price,realized_pnl,fees,closed_at`,
             checkedAt,exitPrice,realized,fees,candle.timestamp,trade.trade_id
           ).toArray()[0];
-          if(closedRow) closedRow.exit_reason=reason;
+          if(closedRow) {
+            closedRow.exit_reason=reason;
+            this._recordClosedNotification(trade,closedRow,reason,checkedAt);
+          }
           break;
         }
         this.ctx.storage.sql.exec(
