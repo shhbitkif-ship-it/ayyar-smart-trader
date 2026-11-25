@@ -1148,7 +1148,7 @@ test("paper trade journal reports bounded risk, fees and supported exit reasons"
 });
 
 
-function paperAccountEnv({allow=true}={}) {
+function paperAccountEnv({allow=true,integrityOverride=null}={}) {
   const accounts=new Map();
   const registeredIds=new Set();
   return {
@@ -1177,9 +1177,11 @@ function paperAccountEnv({allow=true}={}) {
           getIntegrityReport:async(tokenHash)=>{
             const a=accounts.get(name);
             if(!a||a.tokenHash!==tokenHash)return null;
-            return {account_id:name,currency:a.currency,integrity_status:"CLEAN",
+            if(integrityOverride)return {...integrityOverride,account_id:name};
+            return {account_id:name,currency:a.currency,integrity_status:"PARTIAL",
+              integrity_note:"Ledger entries are not yet emitted by the paper-trading lifecycle.",
               discrepancy_count:0,discrepancies:[],starting_capital:a.capital,
-              derived_balance:a.capital,ledger:{events:0,net_change:0,mode:"EMPTY"},
+              derived_balance:a.capital,ledger:{events:0,net_change:0,mode:"EMPTY",status:"NOT_IMPLEMENTED"},
               trades:{total:0,open:0,closed:0,realized_pnl:0,open_fees:0},
               mode:"PAPER_ONLY",execution_enabled:false};
           },
@@ -1509,13 +1511,36 @@ test("paper account integrity endpoint is authenticated and read-only",async()=>
   }),env);
   const report=await response.json();
   assert.equal(response.status,200);
-  assert.equal(report.integrity_status,"CLEAN");
+  assert.equal(report.integrity_status,"PARTIAL");
+  assert.equal(report.ledger.status,"NOT_IMPLEMENTED");
   assert.equal(report.discrepancy_count,0);
   assert.equal(report.derived_balance,12000);
   assert.equal(report.mode,"PAPER_ONLY");
   assert.equal(report.execution_enabled,false);
   assert.equal(report.ledger.events,0);
   assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
+});
+
+test("paper account integrity endpoint surfaces detected discrepancies without hiding them",async()=>{
+  const env=paperAccountEnv({integrityOverride:{
+    integrity_status:"NEEDS_REVIEW",discrepancy_count:1,
+    discrepancies:[{code:"REALIZED_PNL_MISMATCH",trade_id:"paper-test-1"}],
+    ledger:{events:0,status:"NOT_IMPLEMENTED"},mode:"PAPER_ONLY",execution_enabled:false
+  }});
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.13"},
+    body:JSON.stringify({starting_capital:15000})
+  }),env);
+  const account=await created.json();
+  const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/integrity",{
+    headers:{authorization:"Bearer "+account.access_token}
+  }),env);
+  const report=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(report.integrity_status,"NEEDS_REVIEW");
+  assert.equal(report.discrepancy_count,1);
+  assert.equal(report.discrepancies[0].code,"REALIZED_PNL_MISMATCH");
+  assert.equal(report.execution_enabled,false);
 });
 
 test("paper account endpoints reject missing and invalid bearer tokens",async()=>{
