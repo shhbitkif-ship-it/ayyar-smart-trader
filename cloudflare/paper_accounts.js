@@ -17,6 +17,10 @@ export class PaperAccount extends DurableObject {
         count INTEGER NOT NULL CHECK(count >= 0),
         PRIMARY KEY(ip_hash, day)
       );
+      CREATE TABLE IF NOT EXISTS account_registry (
+        account_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS ledger_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL UNIQUE,
@@ -45,6 +49,22 @@ export class PaperAccount extends DurableObject {
       );
     `);
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN last_checked_at TEXT"); } catch {}
+  }
+
+  registerAccount(accountId, createdAt) {
+    this.ctx.storage.sql.exec(
+      "INSERT OR IGNORE INTO account_registry(account_id,created_at) VALUES(?,?)",
+      accountId,createdAt
+    );
+    return {registered:true,account_id:accountId};
+  }
+
+  listAccountIds(limit=5000) {
+    const safeLimit=Math.max(1,Math.min(Number.isInteger(limit)?limit:5000,5000));
+    return this.ctx.storage.sql.exec(
+      "SELECT account_id FROM account_registry ORDER BY created_at ASC LIMIT ?",
+      safeLimit
+    ).toArray().map(row=>row.account_id);
   }
 
   allowCreation(ipHash, day) {
@@ -149,6 +169,14 @@ export class PaperAccount extends DurableObject {
   }
   monitorTrades(tokenHash,symbol,candle,feeBps,checkedAt) {
     if(!this.authorizedAccount(tokenHash)) return null;
+    return this._monitorTrades(symbol,candle,feeBps,checkedAt);
+  }
+
+  monitorTradesInternal(symbol,candle,feeBps,checkedAt) {
+    return this._monitorTrades(symbol,candle,feeBps,checkedAt);
+  }
+
+  _monitorTrades(symbol,candle,feeBps,checkedAt) {
     const rows=this.ctx.storage.sql.exec(
       "SELECT * FROM paper_trades WHERE status='OPEN' AND symbol=? ORDER BY opened_at ASC",symbol
     ).toArray();
