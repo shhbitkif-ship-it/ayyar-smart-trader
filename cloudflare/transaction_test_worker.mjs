@@ -40,6 +40,13 @@ export class FaultInjectPaperAccount extends PaperAccount {
     return {seeded:true};
   }
 
+  getTradeFeeRate(tradeId) {
+    const row=this.ctx.storage.sql.exec(
+      "SELECT fee_bps FROM paper_trades WHERE trade_id=? LIMIT 1",tradeId
+    ).toArray()[0];
+    return row ? Number(row.fee_bps) : null;
+  }
+
   countLedgerRows() {
     return Number(this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM ledger_entries").toArray()[0].count);
   }
