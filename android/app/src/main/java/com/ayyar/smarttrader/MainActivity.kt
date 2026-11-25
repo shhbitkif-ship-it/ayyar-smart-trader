@@ -644,6 +644,8 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
  var entry by remember{mutableStateOf("")}
  var stop by remember{mutableStateOf("")}
  var target by remember{mutableStateOf("")}
+ var strategyId by remember{mutableStateOf("MANUAL")}
+ var signalId by remember{mutableStateOf("")}
  var exitPrice by remember{mutableStateOf("")}
  var summary by remember{mutableStateOf<JSONObject?>(null)}
  var trades by remember{mutableStateOf<JSONArray?>(null)}
@@ -744,6 +746,8 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
     OutlinedTextField(value=entry,onValueChange={entry=it},label={Text("قیمت ورود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=stop,onValueChange={stop=it},label={Text("حد ضرر")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=target,onValueChange={target=it},label={Text("حد سود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    OutlinedTextField(value=strategyId,onValueChange={strategyId=it},label={Text("شناسه استراتژی (مثلاً EMA20_50)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    OutlinedTextField(value=signalId,onValueChange={signalId=it},label={Text("شناسه سیگنال (اختیاری)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     val valid=quantity.toDoubleOrNull()?.let{it>0}==true&&entry.toDoubleOrNull()?.let{it>0}==true&&stop.toDoubleOrNull()?.let{it>0}==true&&target.toDoubleOrNull()?.let{it>0}==true
     Button(enabled=!busy&&valid,onClick={
      scope.launch{
@@ -752,8 +756,10 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
        withContext(Dispatchers.IO){paperApi("POST","/v1/paper/accounts/$accountId/trades",token,
         JSONObject().put("symbol",symbol.trim()).put("side",side).put("quantity",quantity.toDouble())
          .put("entry_price",entry.toDouble()).put("stop_loss",stop.toDouble()).put("take_profit",target.toDouble())
-         .put("idempotency_key",java.util.UUID.randomUUID().toString()))}
-       status="موقعیت آزمایشی ثبت شد."
+         .put("idempotency_key",java.util.UUID.randomUUID().toString())
+         .put("strategy_id",strategyId.trim().ifBlank{"MANUAL"})
+         .put("signal_type",side).apply{if(signalId.isNotBlank())put("signal_id",signalId.trim())})}
+       status="موقعیت آزمایشی ثبت شد و به استراتژی ${strategyId.trim().ifBlank{"MANUAL"}} منتسب شد."
        val result=withContext(Dispatchers.IO){
         val s=paperApi("GET","/v1/paper/accounts/$accountId",token)
         val t=paperApi("GET","/v1/paper/accounts/$accountId/trades",token)
