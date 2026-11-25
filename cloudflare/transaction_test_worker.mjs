@@ -7,6 +7,16 @@ export class FaultInjectPaperAccount extends PaperAccount {
     this.faultMode = mode;
   }
 
+  async runCreateTradeWithFault(tokenHash, trade, createdAt) {
+    try { return { ok: true, result: super.createTrade(tokenHash, trade, createdAt) }; }
+    catch (error) { return { ok: false, error: String(error?.message || error) }; }
+  }
+
+  async runCloseTradeWithFault(tokenHash, tradeId, exitPrice, feeBps, closedAt) {
+    try { return { ok: true, result: super.closeTrade(tokenHash, tradeId, exitPrice, feeBps, closedAt) }; }
+    catch (error) { return { ok: false, error: String(error?.message || error) }; }
+  }
+
   _appendLedgerEntry(account, eventId, eventType, amount, metadata, createdAt) {
     const result = super._appendLedgerEntry(account, eventId, eventType, amount, metadata, createdAt);
     if (this.faultMode === "after-open-ledger" && eventType === "TRADE_OPENED")
