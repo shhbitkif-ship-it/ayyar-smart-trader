@@ -82,6 +82,27 @@ test("signal endpoint computes a bounded technical confluence score from fresh c
   assert.equal(body.confidence_type,"technical_confluence_score_not_probability");
 });
 
+test("signal quality gate blocks a strong confluence setup during excessive volatility",async()=>{
+ const candles=[];let close=100;
+ for(let i=0;i<120;i++){
+  const previous=close;close+=i%2===0?0.5:-0.3;if(i===119)close=previous+0.5;
+  const spike=i===119?20:0.2;
+  candles.push({timestamp:new Date(Date.now()-(119-i)*3600000).toISOString(),
+   open:previous,high:Math.max(previous,close)+spike,low:Math.min(previous,close)-spike,close});
+ }
+ const response=await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles,timeframe_minutes:60})
+ }));
+ const body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body));
+ assert.equal(body.proposed_signal,"BUY");
+ assert.equal(body.signal,"NO_TRADE");
+ assert.equal(body.confidence,0);
+ assert.equal(body.signal_quality.blocked_by_regime,true);
+ assert.equal(body.market_regime.status,"HIGH_VOLATILITY");
+ assert.equal(body.execution_enabled,false);
+});
+
 test("signal endpoint fails closed", async () => {
   const response = await worker.fetch(new Request("https://unit.test/v1/signals/evaluate",{
     method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({})
