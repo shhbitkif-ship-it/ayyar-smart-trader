@@ -46,6 +46,32 @@ async function makeAccount() {
   return { stub, tokenHash, tradeId: trade.trade_id };
 }
 
+test("SQLite transaction rolls back a newly inserted trade when opening ledger write fails", async () => {
+  const accountId = "sqlite-open-rollback";
+  const tokenHash = "token-hash-open-rollback";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId, tokenHash, "USD", 100000, "2026-11-25T08:00:00.000Z");
+  await stub.setFaultMode("after-open-ledger");
+  const trade = {
+    trade_id: "trade-open-rollback", symbol: "XAUUSD", side: "BUY",
+    quantity: 1, entry_price: 100, stop_loss: 90, take_profit: 120,
+    fee_bps: 5, idempotency_key: "idem-open-rollback"
+  };
+  await assert.rejects(
+    stub.createTrade(tokenHash, trade, "2026-11-25T08:01:00.000Z"),
+    /INJECTED_FAILURE_AFTER_OPEN_LEDGER_WRITE/
+  );
+  await stub.setFaultMode("none");
+  assert.equal((await stub.listTrades(tokenHash)).length, 0);
+  const summary = await stub.getSummary(tokenHash);
+  assert.equal(summary.ledger_events, 1);
+  assert.equal(summary.balance, 100000);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status, "CLEAN", JSON.stringify(integrity.discrepancies));
+  const created = await stub.createTrade(tokenHash, trade, "2026-11-25T08:02:00.000Z");
+  assert.equal(created.status, "OPEN");
+  assert.equal((await stub.listTrades(tokenHash)).length, 1);
+});
 for (const fault of ["after-close-ledger", "after-close-notification"]) {
   test("SQLite transaction rolls back trade, ledger and notification when failure occurs " + fault, async () => {
     const { stub, tokenHash, tradeId } = await makeAccount();
