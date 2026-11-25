@@ -1180,6 +1180,23 @@ test("paper account creation returns a one-time bearer token and virtual balance
   assert.equal(account.balance,12500);
 });
 
+test("rejects duplicate open positions for the same symbol without idempotency collision",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.91"},
+    body:JSON.stringify({starting_capital:10000,currency:"USD"})
+  }),env);
+  const account=await created.json();
+  const headers={authorization:"Bearer "+account.access_token,"content-type":"application/json"};
+  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const payload={symbol:"XAUUSD",side:"BUY",quantity:0.01,entry_price:2000,
+    stop_loss:1990,take_profit:2020,idempotency_key:"duplicate-test-001"};
+  const first=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify(payload)}),env);
+  assert.equal(first.status,201);
+  const second=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify({...payload,idempotency_key:"duplicate-test-002"})}),env);
+  assert.equal(second.status,409);
+  assert.match((await second.json()).error,/open paper trade already exists/i);
+});
 test("strategy attribution requires explicit metadata and returns advisory-only risk guidance",async()=>{
   const env=paperAccountEnv();
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
