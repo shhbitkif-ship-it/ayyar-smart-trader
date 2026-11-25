@@ -2014,3 +2014,29 @@ test("market status endpoint reports zero live quotes when providers fail", asyn
     assert.equal(body.total_quotes,8);
   } finally { globalThis.fetch=originalFetch; }
 });
+
+test("market snapshot recovers immediately after provider outage without serving cached UNAVAILABLE", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-outage-recovery-test")).default;
+  let calls=0;
+  globalThis.fetch=async()=>{
+    calls++;
+    if(calls===1) return new Response("upstream unavailable",{status:503});
+    return new Response(JSON.stringify({
+      generated_utc:new Date().toISOString(),
+      items:freshItems
+    }),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const first=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const unavailable=await first.json();
+    assert.equal(unavailable.status,"UNAVAILABLE");
+    assert.equal(unavailable.live_quotes,0);
+
+    const second=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const recovered=await second.json();
+    assert.equal(recovered.status,"LIVE");
+    assert.equal(recovered.live_quotes,8);
+    assert.equal(recovered.total_quotes,8);
+    assert.equal(calls,2,"provider must be retried after an unavailable snapshot");
+  } finally { globalThis.fetch=originalFetch; }
+});
