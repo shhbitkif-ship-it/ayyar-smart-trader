@@ -123,6 +123,80 @@ test("partial legacy ledger is never auto-repaired or trusted as account balance
   assert.equal(integrity.execution_enabled, false);
 });
 
+test("aggregate open risk is capped at two percent of paper equity", async () => {
+  const accountId = "sqlite-aggregate-risk";
+  const tokenHash = "token-hash-aggregate-risk";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId, tokenHash, "USD", 100000, "2026-11-25T06:00:00.000Z");
+  const makeTrade = (id,symbol) => ({
+    trade_id:id,symbol,side:"BUY",quantity:100,entry_price:100,
+    stop_loss:90,take_profit:120,fee_bps:0,idempotency_key:"idem-"+id
+  });
+  const first = await stub.createTrade(tokenHash,makeTrade("risk-one","XAUUSD"),"2026-11-25T06:01:00.000Z");
+  const second = await stub.createTrade(tokenHash,makeTrade("risk-two","XAGUSD"),"2026-11-25T06:02:00.000Z");
+  assert.equal(first.status,"OPEN");
+  assert.equal(second.status,"OPEN");
+  const third = await stub.runCreateTradeWithFault(tokenHash,makeTrade("risk-three","EURUSD"),"2026-11-25T06:03:00.000Z");
+  assert.equal(third.ok,false);
+  assert.match(third.error,/TOTAL_OPEN_RISK_LIMIT_EXCEEDED/);
+  assert.equal((await stub.listTrades(tokenHash)).length,2);
+  const integrity = await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+});
+
+test("daily realized loss limit blocks new paper positions", async () => {
+  const accountId = "sqlite-daily-loss-limit";
+  const tokenHash = "token-hash-daily-loss-limit";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId,tokenHash,"USD",100000,"2026-11-25T05:00:00.000Z");
+  for (let i=0;i<4;i++) {
+    const id="daily-loss-"+i, symbol=["XAUUSD","XAGUSD","EURUSD","GBPUSD"][i];
+    const trade={trade_id:id,symbol,side:"BUY",quantity:80,entry_price:100,
+      stop_loss:90,take_profit:120,fee_bps:0,idempotency_key:"idem-"+id};
+    await stub.createTrade(tokenHash,trade,"2026-11-25T05:0"+(i+1)+":00.000Z");
+    const closed=await stub.closeTrade(tokenHash,id,90,0,"2026-11-25T05:1"+i+":00.000Z");
+    assert.equal(closed.status,"CLOSED");
+  }
+  const blocked=await stub.runCreateTradeWithFault(tokenHash,{
+    trade_id:"after-daily-limit",symbol:"USDJPY",side:"BUY",quantity:1,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:0,
+    idempotency_key:"idem-after-daily-limit"
+  },"2026-11-25T05:59:00.000Z");
+  assert.equal(blocked.ok,false);
+  assert.match(blocked.error,/DAILY_LOSS_LIMIT_EXCEEDED/);
+  assert.equal((await stub.getSummary(tokenHash)).closed_trades,4);
+  assert.equal((await stub.getIntegrityReport(tokenHash)).integrity_status,"CLEAN");
+});
+
+test("eight percent peak-to-current drawdown blocks new paper positions", async () => {
+  const accountId = "sqlite-max-drawdown";
+  const tokenHash = "token-hash-max-drawdown";
+  const stub = namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId,tokenHash,"USD",100000,"2026-11-01T00:00:00.000Z");
+  for (let i=0;i<10;i++) {
+    const day=String(i+1).padStart(2,"0");
+    const opened="2026-11-"+day+"T09:00:00.000Z";
+    const closedAt="2026-11-"+day+"T10:00:00.000Z";
+    const id="drawdown-"+i;
+    await stub.createTrade(tokenHash,{
+      trade_id:id,symbol:"XAUUSD",side:"BUY",quantity:80,entry_price:100,
+      stop_loss:90,take_profit:120,fee_bps:0,idempotency_key:"idem-"+id
+    },opened);
+    const closed=await stub.closeTrade(tokenHash,id,90,0,closedAt);
+    assert.equal(closed.status,"CLOSED");
+  }
+  const blocked=await stub.runCreateTradeWithFault(tokenHash,{
+    trade_id:"after-drawdown-limit",symbol:"XAUUSD",side:"BUY",quantity:1,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:0,
+    idempotency_key:"idem-after-drawdown-limit"
+  },"2026-11-11T09:00:00.000Z");
+  assert.equal(blocked.ok,false);
+  assert.match(blocked.error,/MAX_DRAWDOWN_LIMIT_EXCEEDED/);
+  assert.equal((await stub.getSummary(tokenHash)).balance,92000);
+  const integrity=await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+});
+
 test("concurrent paper trade retries are idempotent and conflicting payloads are rejected", async () => {
   const accountId = "sqlite-concurrent-idempotency";
   const tokenHash = "token-hash-concurrent-idempotency";
