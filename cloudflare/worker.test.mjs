@@ -987,9 +987,31 @@ function paperAccountEnv({allow=true}={}) {
               closed_trades:0,ledger_events:0,created_at:a.createdAt,
               trading_enabled:false,execution_enabled:false};
           },
+          createTrade:async(tokenHash,trade,createdAt)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            a.trades??=[];
+            if(trade.idempotency_key){
+              const existing=a.trades.find(t=>t.idempotency_key===trade.idempotency_key);
+              if(existing)return {...existing,duplicate:true};
+            }
+            const row={...trade,status:"OPEN",opened_at:createdAt,fees:trade.quantity*trade.entry_price*trade.fee_bps/10000};
+            a.trades.push(row);
+            return row;
+          },
+          closeTrade:async(tokenHash,tradeId,exitPrice,feeBps,closedAt)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            const trade=(a.trades??[]).find(t=>t.trade_id===tradeId&&t.status==="OPEN");
+            if(!trade)return {error:"TRADE_NOT_OPEN"};
+            const gross=(exitPrice-trade.entry_price)*trade.quantity*(trade.side==="BUY"?1:-1);
+            const fees=(trade.entry_price+exitPrice)*trade.quantity*feeBps/10000;
+            Object.assign(trade,{status:"CLOSED",closed_at:closedAt,exit_price:exitPrice,fees,realized_pnl:gross-fees});
+            return {trade_id:tradeId,status:"CLOSED",exit_price:exitPrice,realized_pnl:gross-fees,fees,closed_at:closedAt};
+          },
           listTrades:async(tokenHash)=>{
             const a=accounts.get(name);
-            return !a||a.tokenHash!==tokenHash?null:[];
+            return !a||a.tokenHash!==tokenHash?null:(a.trades??[]);
           }
         };
       }
@@ -1064,6 +1086,58 @@ test("paper account trade journal endpoint requires a valid account token",async
   assert.equal(response.status,200);
   assert.deepEqual(body.trades,[]);
   assert.equal(body.execution_enabled,false);
+});
+
+
+test("paper trade endpoint validates direction, stores trades and supports idempotency",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.20"},body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const bad=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:1,entry_price:2000,stop_loss:2010,take_profit:2040})}),env);
+  assert.equal(bad.status,400);
+  const payload={symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020,idempotency_key:"order-key-0001"};
+  const first=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify(payload)}),env);
+  const firstBody=await first.json();
+  assert.equal(first.status,201);
+  assert.equal(firstBody.execution_enabled,false);
+  assert.equal(firstBody.status,"OPEN");
+  const second=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify(payload)}),env);
+  const secondBody=await second.json();
+  assert.equal(second.status,201);
+  assert.equal(secondBody.trade_id,firstBody.trade_id);
+  assert.equal(secondBody.duplicate,true);
+  const journal=await worker.fetch(new Request(url,{headers:{authorization:headers.authorization}}),env);
+  assert.equal((await journal.json()).trades.length,1);
+});
+
+test("paper trade close is authenticated and records realized PnL only in paper mode",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.21"},body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const opened=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify({
+    symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020
+  })}),env);
+  const trade=await opened.json();
+  const unauthorized=await worker.fetch(new Request(url+"/"+trade.trade_id+"/close",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({exit_price:2010})
+  }),env);
+  assert.equal(unauthorized.status,401);
+  const closed=await worker.fetch(new Request(url+"/"+trade.trade_id+"/close",{
+    method:"POST",headers,body:JSON.stringify({exit_price:2010,fee_bps:5})
+  }),env);
+  const body=await closed.json();
+  assert.equal(closed.status,200);
+  assert.equal(body.status,"CLOSED");
+  assert.equal(body.execution_enabled,false);
+  assert.ok(body.realized_pnl>0);
 });
 
 
