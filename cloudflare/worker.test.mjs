@@ -1304,6 +1304,7 @@ test("Wrangler config preserves signal history and declares SQLite paper account
   const config=JSON.parse(readFileSync(new URL("./wrangler.jsonc",import.meta.url),"utf8"));
   assert.equal(config.name,"ayyar-smart-trader-api");
   assert.equal(config.main,"worker.js");
+  assert.deepEqual(config.triggers.crons,["*/5 * * * *"]);
   assert.deepEqual(config.kv_namespaces,[{
     binding:"SIGNAL_HISTORY",id:"e3de061386ae467aae8f4d8da1e0e408"
   }]);
