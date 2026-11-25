@@ -549,7 +549,7 @@ export default {
         return json({error:String(e?.message||"Paper account creation unavailable")},503);
       }
     }
-    const paperMonitorMatch=url.pathname.match(/^\\/v1\\/paper\\/accounts\\/([a-f0-9]{32})\\/monitor$/);
+    const paperMonitorMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})\/monitor$/);
     if(paperMonitorMatch&&request.method==="POST") {
       const accountId=paperMonitorMatch[1];
       const auth=request.headers.get("authorization")||"";
