@@ -549,29 +549,71 @@ export default {
         return json({error:String(e?.message||"Paper account creation unavailable")},503);
       }
     }
-    const paperAccountMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})(\/trades)?$/);
+    const paperAccountMatch=url.pathname.match(/^\/v1\/paper\/accounts\/([a-f0-9]{32})(?:\/(trades)(?:\/([a-f0-9]{32})\/close)?)?$/);
     if(paperAccountMatch) {
-      if(request.method!=="GET") return json({error:"Method not allowed"},405);
+      const accountId=paperAccountMatch[1],isTrades=paperAccountMatch[2]==="trades",closeId=paperAccountMatch[3];
       const auth=request.headers.get("authorization")||"";
       if(!auth.startsWith("Bearer ")) return json({error:"Bearer authorization required"},401);
       const bearer=auth.slice(7);
       if(bearer.length<32||bearer.length>256) return json({error:"Invalid bearer token"},401);
       const tokenHash=await sha256Hex(bearer);
-      try {
-        const account=env.PAPER_ACCOUNTS.getByName(paperAccountMatch[1]);
-        if(paperAccountMatch[2]) {
-          const trades=await account.listTrades(tokenHash,50);
+      const account=env.PAPER_ACCOUNTS.getByName(accountId);
+      if(request.method==="GET"&&!isTrades&&!closeId) {
+        try { const summary=await account.getSummary(tokenHash);
+          if(summary===null) return json({error:"Account not found or access denied"},404);
+          return json(summary);
+        } catch(e) { return json({error:String(e?.message||"Paper account unavailable")},503); }
+      }
+      if(request.method==="GET"&&isTrades&&!closeId) {
+        try { const trades=await account.listTrades(tokenHash,50);
           if(trades===null) return json({error:"Account not found or access denied"},404);
           return json({trades,execution_enabled:false});
-        }
-        const summary=await account.getSummary(tokenHash);
-        if(summary===null) return json({error:"Account not found or access denied"},404);
-        return json(summary);
-      } catch(e) {
-        return json({error:String(e?.message||"Paper account unavailable")},503);
+        } catch(e) { return json({error:String(e?.message||"Paper trade journal unavailable")},503); }
       }
+      if(request.method==="POST"&&isTrades&&!closeId) {
+        try {
+          const length=Number(request.headers.get("content-length")||0);
+          if(length>2048) return json({error:"Trade payload is too large"},413);
+          const payload=await request.json();
+          if(!payload||typeof payload!=="object"||Array.isArray(payload)) return json({error:"Request body must be a JSON object"},400);
+          const {symbol,side,quantity,entry_price,stop_loss,take_profit}=payload;
+          const feeBps=payload.fee_bps??5;
+          const idem=payload.idempotency_key;
+          if(typeof symbol!=="string"||!/^[A-Z0-9._-]{2,32}$/.test(symbol)||
+             !["BUY","SELL"].includes(side)||
+             ![quantity,entry_price,stop_loss,take_profit,feeBps].every(v=>typeof v==="number"&&Number.isFinite(v))||
+             quantity<=0||entry_price<=0||stop_loss<=0||take_profit<=0||feeBps<0||feeBps>1000||
+             (side==="BUY"&&(stop_loss>=entry_price||take_profit<=entry_price))||
+             (side==="SELL"&&(stop_loss<=entry_price||take_profit>=entry_price))||
+             (idem!==undefined&&(typeof idem!=="string"||idem.length<8||idem.length>128)))
+            return json({error:"Invalid trade: use positive numeric values, directional stop/target and a valid optional idempotency_key"},400);
+          const result=await account.createTrade(tokenHash,{trade_id:randomHex(16),symbol,side,quantity,entry_price,stop_loss,take_profit,fee_bps:feeBps,idempotency_key:idem??null},new Date().toISOString());
+          if(result===null) return json({error:"Account not found or access denied"},404);
+          if(result.error) return json(result,409);
+          return json({...result,mode:"PAPER_ONLY",trading_enabled:false,execution_enabled:false},201);
+        } catch(e) {
+          const message=String(e?.message||"Paper trade could not be recorded");
+          const status=message==="INSUFFICIENT_PAPER_BALANCE"||message==="RISK_LIMIT_EXCEEDED"?409:503;
+          return json({error:message,execution_enabled:false},status);
+        }
+      }
+      if(request.method==="POST"&&isTrades&&closeId) {
+        try {
+          const length=Number(request.headers.get("content-length")||0);
+          if(length>1024) return json({error:"Close payload is too large"},413);
+          const payload=await request.json();
+          const exitPrice=payload?.exit_price,feeBps=payload?.fee_bps??5;
+          if(typeof exitPrice!=="number"||!Number.isFinite(exitPrice)||exitPrice<=0||
+             typeof feeBps!=="number"||!Number.isFinite(feeBps)||feeBps<0||feeBps>1000)
+            return json({error:"exit_price must be a positive JSON number and fee_bps must be between 0 and 1000"},400);
+          const result=await account.closeTrade(tokenHash,closeId,exitPrice,feeBps,new Date().toISOString());
+          if(result===null) return json({error:"Account not found or access denied"},404);
+          if(result.error) return json(result,409);
+          return json({...result,mode:"PAPER_ONLY",execution_enabled:false},200);
+        } catch(e) { return json({error:String(e?.message||"Paper trade could not be closed"),execution_enabled:false},503); }
+      }
+      return json({error:"Method not allowed"},405);
     }
-
     if(url.pathname==="/telegram/webhook" && request.method==="POST")
       return handleTelegramWebhook(request, env, snapshot, json);
     if(url.pathname==="/health") return json({status:"ok",service:"ayyar-smart-trader-api",version:"1.0.0"});
