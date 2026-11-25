@@ -214,9 +214,12 @@ function evaluateSignal(payload) {
   const longChecks=[trend==="BULLISH",last.close>fastNow,slope>0,histogram>0,rsi>=50&&rsi<70];
   const shortChecks=[trend==="BEARISH",last.close<fastNow,slope<0,histogram<0,rsi>30&&rsi<=50];
   const longScore=longChecks.filter(Boolean).length,shortScore=shortChecks.filter(Boolean).length;
-  const side=longScore>=4&&longScore>shortScore?"BUY":shortScore>=4&&shortScore>longScore?"SELL":"NO_TRADE";
-  const score=side==="BUY"?longScore:side==="SELL"?shortScore:Math.max(longScore,shortScore);
-  const confidence=score*20;
+  const proposedSide=longScore>=4&&longScore>shortScore?"BUY":shortScore>=4&&shortScore>longScore?"SELL":"NO_TRADE";
+  const regime=classifyMarketRegime(candles);
+  const regimeBlocked=proposedSide!=="NO_TRADE"&&!regime.tradeable;
+  const side=regimeBlocked?"NO_TRADE":proposedSide;
+  const score=proposedSide==="BUY"?longScore:proposedSide==="SELL"?shortScore:Math.max(longScore,shortScore);
+  const confidence=side==="NO_TRADE"?0:score*20;
   const stopDistance=atr*1.5;
   const entry=last.close;
   if(!Number.isFinite(atr)||atr<=0||!Number.isFinite(stopDistance)||stopDistance<=0||(side==="BUY"&&entry-stopDistance<=0)||(side==="SELL"&&entry-stopDistance*2<=0))
@@ -229,7 +232,12 @@ function evaluateSignal(payload) {
   reasons.push("MACD histogram: "+round6(histogram));
   reasons.push("ATR(14): "+round6(atr));
   reasons.push("Confluence checks: "+score+"/5");
-  return {signal:side,confidence,confidence_type:"technical_confluence_score_not_probability",
+  reasons.push("Market regime: "+regime.status+" — "+regime.reason);
+  if(regimeBlocked) reasons.push("Entry blocked by market-regime quality filter.");
+  return {signal:side,proposed_signal:proposedSide,confidence,confluence_score:score*20,
+    signal_quality:{status:side==="NO_TRADE"?"BLOCKED_OR_NO_SETUP":"TRADEABLE",regime_status:regime.status,
+      regime_tradeable:regime.tradeable,blocked_by_regime:regimeBlocked,reason:regime.reason},
+    market_regime:regime,confidence_type:"technical_confluence_score_not_probability",
     trend,rsi_14:round2(rsi),macd_histogram:round6(histogram),atr_14:round6(atr),
     entry:side==="NO_TRADE"?null:round6(entry),stop_loss:stop===null?null:round6(stop),
     take_profit:target===null?null:round6(target),risk_reward_ratio:side==="NO_TRADE"?null:2,
