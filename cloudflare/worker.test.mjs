@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import worker from "./worker_core.js";
-import { calculatePaperEntryFee, calculatePaperSettlement } from "./ledger_math.mjs";
+import { calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 const originalFetch = globalThis.fetch;
 const freshItems = [
@@ -32,6 +32,21 @@ test("paper ledger fee and settlement math reconciles BUY and SELL positions",()
   assert.equal(sell.realizedPnl,-1.041);
   assert.equal(sell.ledgerCloseAmount,-1.021);
   assert.ok(Math.abs((5000-sellEntryFee+sell.ledgerCloseAmount)-(5000+sell.realizedPnl))<1e-10);
+});
+
+test("paper ledger idempotency accepts only exact event replays",()=>{
+  const original={event_type:"TRADE_CLOSED",amount:12.5,metadata_json:JSON.stringify({
+    trade_id:"trade-1",symbol:"XAUUSD",realized_pnl:12.5
+  }),created_at:"2026-11-25T08:00:00.000Z"};
+  const event={eventType:"TRADE_CLOSED",amount:12.5,
+    metadata:{realized_pnl:12.5,symbol:"XAUUSD",trade_id:"trade-1"},
+    createdAt:"2026-11-25T08:00:00.000Z"};
+  assert.equal(ledgerEventReplayMatches(original,event),true);
+  assert.equal(ledgerEventReplayMatches(original,{...event,amount:12.6}),false);
+  assert.equal(ledgerEventReplayMatches(original,{...event,createdAt:"2026-11-25T08:01:00.000Z"}),false);
+  assert.equal(ledgerEventReplayMatches(original,{...event,metadata:{...event.metadata,trade_id:"trade-2"}}),false);
+  assert.equal(ledgerEventReplayMatches({...original,metadata_json:"not-json"},event),false);
+  assert.equal(ledgerEventReplayMatches(null,event),false);
 });
 
 test("paper ledger fee and settlement math rejects invalid and non-finite values",()=>{
