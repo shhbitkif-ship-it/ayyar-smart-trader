@@ -1064,9 +1064,25 @@ function paperAccountEnv({allow=true}={}) {
             if(!a)return null;
             const candles=Array.isArray(candleInput)?candleInput:[candleInput];
             const results=[];
-            for(const candle of candles){
-              const result=this.monitorTrades(a.tokenHash,symbol,candle,feeBps,checkedAt);
-              if(result?.results)results.push(...result.results);
+            for(const trade of (a.trades??[]).filter(t=>t.status==="OPEN"&&t.symbol===symbol)){
+              for(const candle of candles){
+                if(Date.parse(candle.timestamp)<=Date.parse(trade.opened_at))continue;
+                if(trade.last_checked_at&&trade.last_checked_at>=candle.timestamp)continue;
+                const buy=trade.side==="BUY";
+                const stop=buy?candle.low<=trade.stop_loss:candle.high>=trade.stop_loss;
+                const target=buy?candle.high>=trade.take_profit:candle.low<=trade.take_profit;
+                let exit=null,reason=null;
+                if(stop){reason="STOP_LOSS";exit=buy&&candle.open<trade.stop_loss?candle.open:!buy&&candle.open>trade.stop_loss?candle.open:trade.stop_loss;}
+                else if(target){reason="TAKE_PROFIT";exit=trade.take_profit;}
+                trade.last_checked_at=candle.timestamp;
+                if(exit!==null){
+                  const gross=(exit-trade.entry_price)*trade.quantity*(buy?1:-1);
+                  const exitFee=exit*trade.quantity*feeBps/10000,fees=trade.fees+exitFee;
+                  Object.assign(trade,{status:"CLOSED",closed_at:checkedAt,exit_price:exit,fees,realized_pnl:gross-fees});
+                  results.push({trade_id:trade.trade_id,status:"CLOSED",exit_price:exit,realized_pnl:gross-fees,exit_reason:reason});
+                  break;
+                }
+              }
             }
             return {processed:results.length,closed:results.filter(x=>x.status==="CLOSED").length,
               checked_candle_at:candles.at(-1)?.timestamp,results,execution_enabled:false};
