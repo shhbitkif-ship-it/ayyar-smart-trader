@@ -339,9 +339,26 @@ export class PaperAccount extends DurableObject {
   }
 
   _monitorTrades(symbol,candleInput,feeBps,checkedAt) {
+    if(typeof symbol!=="string"||!/^[A-Z0-9_-]{1,20}$/.test(symbol))
+      throw new Error("INVALID_MONITOR_SYMBOL");
+    if(typeof feeBps!=="number"||!Number.isFinite(feeBps)||feeBps<0||feeBps>1000)
+      throw new Error("INVALID_MONITOR_FEE");
+    if(typeof checkedAt!=="string"||!Number.isFinite(Date.parse(checkedAt)))
+      throw new Error("INVALID_MONITOR_CHECK_TIME");
     const candles=(Array.isArray(candleInput)?candleInput:[candleInput])
       .filter(Boolean).slice().sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
     if(!candles.length) throw new Error("NO_COMPLETED_CANDLES");
+    let previousCandleAt=-Infinity;
+    for(const candle of candles) {
+      const candleAt=Date.parse(candle?.timestamp);
+      const values=[candle?.open,candle?.high,candle?.low,candle?.close];
+      if(!Number.isFinite(candleAt)||!values.every(v=>typeof v==="number"&&Number.isFinite(v)&&v>0)||
+        candle.high<Math.max(candle.open,candle.close)||candle.low>Math.min(candle.open,candle.close)||
+        candle.high<candle.low)
+        throw new Error("INVALID_MONITOR_CANDLE");
+      if(candleAt<=previousCandleAt) throw new Error("DUPLICATE_OR_UNORDERED_MONITOR_CANDLE");
+      previousCandleAt=candleAt;
+    }
     const rows=this.ctx.storage.sql.exec(
       "SELECT * FROM paper_trades WHERE status='OPEN' AND symbol=? ORDER BY opened_at ASC",symbol
     ).toArray();
