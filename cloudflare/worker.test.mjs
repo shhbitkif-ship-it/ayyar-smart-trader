@@ -1110,6 +1110,22 @@ function paperAccountEnv({allow=true}={}) {
             return {date:day,timezone:"UTC",closed_trades:rows.length,wins:rows.filter(t=>t.realized_pnl>0).length,
               losses:rows.filter(t=>t.realized_pnl<0).length,realized_pnl:rows.reduce((sum,t)=>sum+(t.realized_pnl||0),0),
               fees:rows.reduce((sum,t)=>sum+(t.fees||0),0),mode:"PAPER_ONLY",execution_enabled:false};
+          },
+          getPerformanceReport:async(tokenHash,period,asOf)=>{
+            const a=accounts.get(name);
+            if(!a||a.tokenHash!==tokenHash)return null;
+            const days=period==="month"?30:7,start=new Date(Date.parse(asOf+"T00:00:00.000Z")-(days-1)*86400000).toISOString().slice(0,10);
+            const rows=(a.trades??[]).filter(t=>t.status==="CLOSED"&&t.closed_at>=start+"T00:00:00.000Z"&&t.closed_at.slice(0,10)<=asOf);
+            const wins=rows.filter(t=>t.realized_pnl>0),losses=rows.filter(t=>t.realized_pnl<0);
+            const grossProfit=wins.reduce((s,t)=>s+t.realized_pnl,0),grossLoss=losses.reduce((s,t)=>s-t.realized_pnl,0);
+            const net=rows.reduce((s,t)=>s+t.realized_pnl,0);
+            return {period,timezone:"UTC",start_date:start,end_date:asOf,starting_balance:10000,ending_balance:10000+net,
+              closed_trades:rows.length,wins:wins.length,losses:losses.length,win_rate_pct:rows.length?wins.length/rows.length*100:0,
+              net_pnl:net,fees:rows.reduce((s,t)=>s+t.fees,0),gross_profit:grossProfit,gross_loss:grossLoss,
+              profit_factor:grossLoss?grossProfit/grossLoss:null,average_win:wins.length?grossProfit/wins.length:0,
+              average_loss:losses.length?grossLoss/losses.length:0,expectancy:rows.length?net/rows.length:0,
+              max_drawdown:0,max_drawdown_pct:0,equity_curve:[{date:asOf,balance:10000+net,daily_pnl:net}],
+              mode:"PAPER_ONLY",execution_enabled:false};
           }
         };
       }
@@ -1173,6 +1189,21 @@ test("paper trade closure creates authenticated in-app notification and daily Pn
   assert.equal(reportBody.closed_trades,1);
   assert.equal(reportBody.wins,1);
   assert.equal(reportBody.execution_enabled,false);
+  const performance=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/report/performance?period=week&date="+day,{headers}),env);
+  const performanceBody=await performance.json();
+  assert.equal(performance.status,200);
+  assert.equal(performanceBody.period,"week");
+  assert.equal(performanceBody.closed_trades,1);
+  assert.equal(performanceBody.win_rate_pct,100);
+  assert.equal(performanceBody.execution_enabled,false);
+  const month=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/report/performance?period=month&date="+day,{headers}),env);
+  assert.equal(month.status,200);
+  assert.equal((await month.json()).period,"month");
+  const invalid=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
+    account.account_id+"/report/performance?period=year&date="+day,{headers}),env);
+  assert.equal(invalid.status,400);
 });
 
 test("paper account endpoints reject missing and invalid bearer tokens",async()=>{
