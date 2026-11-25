@@ -1730,7 +1730,7 @@ test("paper account monitor rejects malformed OHLC values before updating positi
   const account=await created.json();
   const accountDO=env.PAPER_ACCOUNTS.getByName(account.account_id);
   const malformed={timestamp:new Date().toISOString(),open:2000,high:1990,low:1980,close:2005};
-  assert.throws(()=>accountDO.monitorTradesInternal("XAUUSD",malformed,5,new Date().toISOString()),
+  await assert.rejects(()=>accountDO.monitorTradesInternal("XAUUSD",malformed,5,new Date().toISOString()),
     /INVALID_MONITOR_CANDLE/);
   assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
 });
