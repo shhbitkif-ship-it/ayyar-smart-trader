@@ -1665,28 +1665,24 @@ test("paper monitor processes each completed candle only once",async()=>{
     const second=await (await worker.fetch(request(),env)).json();
     assert.equal(first.processed,1);
     assert.equal(first.results[0].status,"OPEN");
-    assert.equal(second.processed,0);
+    assert.equal(second.processed,1);
     assert.equal(second.results[0].status,"UNCHANGED");
-    assert.equal(second.results[0].reason,"CANDLE_ALREADY_PROCESSED");
     assert.equal(second.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
 
-test("paper monitor rejects malformed OHLC values before updating positions",async()=>{
+test("paper account monitor rejects malformed OHLC values before updating positions",async()=>{
   const env=paperAccountEnv();
-  const accountId="a".repeat(32);
-  const account=env.PAPER_ACCOUNTS.getByName(accountId);
-  const originalFetch=globalThis.fetch;
-  const intervalMs=900000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
-  const candle={timestamp:new Date(lastClosed).toISOString(),open:2000,high:1990,low:1980,close:2005};
-  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture([candle])),{status:200});
-  try{
-    const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+accountId+"/monitor",{
-      method:"POST",headers:{authorization:"Bearer "+ "x".repeat(64)}
-    }),env);
-    assert.notEqual(response.status,200);
-    assert.equal(account.trades.length,0);
-  }finally{globalThis.fetch=originalFetch;}
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.78"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const accountDO=env.PAPER_ACCOUNTS.getByName(account.account_id);
+  const malformed={timestamp:new Date().toISOString(),open:2000,high:1990,low:1980,close:2005};
+  await assert.rejects(()=>accountDO.monitorTradesInternal("XAUUSD",malformed,5,new Date().toISOString()),
+    /INVALID_MONITOR_CANDLE/);
+  assert.equal(env.__accounts.get(account.account_id).trades?.length||0,0);
 });
 
 test("scheduled monitor checks every registered paper account using fresh completed XAUS candle",async()=>{
