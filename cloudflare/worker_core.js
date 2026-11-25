@@ -311,6 +311,9 @@ async function fetchGoldCandles(symbol, interval) {
     const time = rawTime > 1e12 ? rawTime : rawTime * 1000;
     if (!Number.isFinite(time)) { rejectedCompletedPoints++; continue; }
     if (time >= currentBucket) continue;
+    if (time % intervalMs !== 0) {
+      throw new Error("XAUS returned a candle timestamp that is not aligned to its declared interval; data quality check failed");
+    }
     const open=Number(point?.o), high=Number(point?.h);
     const low=Number(point?.l), close=Number(point?.c);
     if (![open,high,low,close].every(v=>Number.isFinite(v)&&v>0&&v<=1e15) ||
