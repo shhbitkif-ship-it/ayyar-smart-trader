@@ -971,6 +971,7 @@ function paperAccountEnv({allow=true}={}) {
   const accounts=new Map();
   const registeredIds=new Set();
   return {
+    __accounts:accounts,
     PAPER_ACCOUNTS:{
       getByName(name) {
         if(name==="__paper_bootstrap_guard__") return {
@@ -1058,10 +1059,17 @@ function paperAccountEnv({allow=true}={}) {
             }
             return {checked_candle_at:candle.timestamp,processed:results.length,closed:results.filter(x=>x.status==="CLOSED").length,results,execution_enabled:false};
           },
-          monitorTradesInternal(symbol,candle,feeBps,checkedAt){
+          monitorTradesInternal(symbol,candleInput,feeBps,checkedAt){
             const a=accounts.get(name);
             if(!a)return null;
-            return this.monitorTrades(a.tokenHash,symbol,candle,feeBps,checkedAt);
+            const candles=Array.isArray(candleInput)?candleInput:[candleInput];
+            const results=[];
+            for(const candle of candles){
+              const result=this.monitorTrades(a.tokenHash,symbol,candle,feeBps,checkedAt);
+              if(result?.results)results.push(...result.results);
+            }
+            return {processed:results.length,closed:results.filter(x=>x.status==="CLOSED").length,
+              checked_candle_at:candles.at(-1)?.timestamp,results,execution_enabled:false};
           },
           listTrades:async(tokenHash)=>{
             const a=accounts.get(name);
@@ -1215,6 +1223,7 @@ test("paper monitor uses fresh XAUS 15m candles and applies stop-first execution
   });
   const last=candles[candles.length-1];
   last.open=2000;last.high=2025;last.low=1985;last.close=2005;
+  env.__accounts.get(account.account_id).trades[0].opened_at=new Date(Date.parse(last.timestamp)-900000).toISOString();
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200,headers:{"content-type":"application/json"}});
   try{
@@ -1288,6 +1297,7 @@ test("scheduled monitor checks every registered paper account using fresh comple
     return {timestamp:new Date(lastClosed-(69-i)*intervalMs).toISOString(),open:close,high:close+.5,low:close-.5,close};
   });
   Object.assign(candles.at(-1),{open:2000,high:2005,low:1985,close:1995});
+  env.__accounts.get(account.account_id).trades[0].opened_at=new Date(Date.parse(candles.at(-1).timestamp)-900000).toISOString();
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
   try{
