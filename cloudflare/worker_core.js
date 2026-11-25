@@ -838,9 +838,11 @@ export default {
           candles:market.candles,timeframe_minutes:market.interval_seconds/60
         }));
         const byInterval=Object.fromEntries(intervals.map((interval,i)=>[interval,{
-          signal:analyses[i].signal,trend:analyses[i].trend,
-          confidence:analyses[i].confidence,last_candle_at:markets[i].last_candle_at,
-          data_status:markets[i].status
+          signal:analyses[i].signal,proposed_signal:analyses[i].proposed_signal,
+          confidence:analyses[i].confidence,confluence_score:analyses[i].confluence_score,
+          signal_quality:analyses[i].signal_quality,trend:analyses[i].trend,
+          confidence_type:analyses[i].confidence_type,
+          last_candle_at:markets[i].last_candle_at,data_status:markets[i].status
         }]));
         const regimes=markets.map(market=>classifyMarketRegime(market.candles));
         for(let i=0;i<intervals.length;i++) byInterval[intervals[i]].regime=regimes[i];
@@ -851,8 +853,24 @@ export default {
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
         const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade;
         const base=analyses[1];
+        const blockedReasons=[];
+        if(analyses.some(a=>a.signal==="NO_TRADE"&&a.proposed_signal!=="NO_TRADE"))
+          blockedReasons.push("At least one timeframe produced a directional candidate that failed its market-regime quality gate.");
+        if(!regimes[1].tradeable) blockedReasons.push("60m regime blocks entries: "+regimes[1].reason);
+        if(intraday==="NO_TRADE") blockedReasons.push("60m timeframe has no qualified directional setup.");
+        else if(!shortAligned) blockedReasons.push("15m and 60m directional signals disagree.");
+        if(!trendAligned) blockedReasons.push("EMA trend is not aligned across 15m, 60m and daily timeframes.");
+        const qualityChecks=[
+          {id:"15m_signal",passed:analyses[0].signal!=="NO_TRADE"&&analyses[0].signal===intraday},
+          {id:"60m_signal",passed:intraday!=="NO_TRADE"},
+          {id:"daily_trend",passed:trendAligned},
+          {id:"60m_market_regime",passed:regimeAllowsTrade}
+        ];
         const result={
           signal:aligned?intraday:"NO_TRADE",
+          signal_quality:{status:aligned?"PASSED":"BLOCKED",checks:qualityChecks,
+            passed_checks:qualityChecks.filter(x=>x.passed).length,
+            required_checks:qualityChecks.length,blocked_reasons:blockedReasons},
           confidence:aligned?Math.min(analyses[0].confidence,analyses[1].confidence,analyses[2].confidence):0,
           confidence_type:"multi_timeframe_alignment_score_not_probability",
           trend:base.trend,rsi_14:base.rsi_14,macd_histogram:base.macd_histogram,atr_14:base.atr_14,
@@ -862,7 +880,7 @@ export default {
           market_provider:"XAUS",market_source_url:"https://xaus.com/api/v1/chart",
           last_candle_at:markets[1].last_candle_at,
           market_regime:regimes[1],
-          reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","60m market regime is trending and volatility is within limits","Entry levels use the 60m candle"]:[!regimes[1].tradeable?regimes[1].reason:"Signal or EMA trend is not aligned across 15m, 60m and daily charts; wait for confirmation."],
+          reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","60m market regime is trending and volatility is within limits","Entry levels use the 60m candle"]:blockedReasons,
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
         };
