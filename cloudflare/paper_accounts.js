@@ -245,7 +245,8 @@ export class PaperAccount extends DurableObject {
     let ledgerChange=0,ledgerBalance=0;
     const ledgerByEvent=new Map(ledgerRows.map(row=>[row.event_id,row]));
     const accountEvent=ledgerByEvent.get("ACCOUNT_OPENED:"+account.account_id);
-    if(!accountEvent||!closeEnough(Number(accountEvent.amount),Number(account.starting_capital)))
+    if(!accountEvent||accountEvent.event_type!=="ACCOUNT_OPENED"||
+      !closeEnough(Number(accountEvent.amount),Number(account.starting_capital)))
       discrepancies.push({code:"ACCOUNT_OPENING_LEDGER_EVENT_MISSING_OR_INVALID"});
     for(const row of ledgerRows) {
       const amount=Number(row.amount),balanceAfter=Number(row.balance_after);
@@ -279,7 +280,8 @@ export class PaperAccount extends DurableObject {
         if(trade.closed_at!==null||trade.exit_price!==null||trade.realized_pnl!==null)
           discrepancies.push({code:"OPEN_TRADE_HAS_CLOSING_FIELDS",trade_id:trade.trade_id});
         const openEvent=ledgerByEvent.get("TRADE_OPENED:"+trade.trade_id);
-        if(!openEvent||!closeEnough(Number(openEvent.amount),-fees))
+        if(!openEvent||openEvent.event_type!=="TRADE_OPENED"||
+          !closeEnough(Number(openEvent.amount),-fees))
           discrepancies.push({code:"TRADE_OPEN_LEDGER_EVENT_MISSING_OR_INVALID",trade_id:trade.trade_id});
         if(notificationCounts.get(trade.trade_id+":TRADE_CLOSED")>0)
           discrepancies.push({code:"OPEN_TRADE_HAS_CLOSE_NOTIFICATION",trade_id:trade.trade_id});
@@ -302,7 +304,8 @@ export class PaperAccount extends DurableObject {
         const closeMetadata=(()=>{try{return JSON.parse(closeEvent?.metadata_json||"{}");}catch{return {};}})();
         const expectedCloseAmount=closeMetadata.legacy_backfill?realized:
           realized+(openEvent?-Number(openEvent.amount):0);
-        if(!closeEvent||!closeEnough(Number(closeEvent.amount),expectedCloseAmount))
+        if(!closeEvent||closeEvent.event_type!=="TRADE_CLOSED"||
+          !closeEnough(Number(closeEvent.amount),expectedCloseAmount))
           discrepancies.push({code:"TRADE_CLOSE_LEDGER_EVENT_MISSING_OR_INVALID",trade_id:trade.trade_id});
         const count=notificationCounts.get(trade.trade_id+":TRADE_CLOSED")||0;
         if(count!==1) discrepancies.push({code:count===0?"CLOSED_TRADE_NOTIFICATION_MISSING":"DUPLICATE_CLOSED_TRADE_NOTIFICATIONS",
@@ -327,7 +330,7 @@ export class PaperAccount extends DurableObject {
       integrity_note:ledgerImplemented?null:"Ledger contains pre-existing entries without a verifiable migration marker; reconciliation remains partial.",
       discrepancy_count:discrepancies.length,discrepancies,starting_capital:Number(account.starting_capital),
       derived_balance:Number.isFinite(expectedBalance)?Number(expectedBalance.toFixed(8)):null,
-      ledger:{events:ledgerRows.length,net_change:Number(ledgerChange.toFixed(8)),
+      ledger:{events:ledgerRows.length,net_change:Number((ledgerChange-Number(account.starting_capital)).toFixed(8)),
         recorded_running_balance:Number(ledgerBalance.toFixed(8)),
         status:ledgerImplemented?"ACTIVE":"PARTIAL_UNKNOWN",migration_status:ledgerStatus,
         mode:ledgerRows.length?"ACTIVE":"EMPTY"},
