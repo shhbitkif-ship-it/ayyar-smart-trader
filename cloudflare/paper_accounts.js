@@ -75,6 +75,10 @@ export class PaperAccount extends DurableObject {
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN strategy_id TEXT"); } catch {}
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN signal_id TEXT"); } catch {}
     try { this.ctx.storage.sql.exec("ALTER TABLE paper_trades ADD COLUMN signal_type TEXT"); } catch {}
+    // Legacy rows did not persist fee_bps. Infer a conservative rate from the recorded entry fee.
+    this.ctx.storage.sql.exec(
+      "UPDATE paper_trades SET fee_bps=MIN(1000,fees*10000/(quantity*entry_price)) WHERE fee_bps=0 AND fees>0 AND quantity>0 AND entry_price>0"
+    );
   }
 
   registerAccount(accountId, createdAt) {
