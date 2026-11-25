@@ -1304,7 +1304,7 @@ test("scheduled monitor checks every registered paper account using fresh comple
     const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env);
     assert.equal(result.status,"OK");
     assert.equal(result.accounts_checked,1);
-    assert.equal(result.closed_trades,1);
+    assert.equal(result.closed_trades,1,JSON.stringify(result));
     assert.equal(result.provider,"XAUS");
     assert.equal(result.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
