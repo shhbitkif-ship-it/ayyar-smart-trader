@@ -58,7 +58,7 @@ test("SQLite transaction rolls back a newly inserted trade when opening ledger w
     fee_bps: 5, idempotency_key: "idem-open-rollback"
   };
   await assert.rejects(
-    stub.createTrade(tokenHash, trade, "2026-11-25T08:01:00.000Z"),
+    async () => await stub.createTrade(tokenHash, trade, "2026-11-25T08:01:00.000Z"),
     /INJECTED_FAILURE_AFTER_OPEN_LEDGER_WRITE/
   );
   await stub.setFaultMode("none");
@@ -79,7 +79,7 @@ for (const fault of ["after-close-ledger", "after-close-notification"]) {
     await stub.setFaultMode(fault);
 
     await assert.rejects(
-      stub.closeTrade(tokenHash, tradeId, 110, 5, "2026-11-25T08:02:00.000Z"),
+      async () => await stub.closeTrade(tokenHash, tradeId, 110, 5, "2026-11-25T08:02:00.000Z"),
       new RegExp(fault === "after-close-ledger"
         ? "INJECTED_FAILURE_AFTER_LEDGER_WRITE"
         : "INJECTED_FAILURE_AFTER_NOTIFICATION_WRITE")
