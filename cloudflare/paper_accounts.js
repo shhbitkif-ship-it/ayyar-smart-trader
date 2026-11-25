@@ -306,7 +306,11 @@ export class PaperAccount extends DurableObject {
         const closeEvent=ledgerByEvent.get("TRADE_CLOSED:"+trade.trade_id);
         const openEvent=ledgerByEvent.get("TRADE_OPENED:"+trade.trade_id);
         const closeMetadata=(()=>{try{return JSON.parse(closeEvent?.metadata_json||"{}");}catch{return {};}})();
-        const expectedCloseAmount=closeMetadata.legacy_backfill?realized:
+        const legacyClose=closeMetadata.legacy_backfill===true;
+        if(!legacyClose&&(!openEvent||openEvent.event_type!=="TRADE_OPENED"||
+          !Number.isFinite(Number(openEvent.amount))||Number(openEvent.amount)>0))
+          discrepancies.push({code:"TRADE_OPEN_LEDGER_EVENT_MISSING_OR_INVALID",trade_id:trade.trade_id});
+        const expectedCloseAmount=legacyClose?realized:
           realized+(openEvent?-Number(openEvent.amount):0);
         if(!closeEvent||closeEvent.event_type!=="TRADE_CLOSED"||
           !closeEnough(Number(closeEvent.amount),expectedCloseAmount))
