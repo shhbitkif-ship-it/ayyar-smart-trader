@@ -150,6 +150,49 @@ function runBacktest(payload) {
     warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
 }
 
+function buildWalkForwardRegimeDiagnostics(candles,testStart,testEnd,equityCurve,trades) {
+  const groups=new Map(),regimeByEntryTime=new Map();
+  const ensure=regime=>{
+    if(!groups.has(regime)) groups.set(regime,{regime,bars:0,equity_change_attribution:0,
+      trade_count:0,winning_trades:0,net_trade_pnl:0,trade_return_sum:0});
+    return groups.get(regime);
+  };
+  let firstBarRegime=null,lastBarRegime=null;
+  for(let index=testStart;index<testEnd;index++){
+    // The label for a fill at this candle's open uses only the preceding
+    // completed candle history. The current candle is deliberately excluded.
+    const priorHistory=candles.slice(0,index);
+    const regime=classifyMarketRegime(priorHistory).status||"UNAVAILABLE";
+    const timestamp=new Date(Date.parse(candles[index].timestamp)).toISOString();
+    regimeByEntryTime.set(timestamp,regime);
+    if(firstBarRegime===null) firstBarRegime=regime;
+    lastBarRegime=regime;
+    const group=ensure(regime);
+    group.bars++;
+    const before=equityCurve[index-testStart]?.equity;
+    const after=equityCurve[index-testStart+1]?.equity;
+    if(Number.isFinite(before)&&Number.isFinite(after)) group.equity_change_attribution+=after-before;
+  }
+  for(const trade of trades){
+    const regime=regimeByEntryTime.get(trade.entry_time)||"UNAVAILABLE";
+    const group=ensure(regime);
+    group.trade_count++;
+    if(Number(trade.pnl)>0) group.winning_trades++;
+    group.net_trade_pnl+=Number(trade.pnl)||0;
+    group.trade_return_sum+=Number(trade.return_pct)||0;
+  }
+  const buckets=[...groups.values()].map(group=>({
+    regime:group.regime,bars:group.bars,
+    bar_share_pct:round2((group.bars/(testEnd-testStart))*100),
+    equity_change_attribution:round2(group.equity_change_attribution),
+    trade_count:group.trade_count,winning_trades:group.winning_trades,
+    win_rate_pct:group.trade_count?round2(group.winning_trades/group.trade_count*100):0,
+    net_trade_pnl:round2(group.net_trade_pnl),
+    average_trade_return_pct:group.trade_count?round4(group.trade_return_sum/group.trade_count):null
+  })).sort((a,b)=>b.bars-a.bars||a.regime.localeCompare(b.regime));
+  return {first_bar_regime:firstBarRegime,last_bar_regime:lastBarRegime,buckets};
+}
+
 function runWalkForward(payload) {
   if(!payload||!Array.isArray(payload.candles)||payload.candles.length<180||payload.candles.length>5000)
     throw new Error("Walk-forward evaluation requires 180 to 5000 OHLC candles");
@@ -191,6 +234,8 @@ function runWalkForward(payload) {
       slow_period:best.slow_period,starting_capital:starting,...stressCosts,evaluation_start_index:trainEnd});
     compounded*=test.final_equity/starting;
     stressedCompounded*=stressedTest.final_equity/starting;
+    const regimeDiagnostics=buildWalkForwardRegimeDiagnostics(
+      candles,trainEnd,testEnd,test.equity_curve,test.trades);
     totalTrades+=test.closed_trades;
     weightedWins+=test.closed_trades*test.win_rate_pct/100;
     maxDrawdown=Math.max(maxDrawdown,test.max_drawdown_pct);
@@ -207,8 +252,31 @@ function runWalkForward(payload) {
       first_test_fill_included:true,out_of_sample_drawdown_pct:test.max_drawdown_pct,
       stressed_out_of_sample_drawdown_pct:stressedTest.max_drawdown_pct,
       out_of_sample_trades:test.closed_trades,out_of_sample_win_rate_pct:test.win_rate_pct,
-      out_of_sample_profit_factor:test.profit_factor});
+      out_of_sample_profit_factor:test.profit_factor,
+      regime_diagnostics:regimeDiagnostics});
   }
+  const regimeTotals=new Map();
+  for(const fold of folds) for(const bucket of fold.regime_diagnostics.buckets){
+    if(!regimeTotals.has(bucket.regime)) regimeTotals.set(bucket.regime,{
+      regime:bucket.regime,bars:0,equity_change_attribution:0,trade_count:0,
+      winning_trades:0,net_trade_pnl:0,trade_return_sum:0});
+    const total=regimeTotals.get(bucket.regime);
+    total.bars+=bucket.bars;
+    total.equity_change_attribution+=bucket.equity_change_attribution;
+    total.trade_count+=bucket.trade_count;
+    total.winning_trades+=bucket.winning_trades;
+    total.net_trade_pnl+=bucket.net_trade_pnl;
+    total.trade_return_sum+=(bucket.average_trade_return_pct??0)*bucket.trade_count;
+  }
+  const regimeBuckets=[...regimeTotals.values()].map(group=>({
+    regime:group.regime,bars:group.bars,
+    bar_share_pct:round2(group.bars/(n-boundaries[0])*100),
+    equity_change_attribution:round2(group.equity_change_attribution),
+    trade_count:group.trade_count,winning_trades:group.winning_trades,
+    win_rate_pct:group.trade_count?round2(group.winning_trades/group.trade_count*100):0,
+    net_trade_pnl:round2(group.net_trade_pnl),
+    average_trade_return_pct:group.trade_count?round4(group.trade_return_sum/group.trade_count):null
+  })).sort((a,b)=>b.bars-a.bars||a.regime.localeCompare(b.regime));
   const foldReturns=folds.map(f=>f.out_of_sample_return_pct);
   const positiveFolds=foldReturns.filter(v=>v>0).length;
   const negativeFolds=foldReturns.filter(v=>v<0).length;
@@ -226,6 +294,9 @@ function runWalkForward(payload) {
     timeframe_minutes:continuity.timeframe_minutes,timeframe_inferred:continuity.timeframe_inferred,
     data_quality:{status:continuity.status,gap_count:continuity.gap_count,
       misaligned_interval_count:continuity.misaligned_interval_count},
+    regime_diagnostics:{method:"retrospective bar and trade attribution using classifyMarketRegime on candles completed before each test candle opens",
+      lookahead_used:false,buckets:regimeBuckets,
+      note:"Regime labels are descriptive diagnostics, not predictive signals. Equity change is attributed to the regime known before each bar; trades are grouped by regime at entry."},
     folds,fold_count:folds.length,starting_capital:round2(starting),
     compounded_out_of_sample_return_pct:round4((compounded-1)*100),
     stress_test:{method:"same out-of-sample folds and training-selected parameters; transaction costs doubled; no reselection",
