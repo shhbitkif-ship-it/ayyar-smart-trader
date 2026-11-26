@@ -134,3 +134,7 @@ The candle provider chain prefers XAUS chart data and falls back to BIQUOTE XAUU
 ## Signal quality gate
 
 Directional technical confluence is now only a candidate, not an automatic signal. The engine also classifies the completed-candle market regime and blocks BUY/SELL when volatility is excessive, the market is ranging, or trend structure is transitional. Responses expose the proposed direction, final signal, regime metrics, and explicit block reason. A blocked setup returns `NO_TRADE` and zero confidence; the underlying confluence score is reported separately and is not a probability. This is a deterministic safety filter, not a guarantee of better returns. Execution remains disabled.
+
+## Backtest continuity and provider provenance
+
+Historical EMA and walk-forward backtests now validate timestamp continuity before calculating returns. Missing or irregular intervals are rejected rather than bridged; live backtests receive the provider's declared interval, while manually supplied series report when the interval was inferred from timestamps. Multi-timeframe signal responses report the actual provider used for each timeframe, including BIQUOTE fallback reason and source URL, rather than labeling every timeframe as XAUS. Archived signal provenance is provider-neutral and preserves compatibility with older XAUS records. These checks improve traceability and prevent misleading backtest results; they do not establish strategy profitability.
