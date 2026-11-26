@@ -29,6 +29,32 @@ function ema(values, period) {
   for (const value of values.slice(period)) out.push(alpha*value + (1-alpha)*out[out.length-1]);
   return out;
 }
+function inspectCandleContinuity(candles, requestedTimeframeMinutes) {
+  if(!Array.isArray(candles)||candles.length<2)
+    return {status:"INSUFFICIENT_DATA",timeframe_minutes:null,timeframe_inferred:false};
+  const deltas=candles.slice(1).map((c,i)=>Date.parse(c.timestamp)-Date.parse(candles[i].timestamp));
+  if(deltas.some(delta=>!Number.isFinite(delta)||delta<=0))
+    return {status:"MISALIGNED",timeframe_minutes:null,timeframe_inferred:false};
+  const inferred=requestedTimeframeMinutes===undefined||requestedTimeframeMinutes===null;
+  const timeframeMinutes=inferred?Math.min(...deltas)/60000:Number(requestedTimeframeMinutes);
+  if(!Number.isFinite(timeframeMinutes)||timeframeMinutes<=0||timeframeMinutes>10080)
+    throw new Error("timeframe_minutes must be positive and no greater than 10080");
+  const intervalMs=timeframeMinutes*60000;
+  let gaps=0,misaligned=0,largestGapIntervals=0;
+  for(const delta of deltas){
+    const count=Math.round(delta/intervalMs);
+    if(count<1||Math.abs(delta-count*intervalMs)>Math.max(1000,intervalMs*0.01)){
+      misaligned++;
+      continue;
+    }
+    if(count!==1){gaps++;largestGapIntervals=Math.max(largestGapIntervals,count-1);}
+  }
+  return {status:misaligned?"MISALIGNED":gaps?"GAPPED":"CLEAN",
+    timeframe_minutes:timeframeMinutes,timeframe_inferred:inferred,
+    gap_count:gaps,misaligned_interval_count:misaligned,
+    largest_gap_intervals:largestGapIntervals};
+}
+
 function runBacktest(payload) {
   const fastPeriod=Number(payload?.fast_period??20);
   const slowPeriod=Number(payload?.slow_period??50);
@@ -46,6 +72,9 @@ function runBacktest(payload) {
   }).sort((a,b)=>a.timestamp-b.timestamp);
   if (candles.some((c,i)=>i>0 && c.timestamp===candles[i-1].timestamp))
     throw new Error("Candle timestamps must be unique");
+  const continuity=inspectCandleContinuity(candles,payload.timeframe_minutes);
+  if(continuity.status!=="CLEAN")
+    throw new Error("Backtest candle history is "+continuity.status.toLowerCase()+"; missing or irregular intervals are not bridged");
   const starting = Number(payload.starting_capital ?? 10000);
   const fee = Number(payload.fee_bps ?? 10);
   const slippage = Number(payload.slippage_bps ?? 5);
@@ -103,6 +132,10 @@ function runBacktest(payload) {
     execution:"Signal confirmed at candle close; orders filled at next candle open",
     evaluation_start_index:evaluationStart,evaluation_start_at:candles[evaluationStart].iso,
     cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
+    timeframe_minutes:continuity.timeframe_minutes,timeframe_inferred:continuity.timeframe_inferred,
+    data_quality:{status:continuity.status,gap_count:continuity.gap_count,
+      misaligned_interval_count:continuity.misaligned_interval_count,
+      largest_gap_intervals:continuity.largest_gap_intervals},
     starting_capital:round2(starting),final_equity:round2(finalEquity),
     net_return_pct:round4((finalEquity/starting-1)*100),
     max_drawdown_pct:round4(maxDrawdown*100),closed_trades:trades.length,
@@ -118,6 +151,9 @@ function runWalkForward(payload) {
   if(!payload||!Array.isArray(payload.candles)||payload.candles.length<180||payload.candles.length>5000)
     throw new Error("Walk-forward evaluation requires 180 to 5000 OHLC candles");
   const candles=[...payload.candles].sort((a,b)=>Date.parse(a?.timestamp)-Date.parse(b?.timestamp));
+  const continuity=inspectCandleContinuity(candles,payload.timeframe_minutes);
+  if(continuity.status!=="CLEAN")
+    throw new Error("Walk-forward candle history is "+continuity.status.toLowerCase()+"; missing or irregular intervals are not bridged");
   const candidates=[[9,21],[12,26],[20,50]];
   const starting=Number(payload.starting_capital??10000);
   const fee=Number(payload.fee_bps??10),slippage=Number(payload.slippage_bps??5);
@@ -157,6 +193,9 @@ function runWalkForward(payload) {
       out_of_sample_profit_factor:test.profit_factor});
   }
   return {method:"expanding-window walk-forward; each fold selects among EMA 9/21, 12/26, 20/50 using past data only",
+    timeframe_minutes:continuity.timeframe_minutes,timeframe_inferred:continuity.timeframe_inferred,
+    data_quality:{status:continuity.status,gap_count:continuity.gap_count,
+      misaligned_interval_count:continuity.misaligned_interval_count},
     folds,fold_count:folds.length,starting_capital:round2(starting),
     compounded_out_of_sample_return_pct:round4((compounded-1)*100),
     worst_fold_drawdown_pct:round4(maxDrawdown),total_out_of_sample_trades:totalTrades,
