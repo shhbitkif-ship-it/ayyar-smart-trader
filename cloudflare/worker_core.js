@@ -532,7 +532,9 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   const providerSymbol = CANDLE_SYMBOLS.get(symbol);
   const intervalSeconds = CANDLE_INTERVALS.get(interval);
   if (!providerSymbol || !intervalSeconds) throw new Error("Unsupported candle symbol or interval");
-  const range = interval === "1d" ? "3mo" : "5d";
+  // The 60m signal archive retains 90 days; fetch enough hourly history
+  // to evaluate that same retention window instead of silently limiting stats to 5 days.
+  const range = interval === "1d" || interval === "60m" ? "3mo" : "5d";
   const endpoint = "https://xaus.com/api/v1/chart?symbol=" +
     encodeURIComponent(providerSymbol) + "&range=" + range + "&interval=" + interval;
   const response = await fetch(endpoint, {
