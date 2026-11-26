@@ -10,9 +10,11 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     base=dict(symbol=request.symbol.upper(),evaluated_at=now,entry=None,stop_loss=None,take_profit_1=None,risk_reward=None,analysis={})
     if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in request.candles):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Every market candle timestamp must include a timezone.")
-    candles=sorted(request.candles,key=lambda x:x.timestamp)
+    candles=list(request.candles)
     if any(candles[i].timestamp == candles[i + 1].timestamp for i in range(len(candles)-1)):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Duplicate market candle timestamps detected.")
+    if any(candles[i].timestamp > candles[i + 1].timestamp for i in range(len(candles)-1)):
+        return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Market candle timestamps are out of order; input history must be strictly chronological.")
     # Check series integrity before checking the latest candle's age.
     # Daily/4h series are exempt because weekends and market closures are normal.
     if request.timeframe in {"1m", "5m", "15m", "30m", "1h"}:
