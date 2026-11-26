@@ -784,6 +784,20 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
     assert.deepEqual(body.signal_quality.blocked_reasons,[]);
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
+
+    // Independently reproduce Wilder ATR(14) from raw OHLC candles.
+    const reference=candlesByInterval["60m"];
+    const trueRanges=reference.slice(1).map((c,i)=>Math.max(
+      c.high-c.low,Math.abs(c.high-reference[i].close),Math.abs(c.low-reference[i].close)));
+    let expectedAtr=trueRanges.slice(0,14).reduce((sum,value)=>sum+value,0)/14;
+    for(let i=14;i<trueRanges.length;i++) expectedAtr=(expectedAtr*13+trueRanges[i])/14;
+    const hourly=body.timeframes["60m"];
+    assert.ok(Math.abs(hourly.atr_14-expectedAtr)<0.000001,
+      `ATR mismatch: got ${hourly.atr_14}, expected ${expectedAtr}`);
+    assert.ok(Math.abs((hourly.entry-hourly.stop_loss)-expectedAtr*1.5)<0.00001);
+    assert.ok(Math.abs((hourly.take_profit-hourly.entry)-expectedAtr*3)<0.00001);
+    assert.ok(hourly.stop_loss>0&&hourly.stop_loss<hourly.entry);
+    assert.ok(hourly.take_profit>hourly.entry);
   } finally { globalThis.fetch=originalFetch; }
 });
 
