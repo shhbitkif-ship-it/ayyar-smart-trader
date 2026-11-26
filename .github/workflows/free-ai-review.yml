@@ -118,9 +118,9 @@ jobs:
               body={
                 "model":model,
                 "temperature":0.1,
-                "max_tokens":1800,
+                "max_tokens":1100,
                 "messages":[
-                  {"role":"system","content":"You are a skeptical senior code reviewer for a paper-trading-only market analytics system. Do not invent runtime facts. Separate verified findings from hypotheses. For every finding include severity, file/area, evidence from the patch, impact, and a testable fix. Never recommend enabling live execution."},
+                  {"role":"system","content":"You are a skeptical senior code reviewer for a paper-trading-only market analytics system. Review only the supplied diff. Do not invent runtime facts. Separate verified findings from hypotheses. Treat [REDACTED] and __GHA_EXPRESSION_n__ markers as sanitization placeholders, not literal source syntax; do not report syntax defects based only on those markers. If source context is insufficient, say so. Return at most 5 concise findings; for each include severity, file/area, evidence, impact, and a testable fix. Never recommend enabling live execution."},
                   {"role":"user","content":f"Role: {role}. Task: {instruction}\nReview only this pull-request patch. State limitations if context is insufficient.\n\nPATCH:\n{patch}"}
                 ]
               }
@@ -150,12 +150,16 @@ jobs:
                       raise SystemExit(f"Groq chat request failed for model {model}: HTTP {e.code}: {detail[:1200]}")
               raise SystemExit(f"Groq chat request exhausted retries for model {model}.")
           reports=[]
-          for role,instruction in roles:
+          import time
+          for index,(role,instruction) in enumerate(roles):
               reports.append((role,ask(os.environ["GROQ_REVIEW_MODEL"],role,instruction)))
+              if index < len(roles)-1:
+                  time.sleep(30)  # Stay within the free-tier rolling TPM window.
+          time.sleep(30)
           reports.append(("Independent cross-check (Qwen)",ask(
               os.environ["GROQ_CROSSCHECK_MODEL"],
               "Independent skeptical reviewer",
-              "Challenge the prior assumptions by reviewing the same patch independently. Focus on missed edge cases, false positives, and whether any claim lacks evidence."
+              "Challenge the prior assumptions by reviewing the same patch independently. Focus on missed edge cases, false positives, and unsupported claims. Return only the most important issues."
           )))
           with open("ai-review-report.md","w",encoding="utf-8") as f:
               f.write("# Ayyar Smart Trader — AI specialist review\n\n")
