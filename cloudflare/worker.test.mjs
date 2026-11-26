@@ -729,6 +729,51 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("multi-timeframe signal reports the actual BIQUOTE fallback provider per timeframe", async () => {
+  const originalFetch=globalThis.fetch;
+  const candlesByInterval={};
+  for(const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]){
+    const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+    let close=2600;
+    candlesByInterval[interval]=Array.from({length:count},(_,i)=>{
+      const previous=close;close+=i%2===0?0.5:-0.3;if(i===count-1)close=previous+0.5;
+      return {timestamp:new Date(lastClosed-(count-1-i)*intervalMs).toISOString(),
+        open:previous,high:Math.max(previous,close)+0.2,
+        low:Math.min(previous,close)-0.2,close};
+    });
+  }
+  globalThis.fetch=async target=>{
+    const url=new URL(String(target));
+    if(url.hostname==="xaus.com"){
+      const interval=url.searchParams.get("interval");
+      if(interval==="15m"){
+        const stale=xausChartFixture(candlesByInterval[interval]);
+        stale.data_state={status:"stale",as_of:"2020-01-01T00:00:00.000Z",age_seconds:999999};
+        return new Response(JSON.stringify(stale),{status:200,headers:{"content-type":"application/json"}});
+      }
+      return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    if(url.hostname==="biquote.io"){
+      const bars=candlesByInterval["15m"].map(c=>({openTime:c.timestamp,open:c.open,
+        high:c.high,low:c.low,close:c.close,isOpen:false}));
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    throw new Error("Unexpected provider URL "+url.href);
+  };
+  try{
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.market_provider,"BIQUOTE+XAUS");
+    assert.equal(body.market_sources.find(x=>x.interval==="15m").provider,"BIQUOTE");
+    assert.match(body.market_sources.find(x=>x.interval==="15m").fallback_reason,/XAUS OHLC provider data state is stale/i);
+    assert.equal(body.market_sources.find(x=>x.interval==="60m").provider,"XAUS");
+    assert.equal(body.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps", async () => {
   const originalFetch=globalThis.fetch;
   const candlesByInterval={};
