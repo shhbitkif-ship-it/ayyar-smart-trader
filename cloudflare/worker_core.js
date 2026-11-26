@@ -150,19 +150,50 @@ function runBacktest(payload) {
     warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
 }
 
-function buildWalkForwardRegimeDiagnostics(candles,testStart,testEnd,equityCurve,trades) {
+function precomputeWalkForwardRegimes(candles) {
+  const closes=candles.map(c=>Number(c.close));
+  const fast=ema(closes,20),slow=ema(closes,50);
+  const trueRangePrefix=new Array(candles.length+1).fill(0);
+  for(let i=1;i<candles.length;i++){
+    const previous=closes[i-1],candle=candles[i];
+    const trueRange=Math.max(Number(candle.high)-Number(candle.low),
+      Math.abs(Number(candle.high)-previous),Math.abs(Number(candle.low)-previous));
+    trueRangePrefix[i+1]=trueRangePrefix[i]+trueRange;
+  }
+  const regimes=new Array(candles.length);
+  for(let openIndex=0;openIndex<candles.length;openIndex++){
+    const end=openIndex-1;
+    if(end<59){regimes[openIndex]={status:"INSUFFICIENT_DATA"};continue;}
+    const lastClose=closes[end];
+    const atr=(trueRangePrefix[end+1]-trueRangePrefix[end-14])/15;
+    const atrPct=atr/lastClose*100;
+    const spreadPct=Math.abs(fast[end]-slow[end])/lastClose*100;
+    const slopePct=(fast[end]-fast[end-1])/lastClose*100;
+    const trend=fast[end]>slow[end]?"BULLISH":fast[end]<slow[end]?"BEARISH":"NEUTRAL";
+    let status="TRANSITIONAL";
+    if(![atrPct,spreadPct,slopePct].every(Number.isFinite)||atrPct<=0) status="UNAVAILABLE";
+    else if(atrPct>1.5) status="HIGH_VOLATILITY";
+    else if(spreadPct<0.04&&Math.abs(slopePct)<0.0015) status="RANGE";
+    else if(spreadPct>=0.04&&((trend==="BULLISH"&&slopePct>0)||(trend==="BEARISH"&&slopePct<0))) status="TRENDING";
+    regimes[openIndex]={status,atr_pct:atrPct,ema_spread_pct:spreadPct,ema20_slope_pct:slopePct};
+  }
+  return regimes;
+}
+
+function buildWalkForwardRegimeDiagnostics(candles,testStart,testEnd,equityCurve,trades,regimeSeries) {
   const groups=new Map(),regimeByEntryTime=new Map();
   const ensure=regime=>{
     if(!groups.has(regime)) groups.set(regime,{regime,bars:0,equity_change_attribution:0,
-      trade_count:0,winning_trades:0,net_trade_pnl:0,trade_return_sum:0});
+      trade_count:0,winning_trades:0,net_trade_pnl:0,trade_return_sum:0,
+      atr_pct_sum:0,ema_spread_pct_sum:0,ema20_slope_pct_sum:0,indicator_count:0});
     return groups.get(regime);
   };
   let firstBarRegime=null,lastBarRegime=null;
   for(let index=testStart;index<testEnd;index++){
     // The label for a fill at this candle's open uses only the preceding
     // completed candle history. The current candle is deliberately excluded.
-    const priorHistory=candles.slice(0,index);
-    const regime=classifyMarketRegime(priorHistory).status||"UNAVAILABLE";
+    const snapshot=regimeSeries[index]||{status:"UNAVAILABLE"};
+    const regime=snapshot.status||"UNAVAILABLE";
     const timestamp=new Date(Date.parse(candles[index].timestamp)).toISOString();
     regimeByEntryTime.set(timestamp,regime);
     if(firstBarRegime===null) firstBarRegime=regime;
@@ -172,6 +203,12 @@ function buildWalkForwardRegimeDiagnostics(candles,testStart,testEnd,equityCurve
     const before=equityCurve[index-testStart]?.equity;
     const after=equityCurve[index-testStart+1]?.equity;
     if(Number.isFinite(before)&&Number.isFinite(after)) group.equity_change_attribution+=after-before;
+    if([snapshot.atr_pct,snapshot.ema_spread_pct,snapshot.ema20_slope_pct].every(Number.isFinite)){
+      group.atr_pct_sum+=snapshot.atr_pct;
+      group.ema_spread_pct_sum+=snapshot.ema_spread_pct;
+      group.ema20_slope_pct_sum+=snapshot.ema20_slope_pct;
+      group.indicator_count++;
+    }
   }
   for(const trade of trades){
     const regime=regimeByEntryTime.get(trade.entry_time)||"UNAVAILABLE";
@@ -184,6 +221,9 @@ function buildWalkForwardRegimeDiagnostics(candles,testStart,testEnd,equityCurve
   const buckets=[...groups.values()].map(group=>({
     regime:group.regime,bars:group.bars,
     bar_share_pct:round2((group.bars/(testEnd-testStart))*100),
+    average_atr_pct:group.indicator_count?round4(group.atr_pct_sum/group.indicator_count):null,
+    average_ema_spread_pct:group.indicator_count?round4(group.ema_spread_pct_sum/group.indicator_count):null,
+    average_ema20_slope_pct:group.indicator_count?round4(group.ema20_slope_pct_sum/group.indicator_count):null,
     equity_change_attribution:round2(group.equity_change_attribution),
     trade_count:group.trade_count,winning_trades:group.winning_trades,
     win_rate_pct:group.trade_count?round2(group.winning_trades/group.trade_count*100):0,
@@ -213,6 +253,7 @@ function runWalkForward(payload) {
   const boundaries=[Math.floor(n*0.55),Math.floor(n*0.70),Math.floor(n*0.85)];
   let compounded=1,stressedCompounded=1,totalTrades=0,weightedWins=0,maxDrawdown=0;
   const stressCosts={fee_bps:Math.min(500,fee*2),slippage_bps:Math.min(500,slippage*2),spread_bps:Math.min(500,spread*2)};
+  const regimeSeries=precomputeWalkForwardRegimes(candles);
   const folds=[];
   for(let i=0;i<boundaries.length;i++){
     const trainEnd=boundaries[i],testEnd=i+1<boundaries.length?boundaries[i+1]:n;
@@ -235,7 +276,7 @@ function runWalkForward(payload) {
     compounded*=test.final_equity/starting;
     stressedCompounded*=stressedTest.final_equity/starting;
     const regimeDiagnostics=buildWalkForwardRegimeDiagnostics(
-      candles,trainEnd,testEnd,test.equity_curve,test.trades);
+      candles,trainEnd,testEnd,test.equity_curve,test.trades,regimeSeries);
     totalTrades+=test.closed_trades;
     weightedWins+=test.closed_trades*test.win_rate_pct/100;
     maxDrawdown=Math.max(maxDrawdown,test.max_drawdown_pct);
