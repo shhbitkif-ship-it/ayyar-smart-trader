@@ -348,9 +348,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
     }
     if(selectedTab==3) {
          item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-         item { 
-         }
-RiskCalculator() }
+         item { RiskCalculator() }
     }
    }
   }
