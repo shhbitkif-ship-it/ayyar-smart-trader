@@ -934,6 +934,7 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(body.horizons.find(x=>x.horizon_candles===1).scored,1);
     assert.equal(body.horizons.find(x=>x.horizon_candles===4).scored,1);
     assert.equal(body.horizons.find(x=>x.horizon_candles===24).scored,1);
+    assert.ok(body.horizons.every(x=>x.pending===0&&x.unavailable===0));
     assert.equal(body.outcomes[0].outcomes[1].entry_price,candles[11].open);
     assert.equal(body.outcomes[0].outcomes[1].entry_basis,"next_completed_candle_open");
     assert.equal(body.execution_enabled,false);
@@ -950,6 +951,15 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(gapBody.outcomes[0].outcomes[1].status,"DATA_GAP");
     assert.equal(gapBody.horizons.find(x=>x.horizon_candles===1).scored,0);
     assert.equal(gapBody.horizons.find(x=>x.horizon_candles===4).scored,0);
+    assert.equal(gapBody.horizons.find(x=>x.horizon_candles===1).unavailable,1);
+    assert.equal(gapBody.horizons.find(x=>x.horizon_candles===4).unavailable,1);
+    store.set("xau:latest:sample",{...store.get("xau:latest:sample"),
+      last_candle_at:candles.at(-1).timestamp,
+      recorded_at:new Date(Date.parse(candles.at(-1).timestamp)+1000).toISOString()});
+    const pendingResponse=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    const pendingBody=await pendingResponse.json();
+    assert.equal(pendingResponse.status,200);
+    assert.ok(pendingBody.horizons.every(x=>x.pending===1&&x.unavailable===0));
   } finally { globalThis.fetch=originalFetch; }
 });
 
