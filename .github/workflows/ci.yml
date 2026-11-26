@@ -132,7 +132,9 @@ jobs:
               "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?range=5d&interval=15m",
               "yahoo_gc_f_15m": "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=1d&interval=15m",
               "stooq_xauusd_daily": "https://stooq.com/q/d/l/?s=xauusd&i=d",
-              "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=20"
+              "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=200",
+              "biquote_xauusd_1h": "https://biquote.io/api/XAUUSD/ohlc?interval=1h&limit=200",
+              "biquote_xauusd_1d": "https://biquote.io/api/XAUUSD/ohlc?interval=1d&limit=200"
           }
           probe_results = {}
           for name, url in probes.items():
