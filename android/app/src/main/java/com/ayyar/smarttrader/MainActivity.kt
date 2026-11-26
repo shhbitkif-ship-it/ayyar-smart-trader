@@ -80,6 +80,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme {
   var selectedTab by remember { mutableIntStateOf(0) }
+  var selectedAnalysisTab by remember { mutableIntStateOf(0) }
   Scaffold(
    containerColor=bg,
    bottomBar={
@@ -147,6 +148,14 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          item { PaperAccountCard() }
     }
     if(selectedTab==2) {
+         item {
+          ScrollableTabRow(selectedTabIndex=selectedAnalysisTab,edgePadding=0.dp,containerColor=bg,contentColor=gold) {
+           listOf("سیگنال","آرشیو","کارنامه","بک‌تست","مقایسه","Walk-forward").forEachIndexed { index,label ->
+            Tab(selected=selectedAnalysisTab==index,onClick={selectedAnalysisTab=index},text={Text(label,maxLines=1)})
+           }
+          }
+         }
+         if(selectedAnalysisTab==0) {
          item { Text("سوابق سیگنال‌های ذخیره‌شده",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("آرشیو سیگنال‌های چندتایم‌فریمی اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -170,6 +179,9 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             }
             OutlinedButton(onClick={archiveRefresh++},modifier=Modifier.fillMaxWidth()){Text("دریافت تاریخچه سیگنال‌ها")}
          } } }
+
+         }
+         if(selectedAnalysisTab==1) {
          item { Text("کارنامه واقعی سیگنال‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("ارزیابی پس از صدور سیگنال با کندل‌های بسته‌شده",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -208,6 +220,9 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             }
             OutlinedButton(onClick={performanceRefresh++},modifier=Modifier.fillMaxWidth()){Text(if(performanceRefresh==0) "محاسبه کارنامه سیگنال‌ها" else "به‌روزرسانی کارنامه")}
          } } }
+
+         }
+         if(selectedAnalysisTab==2) {
          item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("بک‌تست EMA روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -243,6 +258,9 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             }
             Button(onClick={backtestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(backtestRefresh==0) "اجرای بک‌تست با داده زنده" else "اجرای دوباره بک‌تست")}
          } } }
+
+         }
+         if(selectedAnalysisTab==3) {
          item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("EMA 9/21 • EMA 12/26 • EMA 20/50",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -266,6 +284,9 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             Button(onClick={compareRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("مقایسه استراتژی‌ها")}
             Text("تعداد کندل‌ها و طول نمونه در تایم‌فریم‌ها متفاوت است؛ این نتایج پیش‌بینی آینده نیستند و اجرای سفارش غیرفعال است.",color=muted,fontSize=10.sp)
          } } }
+
+         }
+         if(selectedAnalysisTab==4) {
          item { Text("آزمون خارج از نمونه Walk-forward",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("انتخاب استراتژی با داده‌های گذشته و ارزیابی روی بازه‌های بعدیِ دیده‌نشده",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -293,6 +314,9 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             Button(onClick={walkForwardRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("اجرای آزمون خارج از نمونه")}
             Text("این آزمون تضمین سود نیست؛ داده آموزشی در سود و زیان دوره آزمون وارد نمی‌شود و سفارش واقعی اجرا نمی‌شود.",color=muted,fontSize=10.sp)
          } } }
+
+         }
+         if(selectedAnalysisTab==5) {
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("موتور تحلیل اونس جهانی طلا • هم‌ترازی چندتایم‌فریمی",color=gold,fontWeight=FontWeight.Bold)
             when {
@@ -318,11 +342,16 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             }
             Text("منبع کندل: XAUS (XAU/USD). فقط اونس جهانی؛ برای طلای ۱۸ عیار و سکه ایران هنوز فید OHLC مستقل و معتبر متصل نشده است. امتیاز همگرایی احتمال موفقیت نیست. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=11.sp)
          } } }
+
+         }
+         if(selectedAnalysisTab==6) {
          item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
     }
     if(selectedTab==3) {
          item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-         item { RiskCalculator() }
+         item { 
+         }
+RiskCalculator() }
     }
    }
   }
