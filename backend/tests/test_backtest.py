@@ -15,17 +15,7 @@ def sample_candles():
             closes.append(2960 + (i - 70) * 5)
         else:
             closes.append(3160 - (i - 110) * 5)
-    return [
-        Candle(
-            timestamp=start + timedelta(days=i),
-            open=price,
-            high=price + 3,
-            low=price - 3,
-            close=price,
-            volume=100,
-        )
-        for i, price in enumerate(closes)
-    ]
+    return [Candle(timestamp=start + timedelta(days=i), open=price, high=price + 3, low=price - 3, close=price, volume=100) for i, price in enumerate(closes)]
 
 
 def test_backtest_uses_next_candle_and_returns_metrics():
@@ -62,28 +52,14 @@ def test_backtest_rejects_insufficient_history():
 def test_open_position_final_equity_includes_estimated_exit_costs():
     start = datetime(2025, 1, 1, tzinfo=timezone.utc)
     prices = [3100 - i * 2 if i < 70 else 2960 + (i - 70) * 5 for i in range(120)]
-    rising = [
-        Candle(
-            timestamp=start + timedelta(days=i),
-            open=price,
-            high=price + 3,
-            low=price - 3,
-            close=price,
-            volume=100,
-        )
-        for i, price in enumerate(prices)
-    ]
+    rising = [Candle(timestamp=start + timedelta(days=i), open=price, high=price + 3, low=price - 3, close=price, volume=100) for i, price in enumerate(prices)]
     no_cost = run_ema_backtest(rising, fee_bps=0, slippage_bps=0)
     with_cost = run_ema_backtest(rising, fee_bps=10, slippage_bps=5)
     assert no_cost["open_position"] is True
     assert with_cost["open_position"] is True
     assert with_cost["final_equity"] < no_cost["final_equity"]
     assert with_cost["equity_curve"][-1]["equity"] == with_cost["final_equity"]
-    assert any(
-        costly_point["equity"] < free_point["equity"]
-        for free_point, costly_point in zip(no_cost["equity_curve"], with_cost["equity_curve"])
-        if free_point["equity"] > no_cost["starting_capital"]
-    )
+    assert any(costly_point["equity"] < free_point["equity"] for free_point, costly_point in zip(no_cost["equity_curve"], with_cost["equity_curve"]) if free_point["equity"] > no_cost["starting_capital"])
 
 
 def test_equity_curve_marks_every_candle_for_drawdown_accuracy():
@@ -95,10 +71,8 @@ def test_equity_curve_marks_every_candle_for_drawdown_accuracy():
 
 
 @pytest.mark.parametrize("field,bad_value", [
-    ("starting_capital", float("nan")),
-    ("starting_capital", float("inf")),
-    ("fee_bps", float("nan")),
-    ("slippage_bps", float("inf")),
+    ("starting_capital", float("nan")), ("starting_capital", float("inf")),
+    ("fee_bps", float("nan")), ("slippage_bps", float("inf")),
 ])
 def test_backtest_request_rejects_non_finite_parameters(field, bad_value):
     values = {"candles": sample_candles()}
@@ -108,18 +82,29 @@ def test_backtest_request_rejects_non_finite_parameters(field, bad_value):
 
 
 @pytest.mark.parametrize("field,bad_value", [
-    ("starting_capital", float("inf")),
-    ("fee_bps", float("nan")),
-    ("slippage_bps", float("-inf")),
+    ("starting_capital", float("inf")), ("fee_bps", float("nan")), ("slippage_bps", float("-inf")),
 ])
 def test_backtest_engine_rejects_non_finite_parameters(field, bad_value):
-    kwargs = {field: bad_value}
     with pytest.raises(ValueError, match="finite"):
-        run_ema_backtest(sample_candles(), **kwargs)
+        run_ema_backtest(sample_candles(), **{field: bad_value})
 
 
 def test_backtest_rejects_duplicate_candle_timestamps():
     candles = sample_candles()
     candles[1] = candles[0].model_copy(update={"close": candles[0].close})
     with pytest.raises(ValueError, match="timestamps"):
+        run_ema_backtest(candles)
+
+
+def test_backtest_rejects_out_of_order_input_instead_of_silently_sorting():
+    candles = sample_candles()
+    candles[10], candles[11] = candles[11], candles[10]
+    with pytest.raises(ValueError, match="input order"):
+        run_ema_backtest(candles)
+
+
+def test_backtest_rejects_timezone_naive_timestamps():
+    candles = sample_candles()
+    candles[0] = candles[0].model_copy(update={"timestamp": datetime(2025, 1, 1)})
+    with pytest.raises(ValueError, match="timezone-aware"):
         run_ema_backtest(candles)
