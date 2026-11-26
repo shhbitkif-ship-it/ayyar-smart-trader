@@ -107,13 +107,26 @@ jobs:
                 "Content-Type":"application/json",
                 "User-Agent":"AyyarSmartTrader-Review/1.0"
               })
-              try:
-                  with urllib.request.urlopen(req,timeout=90) as r:
-                      data=json.load(r)
-              except urllib.error.HTTPError as e:
-                  detail=e.read(2000).decode("utf-8","replace")
-                  raise SystemExit(f"Groq chat request failed for model {model}: HTTP {e.code}: {detail[:1200]}")
-              return data["choices"][0]["message"]["content"]
+              # Free-tier TPM limits can be reached even when daily quota remains.
+              # Retry 429 responses with bounded backoff; never switch to a paid tier.
+              for attempt in range(5):
+                  try:
+                      with urllib.request.urlopen(req,timeout=90) as r:
+                          data=json.load(r)
+                      return data["choices"][0]["message"]["content"]
+                  except urllib.error.HTTPError as e:
+                      detail=e.read(2000).decode("utf-8","replace")
+                      if e.code == 429 and attempt < 4:
+                          import time
+                          wait=min(60, 15 * (2 ** attempt))
+                          match=re.search(r"try again in ([0-9.]+)s",detail,re.I)
+                          if match:
+                              wait=max(wait,float(match.group(1))+2)
+                          print(f"Groq rate limit for {model}; retry {attempt+1}/4 after {wait:.1f}s.")
+                          time.sleep(wait)
+                          continue
+                      raise SystemExit(f"Groq chat request failed for model {model}: HTTP {e.code}: {detail[:1200]}")
+              raise SystemExit(f"Groq chat request exhausted retries for model {model}.")
           reports=[]
           for role,instruction in roles:
               reports.append((role,ask(os.environ["GROQ_REVIEW_MODEL"],role,instruction)))
