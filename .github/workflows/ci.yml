@@ -129,9 +129,6 @@ jobs:
           assert monitor.get("mode") == "PAPER_ONLY", monitor
 
           probes = {
-              "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?range=5d&interval=15m",
-              "yahoo_gc_f_15m": "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=1d&interval=15m",
-              "stooq_xauusd_daily": "https://stooq.com/q/d/l/?s=xauusd&i=d",
               "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=200",
               "biquote_xauusd_1h": "https://biquote.io/api/XAUUSD/ohlc?interval=1h&limit=200",
               "biquote_xauusd_1d": "https://biquote.io/api/XAUUSD/ohlc?interval=1d&limit=200"
@@ -192,6 +189,13 @@ jobs:
                   candles = json.loads(response.read())
           except urllib.error.HTTPError as error:
               candles = json.loads(error.read().decode("utf-8", errors="replace"))
+
+          assert candles.get("status") == "LIVE", candles
+          assert candles.get("provider") in {"XAUS", "BIQUOTE"}, candles
+          assert len(candles.get("candles", [])) >= 60, candles
+          assert candles.get("data_quality", {}).get("status") in {"CLEAN", "GAPS_DETECTED"}, candles
+          if candles.get("provider") == "BIQUOTE":
+              assert candles.get("fallback_reason"), candles
 
           print(json.dumps({
               "health": health["status"],
