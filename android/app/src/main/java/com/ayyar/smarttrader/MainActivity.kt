@@ -79,7 +79,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
  val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme { Surface(Modifier.fillMaxSize(),color=bg){ LazyColumn(Modifier.fillMaxSize().padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.5",color=muted,fontSize=12.sp) }
+   item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.7",color=muted,fontSize=12.sp) }
    item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
       Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
@@ -649,23 +649,44 @@ private fun securePaperPrefs(context:Context)=run {
 }
 
 private fun paperApi(method:String,path:String,token:String?=null,body:JSONObject?=null):JSONObject {
- val safePaperPath=Regex(
-  "^/v1/paper/accounts/[a-f0-9]{32}(?:/(?:trades(?:/[a-f0-9]{32}/close)?|monitor|notifications|report/daily|report/performance\\?period=(?:week|month)|analytics/strategy|integrity))?$"
+ val accountCollectionPath="/v1/paper/accounts"
+ val safeAccountPath=Regex(
+  "^/v1/paper/accounts/[a-f0-9]{32}(?:/(?:trades(?:/[a-f0-9]{32}/close)?|monitor|notifications|report/daily|report/performance\\\\?period=(?:week|month)|analytics/strategy|integrity))?$"
  )
- require(path.matches(safePaperPath)) { "مسیر درخواست حساب آزمایشی معتبر نیست." }
+ val isCreateAccount=path==accountCollectionPath && method=="POST"
+ require(isCreateAccount || path.matches(safeAccountPath)) { "مسیر درخواست حساب آزمایشی معتبر نیست." }
  require(method in setOf("GET","POST")) { "روش درخواست حساب آزمایشی مجاز نیست." }
- val connection=URL(BuildConfig.API_BASE_URL+path).openConnection() as HttpURLConnection
- connection.requestMethod=method;connection.connectTimeout=10000;connection.readTimeout=15000
+ val baseUrl=URL(BuildConfig.API_BASE_URL)
+ require(baseUrl.protocol=="https" && baseUrl.host=="ayyar-smart-trader-api.ayyar-smart-trader.workers.dev" && baseUrl.path.trimEnd('/').isEmpty()) {
+  "نشانی امن سرور عیار معتبر نیست."
+ }
+ val connection=URL(baseUrl.toString().trimEnd('/')+path).openConnection() as HttpURLConnection
+ connection.requestMethod=method
+ connection.connectTimeout=10000
+ connection.readTimeout=15000
  connection.setRequestProperty("Accept","application/json")
- if(body!=null){connection.doOutput=true;connection.setRequestProperty("Content-Type","application/json");connection.outputStream.use{it.write(body.toString().toByteArray(Charsets.UTF_8))}}
  if(!token.isNullOrBlank()) connection.setRequestProperty("Authorization","Bearer "+token)
- try{
+ try {
+  if(body!=null) {
+   connection.doOutput=true
+   connection.setRequestProperty("Content-Type","application/json")
+   connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+  }
   val code=connection.responseCode
   val stream=if(code in 200..299) connection.inputStream else connection.errorStream
-  val result=JSONObject(stream.bufferedReader().use{it.readText()})
-  if(code !in 200..299) throw IllegalStateException(result.optString("error","HTTP $code"))
+  val responseText=stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+  val result=runCatching { if(responseText.isBlank()) JSONObject() else JSONObject(responseText) }.getOrElse {
+   if(code !in 200..299) throw IllegalStateException("خطای سرور (HTTP $code)")
+   throw IllegalStateException("پاسخ سرور معتبر نیست.")
+  }
+  if(code !in 200..299) {
+   val message=result.optString("error").ifBlank { result.optString("message") }.ifBlank { "خطای سرور (HTTP $code)" }
+   throw IllegalStateException(message)
+  }
   return result
- }finally{connection.disconnect()}
+ } finally {
+  connection.disconnect()
+ }
 }
 
 @Composable private fun PaperAccountCard(){
