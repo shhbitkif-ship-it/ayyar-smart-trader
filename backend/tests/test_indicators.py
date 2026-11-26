@@ -88,6 +88,6 @@ def test_bollinger_zero_deviation_collapses_to_middle():
 
 
 def test_macd_waits_for_signal_history():
-    result = macd([float(i) for i in range(30)], fast=3, slow=5, signal=9)
+    result = macd([float(i) for i in range(12)], fast=3, slow=5, signal=9)
     assert set(result) == {"macd"}
     assert math.isfinite(result["macd"])
