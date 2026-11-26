@@ -108,3 +108,22 @@ def test_backtest_rejects_timezone_naive_timestamps():
     candles[0] = candles[0].model_copy(update={"timestamp": datetime(2025, 1, 1)})
     with pytest.raises(ValueError, match="timezone-aware"):
         run_ema_backtest(candles)
+
+
+def test_future_candle_changes_do_not_rewrite_past_closed_trades():
+    candles = sample_candles()
+    cutoff_index = 100
+    baseline = run_ema_backtest(candles)
+    changed = list(candles)
+    for index in range(cutoff_index, len(changed)):
+        original = changed[index]
+        shifted = float(original.close) * 1.12
+        changed[index] = original.model_copy(update={
+            "open": shifted, "high": shifted + 3, "low": shifted - 3,
+            "close": shifted, "volume": original.volume,
+        })
+    revised = run_ema_backtest(changed)
+    cutoff = candles[cutoff_index - 1].timestamp.isoformat()
+    baseline_past = [trade for trade in baseline["trades"] if trade["exit_time"] <= cutoff]
+    revised_past = [trade for trade in revised["trades"] if trade["exit_time"] <= cutoff]
+    assert revised_past == baseline_past
