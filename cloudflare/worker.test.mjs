@@ -949,6 +949,10 @@ test("signal performance uses next candle open, completed horizons and refuses c
     const body=await response.json();
     assert.equal(response.status,200,JSON.stringify(body));
     assert.equal(body.directional_signals,1);
+    assert.equal(body.history_coverage.requested_retention_days,90);
+    assert.equal(body.history_coverage.candle_count,40);
+    assert.ok(body.history_coverage.coverage_days>1.6&&body.history_coverage.coverage_days<1.7);
+    assert.equal(body.history_coverage.covers_retention_window,false);
     assert.equal(body.horizons.find(x=>x.horizon_candles===1).scored,1);
     assert.equal(body.horizons.find(x=>x.horizon_candles===4).scored,1);
     assert.equal(body.horizons.find(x=>x.horizon_candles===24).scored,1);
