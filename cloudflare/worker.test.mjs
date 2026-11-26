@@ -2250,3 +2250,71 @@ test("paper account bearer tokens cannot cross account boundaries or leak from r
   }
 });
 
+
+
+test("BIQUOTE is a validated XAUUSD OHLC fallback when XAUS candle freshness metadata is invalid",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?biquote-xau-fallback-test")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[{openTime:new Date(currentBucket).toISOString(),open:3510,high:3512,low:3509,close:3511,
+    volume:0,tickVolume:12,isOpen:true}];
+  for(let i=0;i<120;i++){
+    const openTime=currentBucket-(i+1)*intervalMs;
+    const open=3500+i*0.1,close=open+0.2;
+    bars.push({openTime:new Date(openTime).toISOString(),open,high:close+0.1,low:open-0.1,
+      close,volume:0,tickVolume:100+i,isOpen:false});
+  }
+  globalThis.fetch=async(url)=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.status,"LIVE");
+    assert.equal(body.provider,"BIQUOTE");
+    assert.equal(body.candles.length,120);
+    assert.equal(body.data_quality.status,"CLEAN");
+    assert.equal(body.data_quality.missing_intervals,0);
+    assert.ok(body.age_seconds>=0&&body.age_seconds<900);
+    assert.equal(body.fallback_reason,"XAUS OHLC provider data state is stale");
+    assert.ok(body.candles.every(c=>Number.isFinite(Date.parse(c.timestamp))));
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("BIQUOTE fallback rejects stale completed candles instead of fabricating a live feed",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?biquote-xau-stale-fallback-test")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[];
+  for(let i=0;i<80;i++){
+    const openTime=currentBucket-3*60*60*1000-i*intervalMs;
+    const open=3500+i*0.1,close=open+0.2;
+    bars.push({openTime:new Date(openTime).toISOString(),open,high:close+0.1,low:open-0.1,
+      close,volume:0,tickVolume:100+i,isOpen:false});
+  }
+  globalThis.fetch=async(url)=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    assert.equal(response.status,502);
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.match(body.error,/Latest completed BIQUOTE OHLC candle is stale/);
+    assert.equal(body.execution_enabled,false);
+    assert.deepEqual(body.candles,[]);
+  }finally{globalThis.fetch=originalFetch;}
+});
