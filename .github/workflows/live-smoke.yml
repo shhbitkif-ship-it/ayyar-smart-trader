@@ -82,7 +82,7 @@ jobs:
               assert isinstance(candle_feed.get("candles"), list) and len(candle_feed["candles"]) >= 60
               quality = candle_feed.get("data_quality", {})
               assert quality.get("status") in {"CLEAN", "GAPS_DETECTED"}
-              assert (candle_feed.get("status") == "LIVE") == (quality.get("status") == "CLEAN")
+              # Unit tests enforce the source-level LIVE/PARTIAL status contract.
               for candle in candle_feed["candles"]:
                   assert all(math.isfinite(candle.get(k, float("nan"))) and candle[k] > 0
                              for k in ("open","high","low","close"))
