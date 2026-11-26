@@ -963,7 +963,20 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(body.sample_quality.minimum_context_samples,30);
     assert.equal(body.sample_quality.maximum_scored_samples,1);
     assert.equal(body.sample_quality.status,"BELOW_CONTEXT_THRESHOLD");
+    assert.equal(body.unavailable_diagnostics.outside_candle_range,0);
+    assert.equal(body.unavailable_diagnostics.missing_candle_within_range,0);
     assert.match(body.warning,/not evidence of future profitability/);
+    const outsideKey="xau:latest:outside";
+    store.set(outsideKey,{signal:"SELL",symbol:"xau",confidence:70,entry:2600,stop_loss:2610,take_profit:2580,
+      market_data_status:"LIVE",execution_enabled:false,
+      archive_source:"validated completed OHLC multi-timeframe evaluation",
+      last_candle_at:new Date(Date.parse(candles[0].timestamp)-3600000).toISOString(),
+      recorded_at:new Date().toISOString()});
+    const outsideResponse=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    const outsideBody=await outsideResponse.json();
+    assert.equal(outsideBody.unavailable_diagnostics.outside_candle_range,1);
+    assert.equal(outsideBody.unavailable_diagnostics.missing_candle_within_range,0);
+    store.delete(outsideKey);
     const gapCandles=candles.filter((_,i)=>i!==11);
     globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(gapCandles)),
       {status:200,headers:{"content-type":"application/json"}});
