@@ -1,4 +1,5 @@
 from datetime import datetime,timedelta,timezone
+import math
 from .indicators import ema,rsi,macd,bollinger,atr,vwap,support_resistance,fibonacci_levels
 from .schemas import EvaluateRequest,SignalResponse
 
@@ -8,20 +9,22 @@ TIMEFRAME_MINUTES={"1m":1,"5m":5,"15m":15,"30m":30,"1h":60,"4h":240,"1d":1440}
 
 def _classify_market_regime(e20, e50, e100, e200, closes, momentum, atr_values):
     """Classify trend from aligned EMA structure, short EMA slope and volatility."""
-    if any(len(series) < 6 for series in (e20, e50, e100, e200, closes, momentum, atr_values)):
+    if any(len(series) < 6 for series in (e20, e50, e100, e200, closes, momentum)):
         return {"trend": "UNKNOWN", "trend_strength": "UNKNOWN",
                 "momentum_state": "UNKNOWN", "volatility_pct": None, "volatility_regime": "UNKNOWN",
                 "trend_spread_pct": None, "trend_slope_pct": None,
                 "signal_quality": "INSUFFICIENT"}
     price = closes[-1]
-    if price <= 0 or atr_values[-1] is None or atr_values[-1] < 0:
+    # indicators.atr returns one current ATR value, not a historical list.
+    atr_current = atr_values[-1] if isinstance(atr_values, (list, tuple)) else atr_values
+    if price <= 0 or atr_current is None or not math.isfinite(float(atr_current)) or atr_current < 0:
         return {"trend": "UNKNOWN", "trend_strength": "UNKNOWN",
                 "momentum_state": "UNKNOWN", "volatility_pct": None,
                 "trend_spread_pct": None, "trend_slope_pct": None,
                 "signal_quality": "INSUFFICIENT"}
     spread_pct = abs(e20[-1] - e200[-1]) / price * 100
     slope_pct = (e20[-1] - e20[-6]) / price * 100
-    volatility_pct = atr_values[-1] / price * 100
+    volatility_pct = atr_current / price * 100
     volatility_regime = ("HIGH" if volatility_pct > 2.0 else
                          "LOW" if volatility_pct < 0.015 else "NORMAL")
     bullish_stack = e20[-1] > e50[-1] > e100[-1] > e200[-1]
