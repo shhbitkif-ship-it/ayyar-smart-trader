@@ -145,12 +145,23 @@ jobs:
                       raw = response.read(100000).decode("utf-8", errors="replace")
                       if name.startswith("xaus_intraday"):
                           data = json.loads(raw)
-                          points = data.get("points") or []
+                          points = sorted((point for point in (data.get("points") or []) if point.get("t") is not None),
+                              key=lambda point: float(point["t"]))
+                          times = [float(point["t"]) for point in points]
+                          deltas = [right-left for left,right in zip(times,times[1:])]
+                          buckets = {}
+                          for point in points:
+                              bucket = int(float(point["t"]) // 900)
+                              buckets[bucket] = buckets.get(bucket,0) + 1
                           probe_results[name] = {
                               "http": response.status, "data_state": data.get("data_state"),
                               "coverage_seconds": data.get("coverage_seconds"), "rows": len(points),
-                              "first_point": points[0] if points else None,
-                              "last_point": points[-1] if points else None
+                              "median_sample_seconds": sorted(deltas)[len(deltas)//2] if deltas else None,
+                              "max_sample_gap_seconds": max(deltas,default=0),
+                              "sample_gaps_over_5m": sum(1 for delta in deltas if delta>300),
+                              "15m_buckets": len(buckets),
+                              "minimum_samples_per_bucket": min(buckets.values(),default=0),
+                              "last_points": points[-4:]
                           }
                       elif name.startswith("biquote"):
                           data = json.loads(raw)
