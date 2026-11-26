@@ -2318,3 +2318,53 @@ test("BIQUOTE fallback rejects stale completed candles instead of fabricating a 
     assert.deepEqual(body.candles,[]);
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("scheduled paper monitor refuses BIQUOTE candles with gaps and leaves open positions unchanged",async()=>{
+  const statusStore=new Map();
+  const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.56"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const tradeUrl="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const opened=await worker.fetch(new Request(tradeUrl,{method:"POST",
+    headers:{"content-type":"application/json",authorization:"Bearer "+account.access_token},
+    body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020})
+  }),env);
+  assert.equal(opened.status,201);
+  const intervalMs=900000,currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[{openTime:new Date(currentBucket).toISOString(),open:2000,high:2001,low:1999,
+    close:2000,volume:0,tickVolume:10,isOpen:true}];
+  for(let i=0;i<70;i++){
+    if(i===35) continue;
+    const openTime=currentBucket-(i+1)*intervalMs;
+    const open=2000+i*.01,close=open+.1;
+    bars.push({openTime:new Date(openTime).toISOString(),open,high:close+.2,low:open-.2,
+      close,volume:0,tickVolume:100+i,isOpen:false});
+  }
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url)=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    await assert.rejects(
+      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env),
+      /candle gap\(s\)/
+    );
+    const stored=env.__accounts.get(account.account_id).trades[0];
+    assert.equal(stored.status,"OPEN");
+    assert.equal(statusStore.get("paper-monitor:latest").status,"ERROR");
+    assert.match(statusStore.get("paper-monitor:latest").error,/1 candle gap/);
+    assert.equal(statusStore.get("paper-monitor:latest").execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
