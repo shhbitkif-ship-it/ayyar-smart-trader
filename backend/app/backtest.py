@@ -146,7 +146,7 @@ def run_ema_backtest(
         "cost_model": {"fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps, "spread_bps_full": spread_bps, "spread_bps_per_side": spread_bps / 2.0},
         "starting_capital": round(starting_capital, 2),
         "evaluation_start_index": start_index,
-        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),\n        "evaluation_start_index": start_index,\n        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),
+        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),
         "final_equity": round(final_equity, 2),
         "net_return_pct": round(strategy_return, 4),
         "benchmark": {
