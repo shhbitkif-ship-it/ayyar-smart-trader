@@ -174,3 +174,56 @@ def test_engine_exposes_market_regime_analysis():
     result = evaluate(req, now)
     assert result.analysis["trend"] in {"BULLISH", "BEARISH", "SIDEWAYS", "UNKNOWN"}
     assert result.analysis["signal_quality"] in {"GOOD", "WEAK", "INSUFFICIENT"}
+
+
+@pytest.mark.parametrize(
+    "name,e20,e50,e100,e200,atr_value,expected_trend,expected_volatility,expected_quality",
+    [
+        ("bullish", [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+         [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+         0.5, "BULLISH", "NORMAL", "GOOD"),
+        ("bearish", [90-i*.1 for i in range(6)], [91-i*.08 for i in range(6)],
+         [92-i*.06 for i in range(6)], [93-i*.04 for i in range(6)],
+         0.5, "BEARISH", "NORMAL", "GOOD"),
+        ("sideways", [100]*6, [100]*6, [100]*6, [100]*6,
+         0.5, "SIDEWAYS", "NORMAL", "WEAK"),
+        ("high_volatility", [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+         [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+         3.0, "BULLISH", "HIGH", "WEAK"),
+    ],
+)
+def test_engine_classifies_four_market_conditions(
+    name, e20, e50, e100, e200, atr_value,
+    expected_trend, expected_volatility, expected_quality,
+):
+    from app.engine import _classify_market_regime
+    result = _classify_market_regime(
+        e20, e50, e100, e200,
+        [100+i*.2 for i in range(220)],
+        [60]*6,
+        [atr_value]*6,
+    )
+    assert result["trend"] == expected_trend, name
+    assert result["volatility_regime"] == expected_volatility, name
+    assert result["signal_quality"] == expected_quality, name
+
+
+def test_engine_marks_low_volatility_as_weak_and_explicit():
+    from app.engine import _classify_market_regime
+    result = _classify_market_regime(
+        [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+        [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+        [100+i*.2 for i in range(220)], [60]*6, [0.01]*6,
+    )
+    assert result["volatility_regime"] == "LOW"
+    assert result["signal_quality"] == "WEAK"
+
+
+def test_engine_analysis_exposes_volatility_regime():
+    now = datetime.now(timezone.utc)
+    req = EvaluateRequest(
+        symbol="XAUUSD",
+        candles=candles(220, 1, now-timedelta(minutes=219)),
+    )
+    result = evaluate(req, now)
+    assert result.analysis["volatility_regime"] in {"LOW", "NORMAL", "HIGH", "UNKNOWN"}
