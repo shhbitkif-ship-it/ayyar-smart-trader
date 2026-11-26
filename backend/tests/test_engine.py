@@ -162,10 +162,10 @@ def test_market_regime_classifier_detects_bullish_bearish_and_sideways():
 def test_narrow_ema_separation_does_not_masquerade_as_directional_trend():
     from app.engine import _classify_market_regime
     result = _classify_market_regime(
-        [100.11, 100.09, 100.07, 100.05, 100.03, 100.01],
-        [100.020, 100.018, 100.016, 100.014, 100.012, 100.010],
-        [100.015, 100.014, 100.013, 100.012, 100.011, 100.010],
-        [100.009, 100.009, 100.009, 100.009, 100.009, 100.009],
+        [100.04, 100.036, 100.032, 100.028, 100.024, 100.02],
+        [100.020, 100.019, 100.018, 100.017, 100.016, 100.015],
+        [100.014, 100.013, 100.012, 100.011, 100.0105, 100.010],
+        [100.005] * 6,
         [100.0] * 220, [45] * 6, [0.5] * 6,
     )
     assert result["trend"] == "SIDEWAYS"
