@@ -1124,11 +1124,31 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
   assert.ok(body.stability.fold_return_range_pct>=0);
   for(const fold of body.folds){
     assert.ok(Date.parse(fold.test_start)>Date.parse(fold.training_end));
+    assert.equal(fold.first_test_fill_at,fold.test_start);
+    assert.equal(fold.first_test_fill_included,true);
     assert.ok(["EMA9/EMA21","EMA12/EMA26","EMA20/EMA50"].includes(fold.selected_strategy));
     assert.ok(Number.isFinite(fold.out_of_sample_return_pct));
   }
 });
 
+
+
+test("walk-forward transaction costs include estimated exit cost on open positions",async()=>{
+  const candles=Array.from({length:240},(_,i)=>{
+    const close=2500+i*.35+Math.sin(i/4)*3+Math.sin(i/11)*1.5;
+    const previous=i?2500+(i-1)*.35+Math.sin((i-1)/4)*3+Math.sin((i-1)/11)*1.5:close-.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
+      open:previous,high:Math.max(previous,close)+.8,low:Math.min(previous,close)-.8,close};
+  });
+  const call=async costs=>(await worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,timeframe_minutes:60,...costs})
+  }))).json();
+  const free=await call({fee_bps:0,slippage_bps:0,spread_bps:0});
+  const costly=await call({fee_bps:20,slippage_bps:10,spread_bps:20});
+  assert.ok(costly.compounded_out_of_sample_return_pct<free.compounded_out_of_sample_return_pct);
+  assert.equal(costly.cost_model.spread_bps_per_side,10);
+});
 
 test("walk-forward rejects unsorted or duplicate input timestamps instead of silently sorting", async () => {
   const candles=Array.from({length:240},(_,i)=>{
