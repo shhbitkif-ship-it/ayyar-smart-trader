@@ -330,3 +330,19 @@ def test_walk_forward_earlier_fold_is_independent_of_later_market_data():
         })
     revised = run_walk_forward_backtest(changed, initial_train_size=120, test_size=60)
     assert baseline["folds"][0] == revised["folds"][0]
+
+
+def test_walk_forward_request_validates_minimum_history_and_costs():
+    from app.backtest import WalkForwardRequest
+    payload = WalkForwardRequest(candles=_walk_forward_candles(300))
+    assert payload.initial_train_size == 120
+    assert payload.test_size == 60
+    with pytest.raises(ValidationError):
+        WalkForwardRequest(candles=_walk_forward_candles(180))
+    with pytest.raises(ValidationError):
+        WalkForwardRequest(
+            candles=_walk_forward_candles(300),
+            initial_train_size=120,
+            test_size=60,
+            fee_bps=float("inf"),
+        )
