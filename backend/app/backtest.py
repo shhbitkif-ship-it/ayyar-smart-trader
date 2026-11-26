@@ -127,19 +127,40 @@ def run_ema_backtest(
     gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
     gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else (None if gross_profit == 0 else "infinity")
+    losing_trades = [t["pnl"] for t in trades if t["pnl"] < 0]
+    winning_trades = [t["pnl"] for t in trades if t["pnl"] > 0]
+    average_win = sum(winning_trades) / len(winning_trades) if winning_trades else None
+    average_loss = sum(losing_trades) / len(losing_trades) if losing_trades else None
+    expectancy = sum(t["pnl"] for t in trades) / len(trades) if trades else None
+    benchmark_entry = float(ordered[0].open) * (1.0 + cost_rate)
+    benchmark_quantity = starting_capital / benchmark_entry
+    benchmark_final = benchmark_quantity * float(ordered[-1].close) * (1.0 - cost_rate)
+    benchmark_return = (benchmark_final / starting_capital - 1.0) * 100.0
+    strategy_return = (final_equity / starting_capital - 1.0) * 100.0
     return {
         "strategy": "EMA20/EMA50 long-only crossover",
         "execution": "Signal confirmed at candle close; orders filled at next candle open",
         "cost_model": {"fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps, "spread_bps_full": spread_bps, "spread_bps_per_side": spread_bps / 2.0},
         "starting_capital": round(starting_capital, 2),
         "final_equity": round(final_equity, 2),
-        "net_return_pct": round((final_equity / starting_capital - 1.0) * 100.0, 4),
+        "net_return_pct": round(strategy_return, 4),
+        "benchmark": {
+            "name": "Buy and hold",
+            "entry_price": round(benchmark_entry, 6),
+            "final_equity": round(benchmark_final, 2),
+            "net_return_pct": round(benchmark_return, 4),
+            "excess_return_pct": round(strategy_return - benchmark_return, 4),
+            "assumption": "Buy at first candle open and liquidate at final candle close with the same per-side cost assumptions.",
+        },
         "max_drawdown_pct": round(max_drawdown * 100.0, 4),
         "max_drawdown_at": max_drawdown_at,
         "drawdown_method": "Intrabar adverse mark at candle low for open long positions, including estimated exit costs.",
         "closed_trades": len(trades),
         "win_rate_pct": round((wins / len(trades)) * 100.0, 2) if trades else 0.0,
         "profit_factor": round(profit_factor, 4) if isinstance(profit_factor, float) else profit_factor,
+        "average_winning_trade": round(average_win, 2) if average_win is not None else None,
+        "average_losing_trade": round(average_loss, 2) if average_loss is not None else None,
+        "expectancy_per_closed_trade": round(expectancy, 2) if expectancy is not None else None,
         "open_position": quantity > 0,
         "unrealized_pnl": round(unrealized, 2),
         "trades": trades,
