@@ -80,3 +80,53 @@ jobs:
         run: npm run test:integration --prefix cloudflare
       - name: Validate Cloudflare Worker bundle and Durable Object export
         run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.jsonc
+
+  production-smoke:
+    name: Production API smoke tests
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployed Worker health and safety endpoints
+        env:
+          API_BASE: https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+
+          base = os.environ["API_BASE"].rstrip("/")
+
+          def get(path):
+              req = urllib.request.Request(base + path, headers={"Accept": "application/json"})
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  if response.status != 200:
+                      raise RuntimeError(f"{path}: unexpected HTTP {response.status}")
+                  return json.loads(response.read())
+
+          health = get("/health")
+          assert health.get("status") == "ok", health
+          assert health.get("service") == "ayyar-smart-trader-api", health
+
+          market = get("/v1/market/status")
+          assert market.get("status") in {"LIVE", "PARTIAL", "UNAVAILABLE"}, market
+          assert isinstance(market.get("live_quotes"), int), market
+          assert isinstance(market.get("total_quotes"), int) and market["total_quotes"] > 0, market
+
+          policy = get("/v1/risk/policy")
+          assert policy.get("execution_enabled") is False, policy
+          assert policy.get("default_risk_per_trade") <= 0.01, policy
+          assert policy.get("max_daily_loss") <= 0.03, policy
+          assert policy.get("max_drawdown") <= 0.08, policy
+
+          monitor = get("/v1/paper/monitor/status")
+          assert monitor.get("execution_enabled") is False, monitor
+          assert monitor.get("mode") == "PAPER_ONLY", monitor
+
+          print(json.dumps({
+              "health": health["status"],
+              "market_status": market["status"],
+              "live_quotes": market["live_quotes"],
+              "total_quotes": market["total_quotes"],
+              "paper_monitor_status": monitor.get("status"),
+              "execution_enabled": policy["execution_enabled"]
+          }, ensure_ascii=False))
+          PY
