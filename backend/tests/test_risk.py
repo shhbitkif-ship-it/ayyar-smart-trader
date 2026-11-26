@@ -40,3 +40,56 @@ def test_position_sizing_fails_closed_on_numeric_overflow():
     result=calculate_position_size(req)
     assert result["allowed"] is False
     assert result["lots"] == 0
+
+
+@pytest.mark.parametrize(
+    "side,entry,stop,target,expected_ratio",
+    [
+        ("LONG", 100, 95, 110, 2.0),
+        ("SHORT", 100, 105, 90, 2.0),
+    ],
+)
+def test_trade_plan_accepts_correct_direction_and_reports_reward_risk(
+    side, entry, stop, target, expected_ratio,
+):
+    from app.risk import TradePlanRequest, validate_trade_plan
+    result = validate_trade_plan(TradePlanRequest(
+        side=side, entry=entry, stop_loss=stop, take_profit=target,
+    ))
+    assert result["valid"] is True
+    assert result["risk_reward"] == expected_ratio
+    assert result["execution_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "side,entry,stop,target",
+    [
+        ("LONG", 100, 105, 110),
+        ("LONG", 100, 95, 90),
+        ("SHORT", 100, 95, 90),
+        ("SHORT", 100, 105, 110),
+    ],
+)
+def test_trade_plan_rejects_stop_or_target_on_wrong_side(side, entry, stop, target):
+    from app.risk import TradePlanRequest
+    with pytest.raises(ValidationError):
+        TradePlanRequest(side=side, entry=entry, stop_loss=stop, take_profit=target)
+
+
+def test_trade_plan_rejects_reward_risk_below_minimum():
+    from app.risk import TradePlanRequest, validate_trade_plan
+    result = validate_trade_plan(TradePlanRequest(
+        side="LONG", entry=100, stop_loss=95, take_profit=106,
+        minimum_risk_reward=1.5,
+    ))
+    assert result["valid"] is False
+    assert result["risk_reward"] == 1.2
+    assert result["execution_enabled"] is False
+
+
+def test_trade_plan_rejects_non_finite_and_invalid_thresholds():
+    from app.risk import TradePlanRequest
+    with pytest.raises(ValidationError):
+        TradePlanRequest(side="LONG", entry=float("inf"), stop_loss=95, take_profit=110)
+    with pytest.raises(ValidationError):
+        TradePlanRequest(side="LONG", entry=100, stop_loss=95, take_profit=110, minimum_risk_reward=0)
