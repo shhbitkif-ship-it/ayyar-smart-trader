@@ -300,7 +300,8 @@ function runWalkForward(payload) {
   for(const fold of folds) for(const bucket of fold.regime_diagnostics.buckets){
     if(!regimeTotals.has(bucket.regime)) regimeTotals.set(bucket.regime,{
       regime:bucket.regime,bars:0,equity_change_attribution:0,trade_count:0,
-      winning_trades:0,net_trade_pnl:0,trade_return_sum:0});
+      winning_trades:0,net_trade_pnl:0,trade_return_sum:0,
+      atr_weighted_sum:0,ema_spread_weighted_sum:0,slope_weighted_sum:0,indicator_bars:0});
     const total=regimeTotals.get(bucket.regime);
     total.bars+=bucket.bars;
     total.equity_change_attribution+=bucket.equity_change_attribution;
@@ -308,10 +309,20 @@ function runWalkForward(payload) {
     total.winning_trades+=bucket.winning_trades;
     total.net_trade_pnl+=bucket.net_trade_pnl;
     total.trade_return_sum+=(bucket.average_trade_return_pct??0)*bucket.trade_count;
+    if(Number.isFinite(bucket.average_atr_pct)&&Number.isFinite(bucket.average_ema_spread_pct)&&
+       Number.isFinite(bucket.average_ema20_slope_pct)){
+      total.atr_weighted_sum+=bucket.average_atr_pct*bucket.bars;
+      total.ema_spread_weighted_sum+=bucket.average_ema_spread_pct*bucket.bars;
+      total.slope_weighted_sum+=bucket.average_ema20_slope_pct*bucket.bars;
+      total.indicator_bars+=bucket.bars;
+    }
   }
   const regimeBuckets=[...regimeTotals.values()].map(group=>({
     regime:group.regime,bars:group.bars,
     bar_share_pct:round2(group.bars/(n-boundaries[0])*100),
+    average_atr_pct:group.indicator_bars?round4(group.atr_weighted_sum/group.indicator_bars):null,
+    average_ema_spread_pct:group.indicator_bars?round4(group.ema_spread_weighted_sum/group.indicator_bars):null,
+    average_ema20_slope_pct:group.indicator_bars?round4(group.slope_weighted_sum/group.indicator_bars):null,
     equity_change_attribution:round2(group.equity_change_attribution),
     trade_count:group.trade_count,winning_trades:group.winning_trades,
     win_rate_pct:group.trade_count?round2(group.winning_trades/group.trade_count*100):0,
