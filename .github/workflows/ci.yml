@@ -96,11 +96,18 @@ jobs:
           base = os.environ["API_BASE"].rstrip("/")
 
           def get(path):
-              req = urllib.request.Request(base + path, headers={"Accept": "application/json"})
-              with urllib.request.urlopen(req, timeout=20) as response:
-                  if response.status != 200:
-                      raise RuntimeError(f"{path}: unexpected HTTP {response.status}")
-                  return json.loads(response.read())
+              req = urllib.request.Request(base + path, headers={
+                  "Accept": "application/json",
+                  "User-Agent": "AyyarSmartTrader-ProductionSmoke/1.0"
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as response:
+                      if response.status != 200:
+                          raise RuntimeError(f"{path}: unexpected HTTP {response.status}")
+                      return json.loads(response.read())
+              except urllib.error.HTTPError as error:
+                  body = error.read(2000).decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{path}: HTTP {error.code}; response={body}") from error
 
           health = get("/health")
           assert health.get("status") == "ok", health
