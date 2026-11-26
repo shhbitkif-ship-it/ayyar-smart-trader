@@ -155,7 +155,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
            }
           }
          }
-         if(selectedAnalysisTab==0) {
+         if(selectedAnalysisTab==1) {
          item { Text("سوابق سیگنال‌های ذخیره‌شده",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("آرشیو سیگنال‌های چندتایم‌فریمی اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -181,7 +181,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          } } }
 
          }
-         if(selectedAnalysisTab==1) {
+         if(selectedAnalysisTab==2) {
          item { Text("کارنامه واقعی سیگنال‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("ارزیابی پس از صدور سیگنال با کندل‌های بسته‌شده",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -222,7 +222,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          } } }
 
          }
-         if(selectedAnalysisTab==2) {
+         if(selectedAnalysisTab==3) {
          item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("بک‌تست EMA روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -260,7 +260,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          } } }
 
          }
-         if(selectedAnalysisTab==3) {
+         if(selectedAnalysisTab==4) {
          item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("EMA 9/21 • EMA 12/26 • EMA 20/50",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -286,7 +286,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          } } }
 
          }
-         if(selectedAnalysisTab==4) {
+         if(selectedAnalysisTab==5) {
          item { Text("آزمون خارج از نمونه Walk-forward",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("انتخاب استراتژی با داده‌های گذشته و ارزیابی روی بازه‌های بعدیِ دیده‌نشده",color=Color.White,fontWeight=FontWeight.SemiBold)
@@ -316,7 +316,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          } } }
 
          }
-         if(selectedAnalysisTab==5) {
+         if(selectedAnalysisTab==0) {
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("موتور تحلیل اونس جهانی طلا • هم‌ترازی چندتایم‌فریمی",color=gold,fontWeight=FontWeight.Bold)
             when {
