@@ -54,10 +54,20 @@ jobs:
           patch="\n".join(chunks)[:26000]
           if not patch.strip():
               raise SystemExit("No eligible text patches found; review not sent.")
-          # Basic credential redaction before any third-party transmission.
+          # Preserve GitHub Actions expressions: the generic secret-name
+          # redactor must never rewrite syntax such as ${{ secrets.NAME }}.
           import re
+          gha_expressions=[]
+          def protect_expression(match):
+              gha_expressions.append(match.group(0))
+              return f"__GHA_EXPRESSION_{len(gha_expressions)-1}__"
+          patch=re.sub(r"\$\{\{.*?\}\}", protect_expression, patch, flags=re.S)
+          # Redact common credential assignments and bearer values before transmission.
           patch=re.sub(r'(?i)(api[_-]?key|token|secret|password)(\s*[:=]\s*)[^\s,;]+', r'\1\2[REDACTED]', patch)
           patch=re.sub(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*', r'\1[REDACTED]', patch)
+          # Restore non-secret workflow expressions after redaction.
+          for index, expression in enumerate(gha_expressions):
+              patch=patch.replace(f"__GHA_EXPRESSION_{index}__", expression)
           open("review-patch.txt","w",encoding="utf-8").write(patch)
           print(f"Prepared {len(chunks)} text patches ({len(patch)} chars); excluded secret/config/binary paths.")
           PY
