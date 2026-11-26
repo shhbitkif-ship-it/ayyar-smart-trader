@@ -48,18 +48,24 @@ def inspect_candle_series(candles: Sequence[Candle], timeframe: str) -> dict:
             missing_intervals += intervals - 1
             largest_gap_intervals = max(largest_gap_intervals, intervals - 1)
             max_gap_seconds = max(max_gap_seconds, delta_ms / 1000)
-            day = previous.timestamp.date()
-            end_day = current.timestamp.date()
-            spans_weekend = False
-            while day <= end_day:
-                if day.weekday() >= 5:
-                    spans_weekend = True
-                    break
-                day += timedelta(days=1)
+            previous_aware = previous.timestamp.tzinfo is not None and previous.timestamp.utcoffset() is not None
+            current_aware = current.timestamp.tzinfo is not None and current.timestamp.utcoffset() is not None
+            previous_utc = previous.timestamp.astimezone(timezone.utc) if previous_aware else None
+            current_utc = current.timestamp.astimezone(timezone.utc) if current_aware else None
+            spans_weekend = None
+            if previous_utc and current_utc:
+                day = previous_utc.date()
+                end_day = current_utc.date()
+                spans_weekend = False
+                while day <= end_day:
+                    if day.weekday() >= 5:
+                        spans_weekend = True
+                        break
+                    day += timedelta(days=1)
             if len(gap_windows) < 100:
                 gap_windows.append({
-                    "from_utc": previous.timestamp.astimezone(timezone.utc).isoformat(),
-                    "to_utc": current.timestamp.astimezone(timezone.utc).isoformat(),
+                    "from_utc": previous_utc.isoformat() if previous_utc else None,
+                    "to_utc": current_utc.isoformat() if current_utc else None,
                     "missing_intervals": intervals - 1,
                     "spans_weekend_calendar_days": spans_weekend,
                 })
