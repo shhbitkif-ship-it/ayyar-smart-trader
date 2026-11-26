@@ -64,6 +64,8 @@ def run_ema_backtest(
     entry_time = None
     trades = []
     equity_curve = [{"timestamp": ordered[0].timestamp.isoformat(), "equity": round(cash, 2)}]
+    # Intrabar adverse marks make drawdown more conservative than close-only marks.
+    drawdown_curve = [{"timestamp": ordered[0].timestamp.isoformat(), "equity": cash}]
 
     for fill_index in range(1, len(ordered)):
         signal_index = fill_index - 1
@@ -99,6 +101,8 @@ def run_ema_backtest(
 
         marked_equity = cash if quantity == 0 else quantity * float(ordered[fill_index].close) * (1.0 - cost_rate)
         equity_curve.append({"timestamp": ordered[fill_index].timestamp.isoformat(), "equity": round(marked_equity, 2)})
+        adverse_equity = cash if quantity == 0 else quantity * float(ordered[fill_index].low) * (1.0 - cost_rate)
+        drawdown_curve.append({"timestamp": ordered[fill_index].timestamp.isoformat(), "equity": adverse_equity})
 
     if quantity > 0:
         liquidation_price = float(ordered[-1].close) * (1.0 - cost_rate)
@@ -111,10 +115,14 @@ def run_ema_backtest(
     wins = sum(1 for t in trades if t["pnl"] > 0)
     peak = float(starting_capital)
     max_drawdown = 0.0
-    for point in equity_curve:
+    max_drawdown_at = None
+    for point in drawdown_curve:
         peak = max(peak, point["equity"])
         if peak > 0:
-            max_drawdown = max(max_drawdown, (peak - point["equity"]) / peak)
+            drawdown = (peak - point["equity"]) / peak
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+                max_drawdown_at = point["timestamp"]
     gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
     gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else (None if gross_profit == 0 else "infinity")
@@ -126,6 +134,8 @@ def run_ema_backtest(
         "final_equity": round(final_equity, 2),
         "net_return_pct": round((final_equity / starting_capital - 1.0) * 100.0, 4),
         "max_drawdown_pct": round(max_drawdown * 100.0, 4),
+        "max_drawdown_at": max_drawdown_at,
+        "drawdown_method": "Intrabar adverse mark at candle low for open long positions, including estimated exit costs.",
         "closed_trades": len(trades),
         "win_rate_pct": round((wins / len(trades)) * 100.0, 2) if trades else 0.0,
         "profit_factor": round(profit_factor, 4) if isinstance(profit_factor, float) else profit_factor,
