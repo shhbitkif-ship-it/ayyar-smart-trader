@@ -434,7 +434,8 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
     duplicate_count:0,rejected_completed_points:0,gap_count:gaps.length,
     missing_intervals:gaps.reduce((sum,g)=>sum+g.missing_intervals,0),
     largest_gap_intervals:gaps.reduce((max,g)=>Math.max(max,g.missing_intervals),0),
-    note:"BIQUOTE gaps are reported, never filled or interpolated. Market closures and provider omissions remain visible to downstream quality gates."};
+    gaps:gaps.slice(0,50),
+    note:"BIQUOTE gaps are reported with timestamps, never filled or interpolated. Market closures and provider omissions remain visible to downstream quality gates."};
   return {
     symbol,provider:"BIQUOTE",provider_symbol:"XAUUSD",
     source_url:"https://biquote.io/api/XAUUSD/ohlc",
