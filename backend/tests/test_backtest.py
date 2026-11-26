@@ -127,3 +127,31 @@ def test_future_candle_changes_do_not_rewrite_past_closed_trades():
     baseline_past = [trade for trade in baseline["trades"] if trade["exit_time"] <= cutoff]
     revised_past = [trade for trade in revised["trades"] if trade["exit_time"] <= cutoff]
     assert revised_past == baseline_past
+
+
+def test_drawdown_uses_intrabar_low_not_only_candle_close():
+    candles = sample_candles()
+    baseline = run_ema_backtest(candles, fee_bps=0, slippage_bps=0)
+    stressed = list(candles)
+    # Add a deep intrabar adverse move during a period where the strategy is invested,
+    # while leaving the close unchanged.
+    index = 100
+    candle = stressed[index]
+    stressed[index] = candle.model_copy(update={"low": float(candle.close) * 0.70})
+    result = run_ema_backtest(stressed, fee_bps=0, slippage_bps=0)
+    assert result["max_drawdown_pct"] > baseline["max_drawdown_pct"]
+    assert result["max_drawdown_at"] == stressed[index].timestamp.isoformat()
+    assert "candle low" in result["drawdown_method"]
+
+
+def test_drawdown_timestamp_is_null_when_no_drawdown_occurs():
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    candles = [
+        Candle(timestamp=start + timedelta(days=i), open=100+i, high=101+i,
+               low=99+i, close=100+i, volume=100)
+        for i in range(60)
+    ]
+    result = run_ema_backtest(candles)
+    assert result["max_drawdown_pct"] >= 0
+    if result["max_drawdown_pct"] == 0:
+        assert result["max_drawdown_at"] is None
