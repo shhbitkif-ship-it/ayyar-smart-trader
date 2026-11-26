@@ -2716,6 +2716,11 @@ test("repeated UTC candle gaps are surfaced as patterns but remain unclassified"
     assert.equal(response.status,200,JSON.stringify(body));
     const diagnostics=body.data_quality.gap_diagnostics;
     assert.equal(diagnostics.classification,"UNCLASSIFIED");
+    assert.ok(Array.isArray(diagnostics.gap_details));
+    assert.ok(diagnostics.gap_details.length>0);
+    assert.equal(diagnostics.gap_details[0].classification,"UNCLASSIFIED");
+    assert.ok(diagnostics.gap_details[0].elapsed_minutes>0);
+    assert.ok(diagnostics.gap_details[0].from&&diagnostics.gap_details[0].to);
     const repeated=diagnostics.recurring_windows_utc.find(x=>x.start_time_utc==="21:45"&&x.end_time_utc==="23:00");
     assert.ok(repeated&&repeated.occurrences>=2,JSON.stringify(diagnostics));
     assert.match(diagnostics.note,/does not prove a market closure/i);
