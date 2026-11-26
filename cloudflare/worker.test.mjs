@@ -2152,10 +2152,15 @@ test("market status endpoint reports zero live quotes when providers fail", asyn
 
 test("market snapshot recovers immediately after provider outage without serving cached UNAVAILABLE", async () => {
   const isolatedWorker=(await import("./worker_core.js?market-outage-recovery-test")).default;
-  let calls=0;
-  globalThis.fetch=async()=>{
-    calls++;
-    if(calls===1) return new Response("upstream unavailable",{status:503});
+  let providerCalls=0,spotFallbackCalls=0;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/spot")) {
+      spotFallbackCalls++;
+      return new Response(JSON.stringify({data_state:{status:"unavailable"}}),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    providerCalls++;
+    if(providerCalls===1) return new Response("upstream unavailable",{status:503});
     return new Response(JSON.stringify({
       generated_utc:new Date().toISOString(),
       items:freshItems
@@ -2172,7 +2177,8 @@ test("market snapshot recovers immediately after provider outage without serving
     assert.equal(recovered.status,"LIVE");
     assert.equal(recovered.live_quotes,8);
     assert.equal(recovered.total_quotes,8);
-    assert.equal(calls,2,"provider must be retried after an unavailable snapshot");
+    assert.equal(providerCalls,2,"primary market provider must be retried after an unavailable snapshot");
+    assert.equal(spotFallbackCalls,1,"XAUS spot fallback should be attempted only during the outage");
   } finally { globalThis.fetch=originalFetch; }
 });
 
