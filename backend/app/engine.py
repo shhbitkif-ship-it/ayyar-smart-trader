@@ -83,7 +83,8 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     analysis={"ema20":e20[-1],"ema50":e50[-1],"ema100":e100[-1],"ema200":e200[-1],"rsi14":momentum[-1],
               "macd":macd(closes),"bollinger20":bollinger(closes),"atr14":atr_values,
               "vwap":vwap(highs,lows,closes,volumes),"support_resistance":support_resistance(highs,lows),
-              "fibonacci":fibonacci_levels(highs,lows),**regime}
+              "fibonacci":fibonacci_levels(highs,lows),**regime,
+              "setup_direction":"NONE","setup_detected":False}
     base["analysis"]=analysis
     if not request.confirmation_candles: return SignalResponse(**base,action="NO_TRADE",status="NO_SETUP",reason="Higher-timeframe confirmation data is not available.")
     if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in request.confirmation_candles):
