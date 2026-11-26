@@ -500,6 +500,17 @@ function classifyMarketRegime(candles) {
 
 function diagnoseCandleGaps(gaps) {
   const windows=new Map();
+  const gapDetails=gaps.slice(0,50).map(gap=>{
+    const from=Date.parse(gap.from),to=Date.parse(gap.to);
+    const valid=Number.isFinite(from)&&Number.isFinite(to)&&to>from;
+    return {
+      from:gap.from,to:gap.to,
+      missing_intervals:Number(gap.missing_intervals)||null,
+      elapsed_minutes:valid?Math.round((to-from)/60000*100)/100:null,
+      weekday_utc:valid?new Date(from).toLocaleDateString("en-US",{timeZone:"UTC",weekday:"short"}):null,
+      classification:"UNCLASSIFIED"
+    };
+  });
   for(const gap of gaps){
     const from=Date.parse(gap.from),to=Date.parse(gap.to);
     if(!Number.isFinite(from)||!Number.isFinite(to)) continue;
@@ -514,7 +525,7 @@ function diagnoseCandleGaps(gaps) {
     if(!item.dates.includes(date)) item.dates.push(date);
   }
   const recurring=[...windows.values()].filter(item=>item.occurrences>=2);
-  return {classification:"UNCLASSIFIED",
+  return {classification:"UNCLASSIFIED",gap_details:gapDetails,
     recurring_windows_utc:recurring,
     isolated_gap_count:gaps.filter(gap=>{
       const from=Date.parse(gap.from),to=Date.parse(gap.to);
@@ -522,7 +533,7 @@ function diagnoseCandleGaps(gaps) {
       const key=new Date(from).toISOString().slice(11,16)+"-"+new Date(to).toISOString().slice(11,16);
       return !recurring.some(item=>key===item.start_time_utc+"-"+item.end_time_utc);
     }).length,
-    note:"Repeated UTC timing is a diagnostic pattern only; it does not prove a market closure or justify filling/ignoring gaps."};
+    note:"Per-gap timing and duration are diagnostic only. No gap is assumed to be a market closure, and no missing candle is filled, interpolated, or ignored."};
 }
 
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
