@@ -19,7 +19,7 @@ def _classify_market_regime(e20, e50, e100, e200, closes, momentum, atr_values):
     atr_current = atr_values[-1] if isinstance(atr_values, (list, tuple)) else atr_values
     if price <= 0 or atr_current is None or not math.isfinite(float(atr_current)) or atr_current < 0:
         return {"trend": "UNKNOWN", "trend_strength": "UNKNOWN",
-                "momentum_state": "UNKNOWN", "volatility_pct": None,
+                "momentum_state": "UNKNOWN", "volatility_pct": None, "volatility_regime": "UNKNOWN",
                 "trend_spread_pct": None, "trend_slope_pct": None,
                 "signal_quality": "INSUFFICIENT"}
     spread_pct = abs(e20[-1] - e200[-1]) / price * 100
