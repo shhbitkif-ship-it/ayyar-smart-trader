@@ -159,6 +159,19 @@ def test_market_regime_classifier_detects_bullish_bearish_and_sideways():
     assert sideways["signal_quality"] == "WEAK"
 
 
+def test_narrow_ema_separation_does_not_masquerade_as_directional_trend():
+    from app.engine import _classify_market_regime
+    result = _classify_market_regime(
+        [100.11, 100.09, 100.07, 100.05, 100.03, 100.01],
+        [100.020, 100.018, 100.016, 100.014, 100.012, 100.010],
+        [100.015, 100.014, 100.013, 100.012, 100.011, 100.010],
+        [100.009, 100.009, 100.009, 100.009, 100.009, 100.009],
+        [100.0] * 220, [45] * 6, [0.5] * 6,
+    )
+    assert result["trend"] == "SIDEWAYS"
+    assert result["signal_quality"] == "WEAK"
+
+
 def test_market_regime_flags_extreme_volatility_as_weak():
     from app.engine import _classify_market_regime
     result = _classify_market_regime(
