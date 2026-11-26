@@ -328,7 +328,6 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
   }
  }
 }
-}
 
 @Composable private fun HistoryChart(points:List<HistoryPoint>){
  val values=points.map{it.value}; val low=values.minOrNull()?:0.0; val high=values.maxOrNull()?:1.0
