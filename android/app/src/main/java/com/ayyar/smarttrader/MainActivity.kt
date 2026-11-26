@@ -649,6 +649,11 @@ private fun securePaperPrefs(context:Context)=run {
 }
 
 private fun paperApi(method:String,path:String,token:String?=null,body:JSONObject?=null):JSONObject {
+ val safePaperPath=Regex(
+  "^/v1/paper/accounts/[a-f0-9]{32}(?:/(?:trades(?:/[a-f0-9]{32}/close)?|monitor|notifications|report/daily|report/performance\\?period=(?:week|month)|analytics/strategy|integrity))?$"
+ )
+ require(path.matches(safePaperPath)) { "مسیر درخواست حساب آزمایشی معتبر نیست." }
+ require(method in setOf("GET","POST")) { "روش درخواست حساب آزمایشی مجاز نیست." }
  val connection=URL(BuildConfig.API_BASE_URL+path).openConnection() as HttpURLConnection
  connection.requestMethod=method;connection.connectTimeout=10000;connection.readTimeout=15000
  connection.setRequestProperty("Accept","application/json")
