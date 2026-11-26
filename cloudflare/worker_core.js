@@ -527,6 +527,7 @@ function diagnoseCandleGaps(gaps) {
 
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
+const MIN_COMPLETED_CANDLES = 60;
 
 async function fetchGoldCandlesFromXaus(symbol, interval) {
   const providerSymbol = CANDLE_SYMBOLS.get(symbol);
@@ -579,6 +580,8 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
   if (candles.some((c,i)=>i>0&&Date.parse(c.timestamp)===Date.parse(candles[i-1].timestamp)))
     throw new Error("XAUS returned duplicate candle timestamps; data quality check failed");
+  if(candles.length<MIN_COMPLETED_CANDLES)
+    throw new Error("XAUS returned insufficient completed OHLC history; at least 60 candles are required");
   const last = candles[candles.length-1];
   if (!last) throw new Error("No completed OHLC candles are available from XAUS");
   const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
@@ -646,6 +649,8 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
   candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
   if(candles.some((bar,i)=>i>0&&Date.parse(bar.timestamp)===Date.parse(candles[i-1].timestamp)))
     throw new Error("BIQUOTE returned duplicate candle timestamps");
+  if(candles.length<MIN_COMPLETED_CANDLES)
+    throw new Error("BIQUOTE returned insufficient completed OHLC history; at least 60 candles are required");
   const last=candles[candles.length-1];
   if(!last) throw new Error("BIQUOTE returned no completed XAUUSD candles");
   const lastCloseTime=Date.parse(last.timestamp)+intervalMs;
