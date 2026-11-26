@@ -131,7 +131,8 @@ jobs:
           probes = {
               "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?range=5d&interval=15m",
               "yahoo_gc_f_15m": "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=5d&interval=15m",
-              "stooq_xauusd_daily": "https://stooq.com/q/d/l/?s=xauusd&i=d"
+              "stooq_xauusd_daily": "https://stooq.com/q/d/l/?s=xauusd&i=d",
+              "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=200"
           }
           probe_results = {}
           for name, url in probes.items():
@@ -142,7 +143,16 @@ jobs:
               try:
                   with urllib.request.urlopen(req, timeout=15) as response:
                       raw = response.read(12000).decode("utf-8", errors="replace")
-                      if "yahoo" in name:
+                      if name.startswith("biquote"):
+                          data = json.loads(raw)
+                          bars = data.get("bars") or []
+                          probe_results[name] = {
+                              "http": response.status, "symbol": data.get("symbol"),
+                              "interval": data.get("interval"), "rows": len(bars),
+                              "closed_rows": sum(1 for bar in bars if bar.get("isOpen") is False),
+                              "last_bar": bars[0] if bars else None
+                          }
+                      elif "yahoo" in name:
                           data = json.loads(raw)
                           result = (data.get("chart") or {}).get("result") or []
                           if result:
