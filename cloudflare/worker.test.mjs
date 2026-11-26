@@ -2804,3 +2804,36 @@ test("scheduled paper monitor refuses BIQUOTE candles with gaps and leaves open 
     assert.equal(statusStore.get("paper-monitor:latest").execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("candle endpoint rejects fresh but insufficient BIQUOTE history instead of reporting LIVE",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?biquote-insufficient-history-test")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[];
+  for(let i=0;i<59;i++){
+    const openTime=currentBucket-(i+1)*intervalMs;
+    const open=3500+i*.1,close=open+.2;
+    bars.push({openTime:new Date(openTime).toISOString(),open,high:close+.1,
+      low:open-.1,close,isOpen:false});
+  }
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    assert.equal(response.status,502,JSON.stringify(body));
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.match(body.error,/BIQUOTE returned insufficient completed OHLC history/i);
+    assert.deepEqual(body.candles,[]);
+    assert.equal(body.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
