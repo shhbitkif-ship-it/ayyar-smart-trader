@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +65,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var backtestInterval by remember { mutableStateOf("60m") }
  var backtestFast by remember { mutableIntStateOf(20) }
  var backtestSlow by remember { mutableIntStateOf(50) }
+ var backtestSpread by remember { mutableStateOf("0") }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
  var walkForwardRefresh by remember { mutableIntStateOf(0) }
@@ -73,10 +76,10 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val paperMonitor by produceState<Result<PaperMonitorStatusUi>?>(null, refresh) { value=runCatching { withContext(Dispatchers.IO) { fetchPaperMonitorStatus() } } }
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
- val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh,backtestInterval,backtestFast,backtestSlow) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest(backtestInterval,backtestFast,backtestSlow) } } }
+ val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
- val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward() } } }
+ val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh,backtestSpread) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward(backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
  val performance by produceState<Result<SignalPerformanceUi>?>(null, performanceRefresh) { if(performanceRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalPerformance() } } }
  MaterialTheme {
   var selectedTab by remember { mutableIntStateOf(0) }
@@ -226,7 +229,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("بک‌تست EMA روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
-            Text("تایم‌فریم و پارامترها را تغییر بده؛ هر اجرا فقط داده XAUS را بررسی می‌کند.",color=muted,fontSize=11.sp)
+            Text("تایم‌فریم و پارامترها را تغییر بده؛ فقط کندل‌های واقعی و تکمیل‌شده بررسی می‌شوند.",color=muted,fontSize=11.sp)
             var intervalExpanded by remember { mutableStateOf(false) }
             ExposedDropdownMenuBox(expanded=intervalExpanded,onExpandedChange={intervalExpanded=it}) {
               OutlinedTextField(value=when(backtestInterval){"15m"->"۱۵ دقیقه";"1d"->"روزانه";else->"۶۰ دقیقه"},onValueChange={},readOnly=true,label={Text("تایم‌فریم")},modifier=Modifier.fillMaxWidth().menuAnchor())
@@ -239,6 +242,8 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             Text("EMA کند: $backtestSlow",color=Color.White,fontSize=12.sp)
             Slider(value=backtestSlow.toFloat(),onValueChange={backtestSlow=it.toInt().coerceIn(backtestFast+1,100)},valueRange=4f..100f,steps=95)
             Text("ریسک ثابت ۱٪ • سرمایه فرضی ۱۰٬۰۰۰ • کارمزد ۱۰ و لغزش ۵ واحد پایه در هر سمت",color=muted,fontSize=10.sp)
+            OutlinedTextField(value=backtestSpread,onValueChange={backtestSpread=it.filter{ch->ch.isDigit()||ch=='.'}.take(7)},label={Text("اسپرد کامل خرید و فروش (واحد پایه)")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),modifier=Modifier.fillMaxWidth())
+            Text("عدد ۰ یعنی اسپرد در محاسبه لحاظ نمی‌شود؛ مقدار واقعی بروکر را وارد کن. نیم اسپرد در هر سمت اعمال می‌شود.",color=muted,fontSize=10.sp)
             when {
               backtestRefresh==0 -> Text("برای دریافت داده واقعی و اجرای آزمون، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
               backtest==null -> Text("در حال دریافت کندل‌ها و اجرای بک‌تست…",color=muted)
@@ -290,7 +295,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          item { Text("آزمون خارج از نمونه Walk-forward",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Text("انتخاب استراتژی با داده‌های گذشته و ارزیابی روی بازه‌های بعدیِ دیده‌نشده",color=Color.White,fontWeight=FontWeight.SemiBold)
-            Text("سه مرحله ارزیابی روی کندل‌های واقعی ۶۰ دقیقه‌ای؛ حداقل ۱۸۰ کندل لازم است.",color=muted,fontSize=11.sp)
+            Text("سه مرحله ارزیابی روی کندل‌های واقعی ۶۰ دقیقه‌ای؛ حداقل ۱۸۰ کندل لازم است. فرض اسپرد همان مقدار تب بک‌تست است: ${backtestSpread} واحد پایه.",color=muted,fontSize=11.sp)
             when {
               walkForwardRefresh==0 -> Text("برای اجرای آزمون مستقل، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
               walkForward==null -> Text("در حال دریافت داده و اجرای سه مرحله آزمون…",color=muted)
@@ -409,8 +414,9 @@ private fun fetchBacktestComparison():List<CompareRow>{
  } finally {connection.disconnect()}
 }
 
-private fun fetchWalkForward():WalkForwardUi{
- val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/walk-forward/live?symbol=xau&interval=60m").openConnection() as HttpURLConnection
+private fun fetchWalkForward(spreadBps:Double):WalkForwardUi{
+ require(spreadBps.isFinite()&&spreadBps in 0.0..500.0){"اسپرد باید بین ۰ تا ۵۰۰ واحد پایه باشد."}
+ val connection=URL(BuildConfig.API_BASE_URL+"/v1/backtest/walk-forward/live?symbol=xau&interval=60m&spread_bps=$spreadBps").openConnection() as HttpURLConnection
  connection.requestMethod="GET";connection.connectTimeout=15000;connection.readTimeout=45000
  try {
    if(connection.responseCode !in 200..299) throw IllegalStateException("Walk-forward HTTP "+connection.responseCode)
@@ -467,7 +473,8 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
  } finally {connection.disconnect()}
 }
 
-private fun fetchLiveBacktest(interval:String,fastPeriod:Int,slowPeriod:Int):BacktestUi{
+private fun fetchLiveBacktest(interval:String,fastPeriod:Int,slowPeriod:Int,spreadBps:Double):BacktestUi{
+ require(spreadBps.isFinite()&&spreadBps in 0.0..500.0){"اسپرد باید بین ۰ تا ۵۰۰ واحد پایه باشد."}
  val connection=URL(BuildConfig.API_BASE_URL+"/v1/paper-trading/backtest").openConnection() as HttpURLConnection
  connection.requestMethod="POST";connection.connectTimeout=12000;connection.readTimeout=30000
  connection.doOutput=true
@@ -476,7 +483,7 @@ private fun fetchLiveBacktest(interval:String,fastPeriod:Int,slowPeriod:Int):Bac
    val request=JSONObject().put("symbol","xau").put("interval",interval)
      .put("fast_period",fastPeriod).put("slow_period",slowPeriod)
      .put("starting_capital",10000).put("risk_fraction",0.01)
-     .put("contract_value_per_price_unit",1).put("fee_bps",10).put("slippage_bps",5)
+     .put("contract_value_per_price_unit",1).put("fee_bps",10).put("slippage_bps",5).put("spread_bps",spreadBps)
    connection.outputStream.use{it.write(request.toString().toByteArray(Charsets.UTF_8))}
    val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
    val root=JSONObject(stream.bufferedReader().use{it.readText()})
