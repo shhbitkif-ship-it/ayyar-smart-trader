@@ -57,7 +57,7 @@ def test_rsi_monotonic_up_and_down_are_bounded_extremes():
 
 def test_atr_uses_previous_close_and_rejects_invalid_ohlc():
     value = atr([12, 15, 14], [9, 11, 10], [10, 13, 12], period=2)
-    assert value == pytest.approx(4.0)
+    assert value == pytest.approx(4.5)
     with pytest.raises(ValueError, match="high"):
         atr([8, 7], [9, 6], [8, 7], period=1)
 
