@@ -761,8 +761,11 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
         low:Math.min(previous,close)-0.2,close};
     });
   }
+  const requestedRanges=[];
   globalThis.fetch=async url=>{
-    const interval=new URL(String(url)).searchParams.get("interval");
+    const parsed=new URL(String(url));
+    const interval=parsed.searchParams.get("interval");
+    requestedRanges.push({interval,range:parsed.searchParams.get("range")});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
       {status:200,headers:{"content-type":"application/json"}});
   };
@@ -784,6 +787,8 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
     assert.deepEqual(body.signal_quality.blocked_reasons,[]);
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
+    assert.equal(requestedRanges.find(item=>item.interval==="60m")?.range,"3mo");
+    assert.equal(requestedRanges.find(item=>item.interval==="15m")?.range,"5d");
 
     // Independently reproduce Wilder ATR(14) from raw OHLC candles.
     const reference=candlesByInterval["60m"];
