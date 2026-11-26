@@ -101,7 +101,7 @@ test("XAUS fresh spot is used only as a validated XAU quote fallback when NerkhA
     if(String(url).includes("xaus.com/api/v1/spot")){
       const now=new Date().toISOString();
       return new Response(JSON.stringify({spot_usd_oz:4123.45,
-        xau:{price:4123.45,currency:"USD",unit:"troy_oz"},
+        xau:{price:4123.45,currency:"USD",unit:"oz"},
         data_state:{status:"fresh",as_of:now,age_seconds:0},updated_at:now}),
         {status:200,headers:{"content-type":"application/json"}});
     }
@@ -128,7 +128,7 @@ test("XAUS spot fallback rejects stale or non-fresh source data",async()=>{
     if(String(url).includes("xaus.com/api/v1/spot")){
       const stale=new Date(Date.now()-10*60*1000).toISOString();
       return new Response(JSON.stringify({spot_usd_oz:4123.45,
-        xau:{price:4123.45,currency:"USD",unit:"troy_oz"},
+        xau:{price:4123.45,currency:"USD",unit:"oz"},
         data_state:{status:"stale",as_of:stale,age_seconds:600},updated_at:new Date().toISOString()}),
         {status:200,headers:{"content-type":"application/json"}});
     }
