@@ -2844,3 +2844,60 @@ test("candle endpoint rejects fresh but insufficient BIQUOTE history instead of 
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("XAUS candle freshness is measured from completed bar close, not bar open", async () => {
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{
+    const close=2600+i*.1;
+    return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),
+      open:close,high:close+1,low:close-1,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{
+    status:200,headers:{"content-type":"application/json"}
+  });
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.candle_timestamp_semantics,"BAR_OPEN_TIME");
+    assert.equal(body.age_reference,"COMPLETED_BAR_CLOSE");
+    assert.equal(body.last_candle_close_at,new Date(lastClosed+intervalMs).toISOString());
+    assert.ok(body.age_seconds>=0&&body.age_seconds<3600,
+      "age must be measured from the last completed candle close");
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+
+test("BIQUOTE candle freshness metadata explicitly references completed bar close", async () => {
+  const isolatedWorker=(await import("./worker_core.js?biquote-close-time-contract-test")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[];
+  for(let i=0;i<100;i++){
+    const openTime=currentBucket-(i+1)*intervalMs;
+    const open=3500+i*.1,close=open+.2;
+    bars.push({openTime:new Date(openTime).toISOString(),open,high:close+.1,low:open-.1,
+      close,volume:0,tickVolume:100+i,isOpen:false});
+  }
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.provider,"BIQUOTE");
+    assert.equal(body.candle_timestamp_semantics,"BAR_OPEN_TIME");
+    assert.equal(body.age_reference,"COMPLETED_BAR_CLOSE");
+    assert.equal(body.last_candle_close_at,new Date(currentBucket-intervalMs+intervalMs).toISOString());
+    assert.ok(body.age_seconds>=0&&body.age_seconds<900);
+  }finally{globalThis.fetch=originalFetch;}
+});
