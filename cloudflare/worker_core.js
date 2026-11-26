@@ -194,7 +194,8 @@ function runWalkForward(payload) {
       selected_parameters:{fast_period:best.fast_period,slow_period:best.slow_period},
       training_selection_score:best.selection_score,training_return_pct:best.training_return_pct,
       training_drawdown_pct:best.training_drawdown_pct,
-      out_of_sample_return_pct:test.net_return_pct,out_of_sample_drawdown_pct:test.max_drawdown_pct,
+      out_of_sample_return_pct:test.net_return_pct,first_test_fill_at:test.evaluation_start_at,
+      first_test_fill_included:true,out_of_sample_drawdown_pct:test.max_drawdown_pct,
       out_of_sample_trades:test.closed_trades,out_of_sample_win_rate_pct:test.win_rate_pct,
       out_of_sample_profit_factor:test.profit_factor});
   }
