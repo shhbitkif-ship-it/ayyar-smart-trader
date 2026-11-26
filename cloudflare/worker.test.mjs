@@ -2421,6 +2421,41 @@ test("BIQUOTE candle endpoint exposes exact gap timestamps without filling missi
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("repeated UTC candle gaps are surfaced as patterns but remain unclassified",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?biquote-recurring-gap-diagnostics-test")).default;
+  const intervalMs=15*60*1000,currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[];
+  for(let i=0;i<250;i++){
+    const openTime=currentBucket-(i+1)*intervalMs;
+    const date=new Date(openTime);
+    if(date.getUTCHours()===22) continue;
+    const open=3500+i*.05,close=open+.1;
+    bars.push({openTime:date.toISOString(),open,high:close+.1,low:open-.1,
+      close,volume:0,tickVolume:100+i,isOpen:false});
+  }
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    const diagnostics=body.data_quality.gap_diagnostics;
+    assert.equal(diagnostics.classification,"UNCLASSIFIED");
+    const repeated=diagnostics.recurring_windows_utc.find(x=>x.start_time_utc==="21:45"&&x.end_time_utc==="23:00");
+    assert.ok(repeated&&repeated.occurrences>=2,JSON.stringify(diagnostics));
+    assert.match(diagnostics.note,/does not prove a market closure/i);
+    assert.equal(body.data_quality.status,"GAPS_DETECTED");
+    assert.equal(body.execution_enabled,undefined);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("BIQUOTE fallback rejects stale completed candles instead of fabricating a live feed",async()=>{
   const isolatedWorker=(await import("./worker_core.js?biquote-xau-stale-fallback-test")).default;
   const intervalMs=15*60*1000;
