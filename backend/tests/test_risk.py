@@ -93,3 +93,47 @@ def test_trade_plan_rejects_non_finite_and_invalid_thresholds():
         TradePlanRequest(side="LONG", entry=float("inf"), stop_loss=95, take_profit=110)
     with pytest.raises(ValidationError):
         TradePlanRequest(side="LONG", entry=100, stop_loss=95, take_profit=110, minimum_risk_reward=0)
+
+
+@pytest.mark.parametrize(
+    "side,expected_stop,expected_target",
+    [
+        ("LONG", 97.0, 106.0),
+        ("SHORT", 103.0, 94.0),
+    ],
+)
+def test_atr_plan_builds_directional_levels_without_enabling_execution(
+    side, expected_stop, expected_target,
+):
+    from app.risk import AtrTradePlanRequest, build_atr_trade_plan
+    result = build_atr_trade_plan(AtrTradePlanRequest(
+        side=side, entry=100, atr_value=2,
+        stop_atr_multiple=1.5, reward_risk=2,
+    ))
+    assert result["valid"] is True
+    assert result["stop_loss"] == expected_stop
+    assert result["take_profit"] == expected_target
+    assert result["risk_reward"] == 2
+    assert result["execution_enabled"] is False
+
+
+def test_atr_plan_rejects_prices_below_zero_after_level_calculation():
+    from app.risk import AtrTradePlanRequest, build_atr_trade_plan
+    result = build_atr_trade_plan(AtrTradePlanRequest(
+        side="LONG", entry=1, atr_value=2,
+    ))
+    assert result["valid"] is False
+    assert result["execution_enabled"] is False
+
+
+def test_atr_plan_rejects_non_finite_or_extreme_inputs():
+    from app.risk import AtrTradePlanRequest, build_atr_trade_plan
+    with pytest.raises(ValidationError):
+        AtrTradePlanRequest(side="LONG", entry=100, atr_value=float("inf"))
+    req = AtrTradePlanRequest(
+        side="LONG", entry=1e308, atr_value=1e308,
+        stop_atr_multiple=5, reward_risk=5,
+    )
+    result = build_atr_trade_plan(req)
+    assert result["valid"] is False
+    assert result["execution_enabled"] is False
