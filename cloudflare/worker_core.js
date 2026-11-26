@@ -756,7 +756,9 @@ function calculateSignalPerformance(records,candles) {
     wins:0,losses:0,flats:0,win_rate_pct:null,average_return_pct:null,
     average_favorable_pct:null,average_adverse_pct:null}]));
   const outcomes=[];
-  let pending=0,unavailable=0;
+  let pending=0,unavailable=0,outsideCandleRange=0,missingCandleWithinRange=0;
+  const firstCandleTime=candles.length?Date.parse(candles[0].timestamp):NaN;
+  const lastCandleTime=candles.length?Date.parse(candles[candles.length-1].timestamp):NaN;
   const ordered=[...records].filter(r=>isValidArchivedSignal(r)&&["BUY","SELL"].includes(r.signal))
     .sort((a,b)=>Date.parse(b.last_candle_at)-Date.parse(a.last_candle_at));
   for(const record of ordered) {
@@ -764,6 +766,9 @@ function calculateSignalPerformance(records,candles) {
     const index=times.get(signalTime);
     if(!Number.isFinite(signalTime)||index===undefined) {
       unavailable++;
+      if(Number.isFinite(signalTime)&&Number.isFinite(firstCandleTime)&&Number.isFinite(lastCandleTime)&&
+          (signalTime<firstCandleTime||signalTime>lastCandleTime)) outsideCandleRange++;
+      else missingCandleWithinRange++;
       for(const horizon of horizons) stats[horizon].unavailable++;
       continue;
     }
@@ -825,6 +830,9 @@ function calculateSignalPerformance(records,candles) {
   return {method:"completed_60m_candles_next_open_entry",horizons:Object.values(stats),
     outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
     unavailable_count:unavailable,
+    unavailable_diagnostics:{outside_candle_range:outsideCandleRange,
+      missing_candle_within_range:missingCandleWithinRange,
+      note:"Outside-range records need a wider provider history window; missing timestamps inside the available range indicate candle alignment or data gaps. Neither category is scored."},
     sample_quality:{minimum_context_samples:30,maximum_scored_samples:maximumScoredSamples,
       status:maximumScoredSamples>=30?"AT_OR_ABOVE_CONTEXT_THRESHOLD":"BELOW_CONTEXT_THRESHOLD",
       note:"30 is a practical display threshold only; it does not establish statistical significance or predict future performance."},
