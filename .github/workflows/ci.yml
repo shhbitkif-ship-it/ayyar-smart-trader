@@ -148,11 +148,22 @@ jobs:
                       if name.startswith("biquote"):
                           data = json.loads(raw)
                           bars = data.get("bars") or []
+                          closed = [bar for bar in bars if bar.get("isOpen") is False]
+                          parsed = sorted((bar for bar in closed if bar.get("openTime")),
+                              key=lambda bar: bar["openTime"])
+                          interval_seconds = {"15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400}.get(data.get("interval"), 0)
+                          gaps = []
+                          for left, right in zip(parsed, parsed[1:]):
+                              delta = ( __import__("datetime").datetime.fromisoformat(right["openTime"].replace("Z","+00:00")) -
+                                        __import__("datetime").datetime.fromisoformat(left["openTime"].replace("Z","+00:00")) ).total_seconds()
+                              if interval_seconds and delta > interval_seconds * 1.01:
+                                  gaps.append(round(delta / interval_seconds, 2))
+                          latest_closed = closed[0] if closed else None
                           probe_results[name] = {
                               "http": response.status, "symbol": data.get("symbol"),
                               "interval": data.get("interval"), "rows": len(bars),
-                              "closed_rows": sum(1 for bar in bars if bar.get("isOpen") is False),
-                              "last_bar": bars[0] if bars else None
+                              "closed_rows": len(closed), "latest_closed_bar": latest_closed,
+                              "gap_count": len(gaps), "largest_gap_intervals": max(gaps, default=0)
                           }
                       elif "yahoo" in name:
                           data = json.loads(raw)
