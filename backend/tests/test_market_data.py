@@ -210,3 +210,40 @@ def test_snapshot_allows_quote_timestamp_within_provider_clock_tolerance():
     snapshot = {"status": "LIVE", "provider_generated_at": generated, "quotes": [quote]}
     refreshed = _refresh_snapshot_status(snapshot, now)
     assert refreshed["quotes"][0]["status"] == "LIVE"
+
+
+def test_malformed_optional_quote_metadata_is_sanitized():
+    stamp = datetime.now(timezone.utc).isoformat()
+    item = {
+        "price": 2300,
+        "unit": "USD",
+        "updated_utc": stamp,
+        "stale": False,
+        "change_pct": float("nan"),
+        "spread_pct": -0.2,
+        "sources": True,
+        "method": {"unexpected": "object"},
+        "name": {"fa": 123, "en": "  Gold  "},
+    }
+    quote = _normalise(item, "XAUUSD", "Gold", "xau")
+    assert quote["status"] == "LIVE"
+    assert quote["name"] == "Gold"
+    assert quote["meta"]["change_pct"] is None
+    assert quote["meta"]["spread_pct"] is None
+    assert quote["meta"]["sources"] is None
+    assert quote["meta"]["method"] is None
+
+
+def test_valid_optional_quote_metadata_is_preserved():
+    stamp = datetime.now(timezone.utc).isoformat()
+    item = {
+        "price": 2300, "unit": "USD", "updated_utc": stamp, "stale": False,
+        "change_pct": -1.25, "spread_pct": 0.15, "sources": 4,
+        "method": "aggregated", "name": {"fa": "اونس"},
+    }
+    quote = _normalise(item, "XAUUSD", "Gold", "xau")
+    assert quote["meta"]["change_pct"] == -1.25
+    assert quote["meta"]["spread_pct"] == 0.15
+    assert quote["meta"]["sources"] == 4
+    assert quote["meta"]["method"] == "aggregated"
+    assert quote["name"] == "اونس"
