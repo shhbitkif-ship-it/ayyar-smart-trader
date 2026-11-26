@@ -797,7 +797,7 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
     const historyBody=await history.json();
     assert.equal(history.status,200);
     assert.equal(historyBody.count,1);
-    assert.equal(historyBody.records[0].archive_source,"XAUS completed OHLC multi-timeframe evaluation");
+    assert.equal(historyBody.records[0].archive_source,"validated completed OHLC multi-timeframe evaluation");
     assert.equal(historyBody.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
@@ -817,7 +817,7 @@ test("signal performance uses next candle open, completed horizons and refuses c
   const signalTimeWithOffset=signalTime.replace("Z","+00:00");
   store.set("xau:latest:sample",{signal:"BUY",symbol:"xau",confidence:80,entry:2610,stop_loss:2600,take_profit:2630,
     market_data_status:"LIVE",execution_enabled:false,
-    archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    archive_source:"validated completed OHLC multi-timeframe evaluation",
     last_candle_at:signalTimeWithOffset,recorded_at:new Date(Date.parse(signalTime)+1000).toISOString()});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)||null;}};
@@ -860,7 +860,7 @@ test("signal history and performance ignore malformed or execution-enabled archi
   });
   const valid={signal:"BUY",symbol:"xau",confidence:80,entry:2610,stop_loss:2600,take_profit:2630,
     market_data_status:"LIVE",execution_enabled:false,
-    archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    archive_source:"validated completed OHLC multi-timeframe evaluation",
     last_candle_at:candles[10].timestamp,recorded_at:new Date(Date.parse(candles[10].timestamp)+1000).toISOString()};
   const store=new Map([
     ["xau:latest:valid",valid],
@@ -1107,7 +1107,7 @@ test("SELL signal performance reports non-negative favorable and adverse excursi
   });
   store.set("xau:latest:sell-sample",{signal:"SELL",symbol:"xau",confidence:80,entry:2610,stop_loss:2620,take_profit:2590,
     market_data_status:"LIVE",execution_enabled:false,
-    archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    archive_source:"validated completed OHLC multi-timeframe evaluation",
     last_candle_at:candles[10].timestamp,recorded_at:new Date(Date.parse(candles[10].timestamp)+1000).toISOString()});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)||null;}};
