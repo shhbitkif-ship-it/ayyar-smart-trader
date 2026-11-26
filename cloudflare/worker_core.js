@@ -1371,8 +1371,17 @@ export default {
         const records=(await Promise.all(historyKeys.map(item=>env.SIGNAL_HISTORY.get(item.name,"json")))).filter(Boolean);
         const market=await fetchGoldCandles("xau","60m");
         const result=calculateSignalPerformance(records,market.candles);
+        const firstCandle=market.candles[0];
+        const lastCandle=market.candles[market.candles.length-1];
+        const coverageDays=firstCandle&&lastCandle
+          ? Math.max(0,(Date.parse(lastCandle.timestamp)-Date.parse(firstCandle.timestamp))/86400000) : 0;
+        const historyCoverage={requested_retention_days:90,
+          first_candle_at:firstCandle?.timestamp||null,last_candle_at:lastCandle?.timestamp||null,
+          coverage_days:round2(coverageDays),candle_count:market.candles.length,
+          covers_retention_window:coverageDays>=89};
         return json({status:"OK",symbol:"xau",provider:market.provider,market_last_candle_at:market.last_candle_at,
-          candle_data_quality:market.data_quality,record_count:records.length,history_pages:historyPages,...result});
+          candle_data_quality:market.data_quality,history_coverage:historyCoverage,
+          record_count:records.length,history_pages:historyPages,...result});
       } catch(e) {
         return json({status:"UNAVAILABLE",error:String(e?.message||"Signal performance evaluation unavailable"),
           execution_enabled:false},502);
