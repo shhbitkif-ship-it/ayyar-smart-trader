@@ -287,7 +287,7 @@ function classifyMarketRegime(candles) {
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
 
-async function fetchGoldCandles(symbol, interval) {
+async function fetchGoldCandlesFromXaus(symbol, interval) {
   const providerSymbol = CANDLE_SYMBOLS.get(symbol);
   const intervalSeconds = CANDLE_INTERVALS.get(interval);
   if (!providerSymbol || !intervalSeconds) throw new Error("Unsupported candle symbol or interval");
@@ -360,6 +360,92 @@ async function fetchGoldCandles(symbol, interval) {
     note:"Completed OHLC candles for global XAU/USD from XAUS chart API. Data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
   };
 }
+
+async function fetchGoldCandlesFromBiquote(symbol, interval) {
+  const providerSymbol=CANDLE_SYMBOLS.get(symbol);
+  const intervalSeconds=CANDLE_INTERVALS.get(interval);
+  const providerInterval=new Map([["15m","15m"],["30m","30m"],["60m","1h"],["1d","1d"]]).get(interval);
+  if(!providerSymbol||!intervalSeconds||!providerInterval)
+    throw new Error("Unsupported BIQUOTE symbol or interval");
+  const endpoint="https://biquote.io/api/"+encodeURIComponent(providerSymbol.toUpperCase())+
+    "/ohlc?interval="+encodeURIComponent(providerInterval)+"&limit=250";
+  const response=await fetch(endpoint,{
+    headers:{accept:"application/json","user-agent":"AyyarSmartTrader/1.0"},
+    signal:AbortSignal.timeout(10000)
+  });
+  if(!response.ok) throw new Error("BIQUOTE OHLC provider HTTP "+response.status);
+  const payload=await response.json();
+  if(String(payload?.symbol||"").toUpperCase()!=="XAUUSD"||payload?.interval!==providerInterval||
+      !Array.isArray(payload?.bars))
+    throw new Error("BIQUOTE returned an unexpected XAUUSD OHLC schema");
+  const intervalMs=intervalSeconds*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const candles=[];
+  let rejected=0;
+  for(const bar of payload.bars){
+    if(typeof bar?.isOpen!=="boolean") throw new Error("BIQUOTE candle is missing its closed/open state");
+    if(bar.isOpen) continue;
+    const time=Date.parse(bar?.openTime);
+    if(!Number.isFinite(time)){rejected++;continue;}
+    if(time>=currentBucket) continue;
+    if(time%intervalMs!==0)
+      throw new Error("BIQUOTE returned a candle timestamp that is not aligned to its declared interval");
+    const open=Number(bar.open),high=Number(bar.high),low=Number(bar.low),close=Number(bar.close);
+    if(![open,high,low,close].every(v=>Number.isFinite(v)&&v>0&&v<=1e15)||
+        high<Math.max(open,close,low)||low>Math.min(open,close,high)){
+      rejected++;
+      continue;
+    }
+    candles.push({timestamp:new Date(time).toISOString(),open,high,low,close});
+  }
+  if(rejected) throw new Error("BIQUOTE returned "+rejected+" malformed completed OHLC bars");
+  candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
+  if(candles.some((bar,i)=>i>0&&Date.parse(bar.timestamp)===Date.parse(candles[i-1].timestamp)))
+    throw new Error("BIQUOTE returned duplicate candle timestamps");
+  const last=candles[candles.length-1];
+  if(!last) throw new Error("BIQUOTE returned no completed XAUUSD candles");
+  const lastCloseTime=Date.parse(last.timestamp)+intervalMs;
+  const ageSeconds=(Date.now()-lastCloseTime)/1000;
+  const freshnessLimit=Math.max(600,intervalSeconds*2);
+  if(ageSeconds < -30||ageSeconds>freshnessLimit)
+    throw new Error("Latest completed BIQUOTE OHLC candle is stale");
+  const gaps=[];
+  for(let i=1;i<candles.length;i++){
+    const delta=(Date.parse(candles[i].timestamp)-Date.parse(candles[i-1].timestamp))/intervalMs;
+    if(delta>1.01) gaps.push({from:candles[i-1].timestamp,to:candles[i].timestamp,
+      missing_intervals:Math.max(1,Math.round(delta)-1)});
+  }
+  const dataQuality={status:gaps.length?"GAPS_DETECTED":"CLEAN",candle_count:candles.length,
+    duplicate_count:0,rejected_completed_points:0,gap_count:gaps.length,
+    missing_intervals:gaps.reduce((sum,g)=>sum+g.missing_intervals,0),
+    largest_gap_intervals:gaps.reduce((max,g)=>Math.max(max,g.missing_intervals),0),
+    note:"BIQUOTE gaps are reported, never filled or interpolated. Market closures and provider omissions remain visible to downstream quality gates."};
+  return {
+    symbol,provider:"BIQUOTE",provider_symbol:"XAUUSD",
+    source_url:"https://biquote.io/api/XAUUSD/ohlc",
+    interval,interval_seconds:intervalSeconds,status:"LIVE",data_quality:dataQuality,
+    retrieved_at:new Date().toISOString(),last_candle_at:last.timestamp,
+    age_seconds:Math.max(0,Math.round(ageSeconds)),candles,
+    note:"Completed XAU/USD OHLC candles from BIQUOTE public read-only feed. Bars marked open are excluded. Data may contain market-closure or provider gaps; indicative data only, not a broker execution feed."
+  };
+}
+
+async function fetchGoldCandles(symbol, interval) {
+  let primaryError;
+  try {
+    return await fetchGoldCandlesFromXaus(symbol,interval);
+  } catch(error) {
+    primaryError=String(error?.message||"XAUS OHLC unavailable");
+  }
+  try {
+    const fallback=await fetchGoldCandlesFromBiquote(symbol,interval);
+    return {...fallback, fallback_reason:primaryError};
+  } catch(error) {
+    throw new Error("XAUS unavailable: "+primaryError+"; BIQUOTE fallback unavailable: "+
+      String(error?.message||"unknown provider error"));
+  }
+}
+
 function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
@@ -620,9 +706,9 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       execution_enabled:false,mode:"PAPER_ONLY"
     });
     const market=await fetchGoldCandles("xau","15m");
-    if(market.status!=="LIVE"||market.provider!=="XAUS"||!market.candles?.length||
+    if(market.status!=="LIVE"||!["XAUS","BIQUOTE"].includes(market.provider)||!market.candles?.length||
       market.data_quality?.status!=="CLEAN"||market.data_quality?.missing_intervals>0)
-      throw new Error("Fresh, continuous XAUS 15m candles unavailable; no paper positions were changed");
+      throw new Error("Fresh, continuous XAU/USD 15m candles from an approved provider unavailable; no paper positions were changed");
     const checkedAt=new Date().toISOString();
     let accountsChecked=0,processed=0,closed=0;
     const failures=[];
