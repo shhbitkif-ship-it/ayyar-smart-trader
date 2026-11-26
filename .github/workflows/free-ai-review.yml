@@ -63,7 +63,7 @@ jobs:
               return f"__GHA_EXPRESSION_{len(gha_expressions)-1}__"
           patch=re.sub(r"\$\{\{.*?\}\}", protect_expression, patch, flags=re.S)
           # Redact common credential assignments and bearer values before transmission.
-          patch=re.sub(r'(?i)(api[_-]?key|token|secret|password)(\s*[:=]\s*)[^\s,;]+', r'\1\2[REDACTED]', patch)
+          patch=re.sub(r'(?i)(api[_-]?key|token|secret|password)(\s*[:=]\s*)(?!__GHA_EXPRESSION_\d+__)[^\s,;]+', r'\1\2[REDACTED]', patch)
           patch=re.sub(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*', r'\1[REDACTED]', patch)
           # Restore non-secret workflow expressions after redaction.
           for index, expression in enumerate(gha_expressions):
