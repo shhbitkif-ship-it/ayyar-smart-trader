@@ -182,7 +182,7 @@ EMA backtests and walk-forward evaluations accept `spread_bps` as the **full quo
 
 ## Walk-forward market-regime attribution
 
-Each out-of-sample fold reports bars classified as TRENDING, RANGE, HIGH_VOLATILITY, TRANSITIONAL, or UNAVAILABLE. The classifier uses only candles completed before each test candle opens. Equity changes are attributed to the regime known at the start of each bar; trades are grouped by the regime at entry. Fold and aggregate summaries are descriptive diagnostics only, do not change strategy selection, and do not imply that a regime label predicts future returns.
+Regime indicators are precomputed in linear time from the ordered OHLC series. Each out-of-sample fold reports bars classified as TRENDING, RANGE, HIGH_VOLATILITY, TRANSITIONAL, or UNAVAILABLE. The classifier uses only candles completed before each test candle opens. Equity changes are attributed to the regime known at the start of each bar; trades are grouped by the regime at entry. Fold and aggregate summaries are descriptive diagnostics only, do not change strategy selection, and do not imply that a regime label predicts future returns.
 
 ## Walk-forward transaction-cost stress test
 
