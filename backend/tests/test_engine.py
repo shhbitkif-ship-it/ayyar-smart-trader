@@ -1,5 +1,6 @@
 from datetime import datetime,timedelta,timezone
 import pytest
+import math
 from pydantic import ValidationError
 from app.engine import evaluate
 from app.schemas import Candle,EvaluateRequest
@@ -250,3 +251,85 @@ def test_market_regime_classifier_marks_missing_atr_as_unknown():
     assert result["trend"] == "UNKNOWN"
     assert result["volatility_regime"] == "UNKNOWN"
     assert result["signal_quality"] == "INSUFFICIENT"
+
+
+def _regime_scenario_candles(kind, count, start, step_minutes=1):
+    result = []
+    previous = 2600.0
+    for index in range(count):
+        if kind == "BULLISH":
+            close = 2600 + index * 0.08 + 0.7 * math.sin(index * 0.45)
+        elif kind == "BEARISH":
+            close = 2600 - index * 0.08 + 0.7 * math.sin(index * 0.45)
+        elif kind == "SIDEWAYS":
+            close = 2600 + 1.2 * math.sin(index * 0.4)
+        else:  # directional trend with deliberately extreme intrabar ranges
+            close = 2600 + index * 0.08 + 0.7 * math.sin(index * 0.45)
+        wick = 35.0 if kind == "HIGH_VOLATILITY" else 0.3
+        open_price = previous
+        high = max(open_price, close) + wick
+        low = min(open_price, close) - wick
+        result.append(Candle(
+            timestamp=start + timedelta(minutes=step_minutes * index),
+            open=open_price, high=high, low=low, close=close, volume=100,
+        ))
+        previous = close
+    return result
+
+
+@pytest.mark.parametrize(
+    "scenario,expected_trend,expected_volatility",
+    [
+        ("BULLISH", "BULLISH", "NORMAL"),
+        ("BEARISH", "BEARISH", "NORMAL"),
+        ("SIDEWAYS", "SIDEWAYS", "NORMAL"),
+        ("HIGH_VOLATILITY", "BULLISH", "HIGH"),
+    ],
+)
+def test_full_engine_scenario_diagnostics_are_safe_and_directional(
+    scenario, expected_trend, expected_volatility,
+):
+    now = datetime.now(timezone.utc)
+    market = _regime_scenario_candles(
+        scenario, 220, now - timedelta(minutes=220),
+    )
+    confirmation_kind = "BEARISH" if scenario == "BEARISH" else "BULLISH"
+    confirmation = _regime_scenario_candles(
+        confirmation_kind, 60, now - timedelta(minutes=297), 5,
+    )
+    # Keep the final higher-timeframe candle older than the evaluated market candle.
+    confirmation[-1] = confirmation[-1].model_copy(
+        update={"timestamp": market[-1].timestamp - timedelta(seconds=30)}
+    )
+    request = EvaluateRequest(
+        symbol="XAUUSD", timeframe="1m",
+        candles=market, confirmation_candles=confirmation,
+    )
+    result = evaluate(request, now)
+
+    assert result.status != "STALE"
+    assert result.analysis["trend"] == expected_trend
+    assert result.analysis["volatility_regime"] == expected_volatility
+    assert result.analysis["setup_direction"] in {"LONG", "SHORT", "NONE"}
+    assert result.analysis["setup_detected"] is (
+        result.analysis["setup_direction"] in {"LONG", "SHORT"}
+    )
+    # This engine is deliberately advisory: it must never emit an executable order.
+    assert result.action in {"WAIT", "NO_TRADE"}
+    assert result.action not in {"BUY", "SELL"}
+    if result.analysis["setup_detected"]:
+        assert result.action == "WAIT"
+
+
+def test_engine_reports_setup_none_for_missing_higher_timeframe_confirmation():
+    now = datetime.now(timezone.utc)
+    request = EvaluateRequest(
+        symbol="XAUUSD",
+        candles=_regime_scenario_candles(
+            "BULLISH", 220, now - timedelta(minutes=220),
+        ),
+    )
+    result = evaluate(request, now)
+    assert result.action == "NO_TRADE"
+    assert result.analysis["setup_direction"] == "NONE"
+    assert result.analysis["setup_detected"] is False
