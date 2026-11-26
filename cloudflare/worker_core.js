@@ -988,7 +988,7 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       execution_enabled:false,mode:"PAPER_ONLY"
     });
     const market=await fetchGoldCandles("xau","15m");
-    if(market.status!=="LIVE"||!["XAUS","BIQUOTE"].includes(market.provider)||!market.candles?.length)
+    if(!["LIVE","PARTIAL"].includes(market.status)||!["XAUS","BIQUOTE"].includes(market.provider)||!market.candles?.length)
       throw new Error("Fresh completed XAU/USD 15m candles from an approved provider unavailable; no paper positions were changed");
     if(market.data_quality?.status!=="CLEAN"||market.data_quality?.missing_intervals>0)
       throw new Error("XAU/USD 15m feed contains "+Number(market.data_quality?.gap_count||0)+
