@@ -1095,6 +1095,36 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
   }
 });
 
+test("EMA backtest rejects missing historical candles instead of bridging gaps", async () => {
+  const candles=Array.from({length:120},(_,i)=>{
+    const close=2500+i*0.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+(i+(i>=60?1:0))*3600000).toISOString(),
+      open:close-0.1,high:close+0.3,low:close-0.3,close};
+  });
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,timeframe_minutes:60})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,400);
+  assert.match(body.error,/history is gapped/i);
+});
+
+test("walk-forward backtest rejects missing historical candles before parameter selection", async () => {
+  const candles=Array.from({length:240},(_,i)=>{
+    const close=2500+i*0.35+Math.sin(i/4)*3;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+(i+(i>=120?1:0))*3600000).toISOString(),
+      open:close-0.2,high:close+0.8,low:close-0.8,close};
+  });
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,timeframe_minutes:60})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,400);
+  assert.match(body.error,/history is gapped/i);
+});
+
 test("walk-forward backtest rejects short history instead of reporting misleading results", async () => {
   const candles=Array.from({length:120},(_,i)=>{
     const close=2500+i*0.2;
