@@ -212,3 +212,48 @@ def test_cost_sensitivity_preserves_strategy_and_candle_input():
     run_cost_sensitivity(candles)
     after = [(c.timestamp, c.open, c.high, c.low, c.close) for c in candles]
     assert after == before
+
+
+def test_out_of_sample_uses_causal_warmup_and_test_period_benchmark():
+    from app.backtest import run_out_of_sample_backtest
+    candles = sample_candles()
+    result = run_out_of_sample_backtest(candles, train_fraction=0.6)
+    split = int(len(candles) * 0.6)
+    assert result["train_candles"] == split
+    assert result["test_candles"] == len(candles) - split
+    assert result["split_time"] == candles[split].timestamp.isoformat()
+    assert result["out_of_sample"]["evaluation_start_time"] == candles[split].timestamp.isoformat()
+    assert result["out_of_sample"]["benchmark"]["assumption"].startswith(f"Buy at candle index {split}")
+    assert "no parameter fitting" in result["method"]
+
+
+def test_out_of_sample_does_not_allow_short_or_extreme_partitions():
+    from app.backtest import run_out_of_sample_backtest
+    with pytest.raises(ValueError, match="between 0.5 and 0.9"):
+        run_out_of_sample_backtest(sample_candles(), train_fraction=0.95)
+    with pytest.raises(ValueError, match="At least 120"):
+        run_out_of_sample_backtest(sample_candles()[:100])
+
+
+def test_start_index_rejects_invalid_boundaries():
+    with pytest.raises(ValueError, match="start_index"):
+        run_ema_backtest(sample_candles(), start_index=-1)
+    with pytest.raises(ValueError, match="start_index"):
+        run_ema_backtest(sample_candles(), start_index=len(sample_candles()) - 1)
+
+
+def test_out_of_sample_metrics_are_independent_of_future_after_test_window():
+    from app.backtest import run_out_of_sample_backtest
+    candles = sample_candles()
+    baseline = run_out_of_sample_backtest(candles, train_fraction=0.6)
+    changed = list(candles)
+    for i in range(110, len(changed)):
+        c = changed[i]
+        px = float(c.close) * 1.15
+        changed[i] = c.model_copy(update={"open": px, "high": px + 3, "low": px - 3, "close": px})
+    revised = run_out_of_sample_backtest(changed, train_fraction=0.6)
+    # Signals/trades completed before the modified candles cannot be rewritten.
+    cutoff = candles[109].timestamp.isoformat()
+    before_a = [x for x in baseline["out_of_sample"].get("trades", []) if x["exit_time"] <= cutoff]
+    before_b = [x for x in revised["out_of_sample"].get("trades", []) if x["exit_time"] <= cutoff]
+    assert before_a == before_b
