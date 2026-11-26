@@ -1117,11 +1117,36 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
   assert.equal(body.fold_count,3);
   assert.equal(body.folds.length,3);
   assert.equal(body.execution_enabled,false);
+  assert.ok(["INSUFFICIENT_SAMPLE","CONSISTENT_POSITIVE","CONSISTENT_NEGATIVE","MIXED"].includes(body.stability.status));
+  assert.equal(body.stability.positive_folds+body.stability.negative_folds+body.folds.filter(f=>f.out_of_sample_return_pct===0).length,3);
+  assert.equal(body.stability.sample_sufficient,body.total_out_of_sample_trades>=20&&body.stability.min_fold_trades>=5);
+  assert.ok(Number.isFinite(body.stability.median_fold_return_pct));
+  assert.ok(body.stability.fold_return_range_pct>=0);
   for(const fold of body.folds){
     assert.ok(Date.parse(fold.test_start)>Date.parse(fold.training_end));
     assert.ok(["EMA9/EMA21","EMA12/EMA26","EMA20/EMA50"].includes(fold.selected_strategy));
     assert.ok(Number.isFinite(fold.out_of_sample_return_pct));
   }
+});
+
+
+test("walk-forward rejects unsorted or duplicate input timestamps instead of silently sorting", async () => {
+  const candles=Array.from({length:240},(_,i)=>{
+    const close=2500+i*0.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
+      open:close-0.1,high:close+0.3,low:close-0.3,close};
+  });
+  const call=async rows=>worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles:rows,timeframe_minutes:60})
+  }));
+  const reordered=[...candles];[reordered[20],reordered[21]]=[reordered[21],reordered[20]];
+  const outOfOrder=await call(reordered);
+  assert.equal(outOfOrder.status,400);
+  assert.match((await outOfOrder.json()).error,/strictly increasing in input order/i);
+  const duplicate=[...candles];duplicate[21]={...duplicate[20]};
+  const repeated=await call(duplicate);
+  assert.equal(repeated.status,400);
+  assert.match((await repeated.json()).error,/strictly increasing in input order/i);
 });
 
 test("EMA backtest rejects missing historical candles instead of bridging gaps", async () => {
