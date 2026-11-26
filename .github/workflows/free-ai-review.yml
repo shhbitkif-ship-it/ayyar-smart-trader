@@ -70,9 +70,23 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import json, os, re, urllib.request
+          import json, os, re, urllib.request, urllib.error
           patch=open("review-patch.txt",encoding="utf-8").read()
           endpoint="https://api.groq.com/openai/v1/chat/completions"
+          auth="Bearer "+os.environ["GROQ_API_KEY"]
+          # Preflight the credential and model catalogue before sending review content.
+          probe=urllib.request.Request("https://api.groq.com/openai/v1/models",headers={"Authorization":auth})
+          try:
+              with urllib.request.urlopen(probe,timeout=30) as response:
+                  catalogue=json.load(response)
+          except urllib.error.HTTPError as e:
+              detail=e.read(2000).decode("utf-8","replace")
+              raise SystemExit(f"Groq credential/model-catalogue preflight failed: HTTP {e.code}: {detail[:1200]}")
+          available={item.get("id") for item in catalogue.get("data",[])}
+          required={os.environ["GROQ_REVIEW_MODEL"],os.environ["GROQ_CROSSCHECK_MODEL"]}
+          missing=sorted(required-available)
+          if missing:
+              raise SystemExit("Configured Groq model IDs are not available to this key: "+", ".join(missing))
           roles=[
             ("Data quality specialist", "Audit data contracts, OHLC validity, timestamps, completed-candle freshness, missing intervals, provider fallback, and fail-closed behavior. Find concrete defects only."),
             ("Quant and backtesting specialist", "Audit signal logic, look-ahead bias, candle alignment, walk-forward splits, leakage, transaction costs, and statistical validity. Find concrete defects only."),
@@ -92,8 +106,12 @@ jobs:
                 "Authorization":"Bearer "+os.environ["GROQ_API_KEY"],
                 "Content-Type":"application/json"
               })
-              with urllib.request.urlopen(req,timeout=90) as r:
-                  data=json.load(r)
+              try:
+                  with urllib.request.urlopen(req,timeout=90) as r:
+                      data=json.load(r)
+              except urllib.error.HTTPError as e:
+                  detail=e.read(2000).decode("utf-8","replace")
+                  raise SystemExit(f"Groq chat request failed for model {model}: HTTP {e.code}: {detail[:1200]}")
               return data["choices"][0]["message"]["content"]
           reports=[]
           for role,instruction in roles:
