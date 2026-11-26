@@ -508,6 +508,32 @@ function xausChartFixture(candles) {
       o:c.open,h:c.high,l:c.low,c:c.close,v:null}))};
 }
 
+test("OHLC endpoint rejects missing XAUS freshness metadata", async () => {
+  const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{const close=2600+i*.1;return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),open:close,high:close+1,low:close-1,close};});
+  const payload=xausChartFixture(candles);delete payload.data_state;
+  globalThis.fetch=async()=>new Response(JSON.stringify(payload),{status:200});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();assert.equal(response.status,502);
+    assert.match(body.error,/data state is missing/i);assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("OHLC endpoint rejects stale XAUS freshness metadata even when candle timestamps look current", async () => {
+  const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{const close=2600+i*.1;return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),open:close,high:close+1,low:close-1,close};});
+  const payload=xausChartFixture(candles);
+  payload.data_state.as_of=new Date(Date.now()-10*60*1000).toISOString();
+  payload.data_state.age_seconds=600;
+  globalThis.fetch=async()=>new Response(JSON.stringify(payload),{status:200});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();assert.equal(response.status,502);
+    assert.match(body.error,/freshness metadata.*stale/i);assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
 test("OHLC feed rejects duplicate completed candle timestamps", async () => {
   const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
   const candles=Array.from({length:80},(_,i)=>{const close=2600+i*.1;return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),open:close,high:close+1,low:close-1,close};});
