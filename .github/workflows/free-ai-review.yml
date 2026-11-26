@@ -65,6 +65,18 @@ jobs:
           # Redact common credential assignments and bearer values before transmission.
           patch=re.sub(r'(?i)(api[_-]?key|token|secret|password)(\s*[:=]\s*)(?!__GHA_EXPRESSION_\d+__)[^\s,;]+', r'\1\2[REDACTED]', patch)
           patch=re.sub(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*', r'\1[REDACTED]', patch)
+          # Mask high-confidence raw credential formats even when not assigned
+          # to a variable (for example provider keys, PATs, and private keys).
+          high_confidence_patterns = [
+              r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+              r'\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b',
+              r'\bAKIA[0-9A-Z]{16}\b',
+              r'\bgsk_[A-Za-z0-9]{20,}\b',
+              r'\bsk-[A-Za-z0-9_-]{20,}\b',
+              r'\bxox[baprs]-[A-Za-z0-9-]{10,}\b'
+          ]
+          for pattern in high_confidence_patterns:
+              patch=re.sub(pattern, "[REDACTED_HIGH_CONFIDENCE_SECRET]", patch, flags=re.S)
           # Restore non-secret workflow expressions after redaction.
           for index, expression in enumerate(gha_expressions):
               patch=patch.replace(f"__GHA_EXPRESSION_{index}__", expression)
