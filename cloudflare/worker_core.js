@@ -489,14 +489,15 @@ async function archiveSignal(env,symbol,result) {
             "\nامتیاز همگرایی: "+result.confidence+"/100"+
             "\nورود: "+result.entry+"\nحد ضرر: "+result.stop_loss+
             "\nهدف: "+result.take_profit+"\nکندل ۶۰ دقیقه: "+result.last_candle_at+
-            "\nداده شاخصی XAUS است؛ احتمال موفقیت نیست و سفارش خودکار انجام نمی‌شود.",
+            "\nمنبع داده: "+String(result.market_provider||"تأییدنشده")+
+            "؛ امتیاز احتمال موفقیت نیست و سفارش خودکار انجام نمی‌شود.",
           disable_web_page_preview:true})
       });
       alertStatus=sent.ok?"SENT":"FAILED";
     } catch { alertStatus="FAILED"; }
   }
   const record={...result,symbol,recorded_at:new Date().toISOString(),
-    archive_key:key,archive_source:"XAUS completed OHLC multi-timeframe evaluation",
+    archive_key:key,archive_source:"validated completed OHLC multi-timeframe evaluation",
     alert_status:alertStatus,execution_enabled:false};
   await env.SIGNAL_HISTORY.put(key,JSON.stringify(record),{expirationTtl:90*24*60*60});
   return {saved:true,alert_status:alertStatus};
@@ -507,7 +508,7 @@ function isValidArchivedSignal(record) {
   if(!["BUY","SELL","NO_TRADE"].includes(record.signal)) return false;
   if(record.execution_enabled!==false || record.market_data_status!=="LIVE") return false;
   if(typeof record.symbol!=="string" || !/^[a-z0-9_-]{1,20}$/i.test(record.symbol)) return false;
-  if(record.archive_source!=="XAUS completed OHLC multi-timeframe evaluation") return false;
+  if(!["validated completed OHLC multi-timeframe evaluation","XAUS completed OHLC multi-timeframe evaluation"].includes(record.archive_source)) return false;
   const candleTime=Date.parse(record.last_candle_at),recordedTime=Date.parse(record.recorded_at);
   if(!Number.isFinite(candleTime)||!Number.isFinite(recordedTime)||recordedTime<candleTime) return false;
   if(!Number.isFinite(record.confidence)||record.confidence<0||record.confidence>100) return false;
@@ -1057,7 +1058,7 @@ export default {
         const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
         const dataQualityClean=markets.every(market=>market.data_quality?.status==="CLEAN")&&
-          analyses.every(analysis=>analysis.data_status!=="STALE"&&analysis.data_status!=="GAPPED");
+          analyses.every(analysis=>![ "STALE","GAPPED","MISALIGNED","UNAVAILABLE" ].includes(analysis.data_status));
         const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade&&dataQualityClean;
         const base=analyses[1];
         const blockedReasons=[];
@@ -1086,7 +1087,10 @@ export default {
           entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
           take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
           timeframes:byInterval,market_data_status:dataQualityClean?"LIVE":"DEGRADED",
-          market_provider:"XAUS",market_source_url:"https://xaus.com/api/v1/chart",
+          market_provider:[...new Set(markets.map(market=>market.provider))].join("+"),
+          market_sources:markets.map(market=>({interval:market.interval,provider:market.provider,
+            source_url:market.source_url,last_candle_at:market.last_candle_at,
+            data_quality:market.data_quality})),
           last_candle_at:markets[1].last_candle_at,
           market_regime:regimes[1],
           reasons:aligned?["15m and 60m signals agree","15m, 60m and daily EMA trends all confirm direction","60m market regime is trending and volatility is within limits","Entry levels use the 60m candle"]:blockedReasons,
