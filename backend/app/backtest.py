@@ -304,6 +304,28 @@ def run_out_of_sample_backtest(
     }
 
 
+
+
+class WalkForwardRequest(BaseModel):
+    candles: list[Candle] = Field(min_length=120, max_length=5000)
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] = "15m"
+    initial_train_size: int = Field(default=120, ge=60, le=4000)
+    test_size: int = Field(default=60, ge=20, le=2000)
+    starting_capital: float = Field(default=10000.0, gt=0)
+    fee_bps: float = Field(default=10.0, ge=0, le=500)
+    slippage_bps: float = Field(default=5.0, ge=0, le=500)
+    spread_bps: float = Field(default=0.0, ge=0, le=500)
+
+    @model_validator(mode="after")
+    def validate_walk_forward_request(self):
+        if len(self.candles) < self.initial_train_size + 2 * self.test_size:
+            raise ValueError("At least two complete test windows are required after the initial training history.")
+        for name in ("starting_capital", "fee_bps", "slippage_bps", "spread_bps"):
+            if not math.isfinite(getattr(self, name)):
+                raise ValueError(f"{name} must be finite")
+        return self
+
+
 def run_walk_forward_backtest(
     candles: Sequence[Candle],
     *,
