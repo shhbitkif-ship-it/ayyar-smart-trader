@@ -2828,12 +2828,12 @@ test("candle endpoint rejects fresh but insufficient BIQUOTE history instead of 
     throw new Error("Unexpected provider URL: "+url);
   };
   try{
-    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=15m"));
     const body=await response.json();
-    assert.equal(response.status,502,JSON.stringify(body));
-    assert.equal(body.status,"UNAVAILABLE");
-    assert.match(body.error,/BIQUOTE returned insufficient completed OHLC history/i);
-    assert.deepEqual(body.candles,[]);
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.data_status,"UNAVAILABLE");
+    assert.match(body.reason,/candles must contain between 60 and 5000/i);
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
