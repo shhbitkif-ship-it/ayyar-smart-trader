@@ -257,3 +257,76 @@ def test_out_of_sample_metrics_are_independent_of_future_after_test_window():
     before_a = [x for x in baseline["out_of_sample"].get("trades", []) if x["exit_time"] <= cutoff]
     before_b = [x for x in revised["out_of_sample"].get("trades", []) if x["exit_time"] <= cutoff]
     assert before_a == before_b
+
+
+def _walk_forward_candles(count=300):
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    result = []
+    for i in range(count):
+        # Deterministic alternating regimes create several EMA cross opportunities.
+        trend = (i // 45 % 2) * 2 - 1
+        price = 3000 + trend * (i % 45) * 2.2 + 0.8 * (i % 7)
+        result.append(Candle(
+            timestamp=start + timedelta(hours=i),
+            open=price, high=price + 4, low=price - 4,
+            close=price, volume=100,
+        ))
+    return result
+
+
+def test_walk_forward_runs_multiple_chronological_non_overlapping_folds():
+    from app.backtest import run_walk_forward_backtest
+    candles = _walk_forward_candles()
+    result = run_walk_forward_backtest(candles, initial_train_size=120, test_size=60)
+    assert result["fold_count"] == 3
+    assert result["total_test_candles"] == 180
+    folds = result["folds"]
+    for previous, current in zip(folds, folds[1:]):
+        assert previous["test_end"] < current["test_start"]
+        assert previous["test_candles"] == 60
+        assert current["train_candles"] > previous["train_candles"]
+    assert result["out_of_sample"]["total_closed_trades"] == sum(
+        fold["test_closed_trades"] for fold in folds
+    )
+
+
+def test_walk_forward_compounds_fold_returns_and_benchmark_consistently():
+    from app.backtest import run_walk_forward_backtest
+    result = run_walk_forward_backtest(_walk_forward_candles(), initial_train_size=120, test_size=60)
+    strategy_factor = 1.0
+    benchmark_factor = 1.0
+    for fold in result["folds"]:
+        strategy_factor *= 1.0 + fold["test_net_return_pct"] / 100.0
+        benchmark_factor *= 1.0 + fold["test_benchmark_return_pct"] / 100.0
+    assert result["out_of_sample"]["compounded_return_pct"] == pytest.approx(
+        (strategy_factor - 1.0) * 100.0, abs=0.0001
+    )
+    assert result["out_of_sample"]["compounded_benchmark_return_pct"] == pytest.approx(
+        (benchmark_factor - 1.0) * 100.0, abs=0.0001
+    )
+
+
+def test_walk_forward_rejects_invalid_or_insufficient_windows():
+    from app.backtest import run_walk_forward_backtest
+    with pytest.raises(ValueError, match="at least 60"):
+        run_walk_forward_backtest(_walk_forward_candles(), initial_train_size=50)
+    with pytest.raises(ValueError, match="at least 20"):
+        run_walk_forward_backtest(_walk_forward_candles(), test_size=10)
+    with pytest.raises(ValueError, match="two complete"):
+        run_walk_forward_backtest(_walk_forward_candles(150), initial_train_size=120, test_size=60)
+
+
+def test_walk_forward_earlier_fold_is_independent_of_later_market_data():
+    from app.backtest import run_walk_forward_backtest
+    candles = _walk_forward_candles()
+    baseline = run_walk_forward_backtest(candles, initial_train_size=120, test_size=60)
+    changed = list(candles)
+    for index in range(180, len(changed)):
+        candle = changed[index]
+        shifted = float(candle.close) * 1.10
+        changed[index] = candle.model_copy(update={
+            "open": shifted, "high": shifted + 4, "low": shifted - 4,
+            "close": shifted,
+        })
+    revised = run_walk_forward_backtest(changed, initial_train_size=120, test_size=60)
+    assert baseline["folds"][0] == revised["folds"][0]
