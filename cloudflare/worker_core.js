@@ -4,6 +4,7 @@ import { simulatePaperTrading } from "./paper.js";
 const SOURCE = "https://nerkhara.com/api/v1/latest.json";
 const MAX_AGE_SECONDS = 660;
 const TALASANJ_MAX_AGE_SECONDS = 90;
+const XAUS_MAX_AGE_SECONDS = 120;
 const SYMBOLS = [
   ["GOLD18","طلای ۱۸ عیار","gold-18k","IRT","تومان"],
   ["GOLD24","طلای ۲۴ عیار","gold-24k","IRT","تومان"],
@@ -510,7 +511,7 @@ function normalise(item, def, provider="NerkhAra") {
   const stamp=parseStamp(item?.updated_utc);
   const age=stamp ? (Date.now()-stamp.getTime())/1000 : null;
   const unitValid=item?.unit===expectedUnit;
-  const maxAge=provider==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:MAX_AGE_SECONDS;
+  const maxAge=provider==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:provider==="XAUS"?XAUS_MAX_AGE_SECONDS:MAX_AGE_SECONDS;
   const fresh=Boolean(validPrice && stamp && age>=-30 && age<=maxAge && item?.stale!==true && unitValid);
   return {
     symbol,name:item?.name?.fa || item?.name?.en || fallbackName,
@@ -524,6 +525,29 @@ function normalise(item, def, provider="NerkhAra") {
       method:item?.method??null,stale:item?.stale===true,
       reason:fresh?null:"Quote is missing, stale, invalid, or has an unexpected unit"}
   };
+}
+async function fetchXausSpotQuote() {
+  try {
+    const response=await fetch("https://xaus.com/api/v1/spot?compact=1",{
+      headers:{accept:"application/json","user-agent":"AyyarSmartTrader/1.0"},
+      signal:AbortSignal.timeout(8000)
+    });
+    if(!response.ok) return null;
+    const payload=await response.json();
+    const state=payload?.data_state;
+    if(state?.status!=="fresh") return null;
+    const stamp=parseStamp(state.as_of||payload.price_as_of||payload.updated_at);
+    const ageFromSource=Number(state.age_seconds);
+    const ageFromTimestamp=stamp?(Date.now()-stamp.getTime())/1000:NaN;
+    const price=Number(payload?.spot_usd_oz??payload?.xau?.price);
+    const unit=payload?.xau?.unit;
+    const currency=payload?.xau?.currency;
+    if(!stamp||!Number.isFinite(ageFromSource)||ageFromSource<0||ageFromSource>XAUS_MAX_AGE_SECONDS||
+       !Number.isFinite(ageFromTimestamp)||ageFromTimestamp< -30||ageFromTimestamp>XAUS_MAX_AGE_SECONDS||
+       !Number.isFinite(price)||price<=0||price>1e15||
+       (currency&&currency!=="USD")||(unit&&!["oz","troy_oz"].includes(unit))) return null;
+    return {id:"xau",price,unit:"USD",updated_utc:stamp.toISOString(),stale:false};
+  } catch { return null; }
 }
 async function snapshot(env={}) {
   if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) return cached;
@@ -539,18 +563,31 @@ async function snapshot(env={}) {
     if(!payload || !Array.isArray(payload.items)) throw new Error("Unexpected provider schema");
     const byId=new Map(payload.items.filter(x=>x&&typeof x==="object").map(x=>[x.id,x]));
     const quotes=SYMBOLS.map(def=>normalise(byId.get(def[2]),def,provider));
+    const xauIndex=SYMBOLS.findIndex(def=>def[2]==="xau");
+    if(xauIndex>=0&&quotes[xauIndex].status!=="LIVE") {
+      const xausQuote=await fetchXausSpotQuote();
+      if(xausQuote) quotes[xauIndex]=normalise(xausQuote,SYMBOLS[xauIndex],"XAUS");
+    }
     const liveQuotes=quotes.filter(q=>q.status==="LIVE").length;
     const status=liveQuotes===quotes.length?"LIVE":liveQuotes>0?"PARTIAL":"UNAVAILABLE";
+    const mixedSources=quotes.some(q=>q.source==="XAUS");
     cached={status,live_quotes:liveQuotes,total_quotes:quotes.length,
       as_of:new Date().toISOString(),provider_generated_at:parseStamp(payload.generated_utc)?.toISOString()??null,
-      quotes,notice:provider==="Talasanj"?"Talasanj indicative market data refreshes about every 20 seconds; not broker execution quotes. Stale or unavailable prices never produce signals.":"NerkhAra refreshes its snapshot every ten minutes. Indicative market data only, not broker execution quotes. Stale or unavailable prices never produce signals.",
-      attribution:provider==="Talasanj"?"قیمت‌ها از طلاسنج — https://talasanj.info":"NerkhAra — https://nerkhara.com"};
+      quotes,notice:mixedSources?"XAU/USD may use XAUS spot fallback; Iranian rates retain their own provider timestamps. Indicative prices only, not broker execution quotes.":"Talasanj refreshes about every 20 seconds; NerkhAra refreshes about every ten minutes. Indicative market data only, not broker execution quotes. Stale or unavailable prices never produce signals.",
+      attribution:mixedSources?(provider==="Talasanj"?"اونس جهانی از XAUS؛ سایر نرخ‌ها از طلاسنج":"اونس جهانی از XAUS؛ سایر نرخ‌ها از NerkhAra"):(provider==="Talasanj"?"قیمت‌ها از طلاسنج — https://talasanj.info":"NerkhAra — https://nerkhara.com")};
   } catch(e) {
-    cached={status:"UNAVAILABLE",as_of:new Date().toISOString(),provider_generated_at:null,
-      live_quotes:0,total_quotes:SYMBOLS.length,
-      quotes:SYMBOLS.map(def=>normalise(null,def)),
-      notice:"Market data provider is unavailable. No synthetic prices are displayed.",
-      error:String(e?.name||"ProviderError"),attribution:"NerkhAra — https://nerkhara.com"};
+    const quotes=SYMBOLS.map(def=>normalise(null,def));
+    const xauIndex=SYMBOLS.findIndex(def=>def[2]==="xau");
+    if(xauIndex>=0) {
+      const xausQuote=await fetchXausSpotQuote();
+      if(xausQuote) quotes[xauIndex]=normalise(xausQuote,SYMBOLS[xauIndex],"XAUS");
+    }
+    const liveQuotes=quotes.filter(q=>q.status==="LIVE").length;
+    cached={status:liveQuotes===quotes.length?"LIVE":liveQuotes>0?"PARTIAL":"UNAVAILABLE",
+      as_of:new Date().toISOString(),provider_generated_at:null,
+      live_quotes:liveQuotes,total_quotes:SYMBOLS.length,quotes,
+      notice:liveQuotes?"XAU/USD is supplied by the XAUS spot fallback; other provider quotes remain unavailable. No synthetic prices are displayed.":"Market data providers are unavailable or stale. No synthetic prices are displayed.",
+      error:String(e?.name||"ProviderError"),attribution:liveQuotes?"اونس جهانی از XAUS — https://xaus.com؛ سایر نرخ‌ها ناموجود":"NerkhAra — https://nerkhara.com"};
   }
   cachedAt=Date.now();
   return cached;
