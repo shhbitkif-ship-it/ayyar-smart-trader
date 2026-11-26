@@ -1150,6 +1150,14 @@ test("walk-forward transaction costs include estimated exit cost on open positio
   assert.ok(costly.compounded_out_of_sample_return_pct<free.compounded_out_of_sample_return_pct,
     JSON.stringify({free:free.compounded_out_of_sample_return_pct,costly:costly.compounded_out_of_sample_return_pct,trades:free.total_out_of_sample_trades}));
   assert.equal(costly.cost_model.spread_bps_per_side,10);
+  assert.equal(costly.stress_test.cost_multiplier,2);
+  assert.ok(Number.isFinite(costly.stress_test.compounded_out_of_sample_return_pct));
+  assert.ok(costly.stress_test.folds_with_lower_return>=0);
+  for(const fold of costly.folds){
+    assert.ok(Number.isFinite(fold.stressed_out_of_sample_return_pct));
+    assert.equal(fold.stress_return_delta_pct,
+      Math.round((fold.stressed_out_of_sample_return_pct-fold.out_of_sample_return_pct)*10000)/10000);
+  }
 });
 
 test("walk-forward rejects unsorted or duplicate input timestamps instead of silently sorting", async () => {
