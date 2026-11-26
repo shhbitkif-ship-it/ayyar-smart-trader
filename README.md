@@ -180,6 +180,10 @@ EMA backtests and walk-forward evaluations accept `spread_bps` as the **full quo
 ```
 
 
+## Walk-forward transaction-cost stress test
+
+Each walk-forward fold repeats its out-of-sample evaluation with the exact same parameters selected on the training window, but with fee, slippage, and full spread assumptions doubled (each capped at the API's 500 bps input limit). No parameter reselection occurs in the stress run. The response reports stressed return and drawdown per fold plus compounded stressed return and the difference from baseline. This is a sensitivity scenario, not a forecast of broker costs or proof of strategy robustness; if a baseline cost input is zero, doubling it remains zero.
+
 ## Walk-forward stability diagnostics
 
 The Cloudflare Worker walk-forward response now includes descriptive fold-stability diagnostics: positive/negative fold counts, positive-fold ratio, median fold return, fold-return range, and minimum out-of-sample trades per fold. The sample is marked `INSUFFICIENT_SAMPLE` unless it contains at least 20 out-of-sample trades overall and at least 5 in every fold. Other statuses (`CONSISTENT_POSITIVE`, `CONSISTENT_NEGATIVE`, `MIXED`) describe the observed folds only; they are not statistical proof or a profitability guarantee. The evaluator also rejects invalid, duplicate, or out-of-order timestamps rather than silently sorting user-supplied candles. Gaps and irregular intervals continue to block evaluation. Research only; execution remains disabled.
