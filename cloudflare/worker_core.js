@@ -300,8 +300,15 @@ async function fetchGoldCandles(symbol, interval) {
   });
   if (!response.ok) throw new Error("XAUS OHLC provider HTTP " + response.status);
   const payload = await response.json();
-  const state = payload?.data_state?.status;
-  if (state && state !== "fresh") throw new Error("XAUS OHLC provider data state is " + state);
+  const state = payload?.data_state;
+  if (state?.status !== "fresh")
+    throw new Error("XAUS OHLC provider data state is " + String(state?.status || "missing"));
+  const stateStamp = parseStamp(state.as_of);
+  const stateAge = Number(state.age_seconds);
+  const timestampAge = stateStamp ? (Date.now() - stateStamp.getTime()) / 1000 : NaN;
+  if (!stateStamp || !Number.isFinite(stateAge) || stateAge < 0 || stateAge > XAUS_MAX_AGE_SECONDS ||
+      !Number.isFinite(timestampAge) || timestampAge < -30 || timestampAge > XAUS_MAX_AGE_SECONDS)
+    throw new Error("XAUS OHLC provider freshness metadata is missing, invalid, or stale");
   if (!Array.isArray(payload?.points)) throw new Error("XAUS OHLC provider returned an unexpected chart schema");
   const intervalMs = intervalSeconds * 1000;
   const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
