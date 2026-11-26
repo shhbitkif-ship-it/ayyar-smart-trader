@@ -109,8 +109,20 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     # A detected setup is informational only. Order execution remains disabled.
     analysis["setup_direction"] = "LONG" if up else "SHORT" if down else "NONE"
     analysis["setup_detected"] = bool(up or down)
+    signal_candle_values = (
+        latest.open, latest.high, latest.low, latest.close, latest.volume,
+        confirm[-1].open, confirm[-1].high, confirm[-1].low,
+        confirm[-1].close, confirm[-1].volume,
+    )
+    signal_fingerprint = "|".join(
+        str(value) for value in (
+            request.symbol.upper(), request.timeframe,
+            latest_time.isoformat(), confirm_time.isoformat(),
+            *signal_candle_values, analysis["setup_direction"],
+        )
+    )
     analysis["signal_key"] = (
-        sha256(f"{request.symbol.upper()}|{request.timeframe}|{latest_time.isoformat()}|{confirm_time.isoformat()}|{analysis['setup_direction']}".encode()).hexdigest()
+        sha256(signal_fingerprint.encode()).hexdigest()
         if up or down else None
     )
     if up or down:
