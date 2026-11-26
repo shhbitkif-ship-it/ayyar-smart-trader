@@ -180,6 +180,10 @@ EMA backtests and walk-forward evaluations accept `spread_bps` as the **full quo
 ```
 
 
+## Walk-forward market-regime attribution
+
+Each out-of-sample fold reports bars classified as TRENDING, RANGE, HIGH_VOLATILITY, TRANSITIONAL, or UNAVAILABLE. The classifier uses only candles completed before each test candle opens. Equity changes are attributed to the regime known at the start of each bar; trades are grouped by the regime at entry. Fold and aggregate summaries are descriptive diagnostics only, do not change strategy selection, and do not imply that a regime label predicts future returns.
+
 ## Walk-forward transaction-cost stress test
 
 Each walk-forward fold repeats its out-of-sample evaluation with the exact same parameters selected on the training window, but with fee, slippage, and full spread assumptions doubled (each capped at the API's 500 bps input limit). No parameter reselection occurs in the stress run. The response reports stressed return and drawdown per fold plus compounded stressed return and the difference from baseline. This is a sensitivity scenario, not a forecast of broker costs or proof of strategy robustness; if a baseline cost input is zero, doubling it remains zero.
