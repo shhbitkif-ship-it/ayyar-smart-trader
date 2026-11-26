@@ -227,3 +227,26 @@ def test_engine_analysis_exposes_volatility_regime():
     )
     result = evaluate(req, now)
     assert result.analysis["volatility_regime"] in {"LOW", "NORMAL", "HIGH", "UNKNOWN"}
+
+
+def test_market_regime_classifier_accepts_scalar_atr_from_indicator():
+    from app.engine import _classify_market_regime
+    result = _classify_market_regime(
+        [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+        [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+        [100+i*.2 for i in range(220)], [60]*6, 0.5,
+    )
+    assert result["volatility_regime"] == "NORMAL"
+    assert result["signal_quality"] == "GOOD"
+
+
+def test_market_regime_classifier_marks_missing_atr_as_unknown():
+    from app.engine import _classify_market_regime
+    result = _classify_market_regime(
+        [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+        [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+        [100+i*.2 for i in range(220)], [60]*6, None,
+    )
+    assert result["trend"] == "UNKNOWN"
+    assert result["volatility_regime"] == "UNKNOWN"
+    assert result["signal_quality"] == "INSUFFICIENT"
