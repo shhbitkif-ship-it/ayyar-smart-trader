@@ -332,6 +332,9 @@ def test_full_engine_scenario_diagnostics_are_safe_and_directional(
     assert result.action not in {"BUY", "SELL"}
     if result.analysis["setup_detected"]:
         assert result.action == "WAIT"
+        assert result.status == "VALID"
+    else:
+        assert result.status == "NO_SETUP"
 
 
 def test_engine_reports_setup_none_for_missing_higher_timeframe_confirmation():
