@@ -953,6 +953,45 @@ test("signal performance uses next candle open, completed horizons and refuses c
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("signal performance paginates the full retained archive beyond one KV page", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:40},(_,i)=>{
+    const open=2600+i;
+    return {timestamp:new Date(lastClosed-(39-i)*intervalMs).toISOString(),
+      open,high:open+2,low:open-1,close:open+1};
+  });
+  const signalTime=candles[10].timestamp;
+  const store=new Map();
+  const valid={signal:"BUY",symbol:"xau",confidence:80,entry:2610,stop_loss:2600,take_profit:2630,
+    market_data_status:"LIVE",execution_enabled:false,
+    archive_source:"validated completed OHLC multi-timeframe evaluation",
+    last_candle_at:signalTime,recorded_at:new Date(Date.parse(signalTime)+1000).toISOString()};
+  for(let i=0;i<1001;i++) store.set("xau:latest:page-"+i,valid);
+  const names=[...store.keys()].map(name=>({name}));
+  const kv={
+    async list({prefix,cursor,limit}) {
+      const matching=names.filter(item=>item.name.startsWith(prefix));
+      if(!cursor) return {keys:matching.slice(0,limit),list_complete:false,cursor:"next-page"};
+      return {keys:matching.slice(limit),list_complete:true};
+    },
+    async get(key){return store.get(key)||null;}
+  };
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),
+    {status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/performance"),{SIGNAL_HISTORY:kv});
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.record_count,1001);
+    assert.equal(body.history_pages,2);
+    assert.equal(body.directional_signals,1001);
+    assert.equal(body.horizons.find(x=>x.horizon_candles===1).scored,1001);
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
 test("signal history and performance ignore malformed or execution-enabled archived records", async () => {
   const intervalMs=3600000;
   const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
