@@ -208,6 +208,8 @@ jobs:
                   "provider": candles.get("provider"),
                   "last_candle_at": candles.get("last_candle_at"),
                   "age_seconds": candles.get("age_seconds"),
+                  "fallback_reason": candles.get("fallback_reason"),
+                  "data_quality": candles.get("data_quality"),
                   "error": candles.get("error")
               },
               "paper_monitor_status": monitor.get("status"),
