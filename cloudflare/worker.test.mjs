@@ -297,6 +297,35 @@ test("position sizing blocks daily loss limit", async () => {
   const body = await response.json();
   assert.equal(body.allowed,false);
   assert.equal(body.lots,0);
+  assert.equal(body.sizing_status,"ESTIMATE_ONLY");
+  assert.equal(body.order_authorized,false);
+  assert.equal(body.execution_enabled,false);
+});
+
+
+test("position sizing blocks drawdown at eight percent and remains estimate-only below limits", async () => {
+  const call=async payload=>(await worker.fetch(new Request("https://unit.test/v1/risk/position-size",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)
+  })));
+  const base={equity:100000,entry:100,stop_loss:95,contract_value_per_price_unit:1};
+  const below=await call({...base,daily_loss_fraction:0.0299,drawdown_fraction:0.0799});
+  const belowBody=await below.json();
+  assert.equal(below.status,200);
+  assert.equal(belowBody.allowed,true);
+  assert.equal(belowBody.order_authorized,false);
+  assert.equal(belowBody.execution_enabled,false);
+  const atDrawdown=await call({...base,drawdown_fraction:0.08});
+  const drawdownBody=await atDrawdown.json();
+  assert.equal(atDrawdown.status,200);
+  assert.equal(drawdownBody.allowed,false);
+  assert.equal(drawdownBody.lots,0);
+  assert.equal(drawdownBody.order_authorized,false);
+  assert.equal(drawdownBody.execution_enabled,false);
+  const aboveDaily=await call({...base,daily_loss_fraction:0.030001});
+  const dailyBody=await aboveDaily.json();
+  assert.equal(dailyBody.allowed,false);
+  assert.equal(dailyBody.lots,0);
+  assert.equal(dailyBody.order_authorized,false);
 });
 
 
@@ -1076,6 +1105,11 @@ test("position sizing rounds down to broker lot step and stays within risk budge
   assert.equal(body.lots,0.9);
   assert.ok(body.estimated_loss_at_stop<=body.risk_amount);
   assert.equal(body.lot_step,0.3);
+  assert.equal(body.sizing_status,"ESTIMATE_ONLY");
+  assert.equal(body.data_verified,false);
+  assert.equal(body.broker_specs_verified,false);
+  assert.equal(body.order_authorized,false);
+  assert.equal(body.execution_enabled,false);
 });
 
 test("position sizing blocks a size below broker minimum after rounding", async () => {
