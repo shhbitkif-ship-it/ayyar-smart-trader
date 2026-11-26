@@ -32,7 +32,8 @@ function ema(values, period) {
 function inspectCandleContinuity(candles, requestedTimeframeMinutes) {
   if(!Array.isArray(candles)||candles.length<2)
     return {status:"INSUFFICIENT_DATA",timeframe_minutes:null,timeframe_inferred:false};
-  const deltas=candles.slice(1).map((c,i)=>Date.parse(c.timestamp)-Date.parse(candles[i].timestamp));
+  const timestampMs=value=>typeof value==="number"?value:Date.parse(value);
+  const deltas=candles.slice(1).map((c,i)=>timestampMs(c.timestamp)-timestampMs(candles[i].timestamp));
   if(deltas.some(delta=>!Number.isFinite(delta)||delta<=0))
     return {status:"MISALIGNED",timeframe_minutes:null,timeframe_inferred:false};
   const inferred=requestedTimeframeMinutes===undefined||requestedTimeframeMinutes===null;
