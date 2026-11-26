@@ -106,233 +106,236 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
       color=Color.White,fontSize=14.sp,fontWeight=FontWeight.SemiBold)
     }
     if(selectedTab==0) {
-          Scaffold(
-           containerColor=bg,
-           bottomBar={
-            NavigationBar(containerColor=panel,contentColor=gold) {
-             NavigationBarItem(selected=selectedTab==0,onClick={selectedTab=0},
-              icon={Text("▣",fontSize=18.sp)},label={Text("حساب آزمایشی")},alwaysShowLabel=true)
-             NavigationBarItem(selected=selectedTab==2,onClick={selectedTab=2},
-              icon={Text("⌁",fontSize=18.sp)},label={Text("تحلیل")},alwaysShowLabel=true)
-             NavigationBarItem(selected=selectedTab==3,onClick={selectedTab=3},
-              icon={Text("◉",fontSize=18.sp)},label={Text("مدیریت ریسک")},alwaysShowLabel=true)
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
+            Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
+         } } }
+         item { MarketDataHealthCard(marketHealth) }
+         if(snapshot?.isSuccess==true){ items(snapshot!!.getOrThrow()){ q -> QuoteCard(q) } }
+         item { Text("تاریخچه و نمودار روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            var expanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it}) {
+              OutlinedTextField(value=historySymbols.first{it.first==selectedSymbol}.second,onValueChange={},readOnly=true,label={Text("بازار")},modifier=Modifier.fillMaxWidth().menuAnchor())
+              ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) { historySymbols.forEach { (id,label) -> DropdownMenuItem(text={Text(label)},onClick={selectedSymbol=id;expanded=false}) } }
             }
-           }
-          ) { innerPadding ->
-           LazyColumn(
-            Modifier.fillMaxSize().padding(innerPadding).padding(horizontal=16.dp,vertical=10.dp),
-            verticalArrangement=Arrangement.spacedBy(12.dp)
-           ) {
-            item {
-             Text("عیار هوشمند",color=gold,fontSize=25.sp,fontWeight=FontWeight.Bold)
-             Text("Ayyar Smart Trader • نسخه 0.9.7",color=muted,fontSize=11.sp)
-             Text(when(selectedTab){0->"بازار و قیمت‌ها";1->"حساب و معاملات آزمایشی";2->"تحلیل و ارزیابی استراتژی";else->"مدیریت سرمایه و کنترل ریسک"},
-              color=Color.White,fontSize=14.sp,fontWeight=FontWeight.SemiBold)
+            when {
+              history==null -> Text("در حال دریافت تاریخچه…",color=muted)
+              history!!.isFailure -> Text("تاریخچه فعلاً دریافت نشد. اتصال یا پاسخ منبع داده را بررسی می‌کنم.",color=Color(0xFFFFB86B))
+              history!!.getOrThrow().points.isEmpty() -> Text("داده تاریخی قابل‌نمایش در پاسخ منبع پیدا نشد؛ عددی ساخته نشده است.",color=Color(0xFFFFB86B))
+              else -> {
+                val h=history!!.getOrThrow()
+                Text("${h.points.size} نقطه روزانه • ${h.points.first().date} تا ${h.points.last().date}",color=muted,fontSize=11.sp)
+                HistoryChart(h.points)
+                val indicators = remember(h.points) { calculateIndicators(h.points.map { it.value }) }
+                Text("شاخص‌های تکنیکال روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=14.sp)
+                if (indicators == null) {
+                  Text("برای محاسبه شاخص‌ها حداقل ۵۰ نقطه معتبر لازم است.",color=Color(0xFFFFB86B),fontSize=12.sp)
+                } else {
+                  IndicatorRow("EMA 20",indicators.ema20)
+                  IndicatorRow("EMA 50",indicators.ema50)
+                  IndicatorRow("RSI 14",indicators.rsi14,2)
+                  IndicatorRow("MACD",indicators.macd,4)
+                  IndicatorRow("خط سیگنال MACD",indicators.signal,4)
+                  IndicatorRow("هیستوگرام MACD",indicators.histogram,4)
+                  Text("محاسبات بر اساس میانگین‌های روزانه منبع انجام شده‌اند؛ این شاخص‌ها به‌تنهایی سیگنال خرید یا فروش نیستند.",color=muted,fontSize=10.sp)
+                }
+                val first=h.points.first().value; val last=h.points.last().value
+                val change=if(first!=0.0) (last-first)/first*100 else 0.0
+                Text("تغییر بازه: ${String.format(Locale.US,"%.2f",change)}٪",color=if(change>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontWeight=FontWeight.Bold)
+                h.points.takeLast(7).reversed().forEach { p -> Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(p.date,color=muted,fontSize=12.sp);Text(String.format(Locale.US,"%,.2f",p.value),color=Color.White,fontSize=12.sp)} }
+                Text(h.note,color=muted,fontSize=10.sp)
+              }
             }
-            if(selectedTab==0) {
-                item { Text("عیار هوشمند",color=gold,fontSize=28.sp,fontWeight=FontWeight.Bold); Text("Ayyar Smart Trader  •  نسخه 0.9.7",color=muted,fontSize=12.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                   Text("وضعیت داده‌های بازار",color=muted); when { snapshot==null -> Text("در حال اتصال به سرور…",color=Color.White); snapshot!!.isFailure -> Text("سرور هنوز در دسترس نیست؛ قیمت ساختگی نمایش داده نمی‌شود.",color=Color(0xFFFFB86B)); else -> if (snapshot!!.getOrThrow().any { it.status=="LIVE" }) Text("قیمت‌های تازه دریافت شد",color=Color(0xFF8FD6A8)) else Text("اتصال برقرار است؛ فعلاً قیمت زنده معتبر در دسترس نیست.",color=Color(0xFFFFB86B)) }
-                   Button(onClick={refresh++},colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("به‌روزرسانی قیمت‌ها")}
-                } } }
-                item { MarketDataHealthCard(marketHealth) }
-                item { PaperMonitorHealthCard(paperMonitor) }
-                if(snapshot?.isSuccess==true){ items(snapshot!!.getOrThrow()){ q -> QuoteCard(q) } }
-                item { Text("تاریخچه و نمودار روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-                   var expanded by remember { mutableStateOf(false) }
-                   ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it}) {
-                     OutlinedTextField(value=historySymbols.first{it.first==selectedSymbol}.second,onValueChange={},readOnly=true,label={Text("بازار")},modifier=Modifier.fillMaxWidth().menuAnchor())
-                     ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) { historySymbols.forEach { (id,label) -> DropdownMenuItem(text={Text(label)},onClick={selectedSymbol=id;expanded=false}) } }
-                   }
-                   when {
-                     history==null -> Text("در حال دریافت تاریخچه…",color=muted)
-                     history!!.isFailure -> Text("تاریخچه فعلاً دریافت نشد. اتصال یا پاسخ منبع داده را بررسی می‌کنم.",color=Color(0xFFFFB86B))
-                     history!!.getOrThrow().points.isEmpty() -> Text("داده تاریخی قابل‌نمایش در پاسخ منبع پیدا نشد؛ عددی ساخته نشده است.",color=Color(0xFFFFB86B))
+            OutlinedButton(onClick={historyRefresh++},modifier=Modifier.fillMaxWidth()){Text("تازه‌سازی تاریخچه")}
+         } } }
+    }
     if(selectedTab==1) {
-              icon={Text("◈",fontSize=18.sp)},label={Text("بازار")},alwaysShowLabel=true)
-             NavigationBarItem(selected=selectedTab==1,onClick={selectedTab=1},
+         item { PaperMonitorHealthCard(paperMonitor) }
+         item { PaperAccountCard() }
+    }
     if(selectedTab==2) {
-                     else -> {
-                       val h=history!!.getOrThrow()
-                       Text("${h.points.size} نقطه روزانه • ${h.points.first().date} تا ${h.points.last().date}",color=muted,fontSize=11.sp)
-                       HistoryChart(h.points)
-                       val indicators = remember(h.points) { calculateIndicators(h.points.map { it.value }) }
-                       Text("شاخص‌های تکنیکال روزانه",color=gold,fontWeight=FontWeight.Bold,fontSize=14.sp)
-                       if (indicators == null) {
-                         Text("برای محاسبه شاخص‌ها حداقل ۵۰ نقطه معتبر لازم است.",color=Color(0xFFFFB86B),fontSize=12.sp)
-                       } else {
-                         IndicatorRow("EMA 20",indicators.ema20)
-                         IndicatorRow("EMA 50",indicators.ema50)
-                         IndicatorRow("RSI 14",indicators.rsi14,2)
-                         IndicatorRow("MACD",indicators.macd,4)
-                         IndicatorRow("خط سیگنال MACD",indicators.signal,4)
-                         IndicatorRow("هیستوگرام MACD",indicators.histogram,4)
-                         Text("محاسبات بر اساس میانگین‌های روزانه منبع انجام شده‌اند؛ این شاخص‌ها به‌تنهایی سیگنال خرید یا فروش نیستند.",color=muted,fontSize=10.sp)
-                       }
-                       val first=h.points.first().value; val last=h.points.last().value
-                       val change=if(first!=0.0) (last-first)/first*100 else 0.0
-                       Text("تغییر بازه: ${String.format(Locale.US,"%.2f",change)}٪",color=if(change>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontWeight=FontWeight.Bold)
-                       h.points.takeLast(7).reversed().forEach { p -> Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(p.date,color=muted,fontSize=12.sp);Text(String.format(Locale.US,"%,.2f",p.value),color=Color.White,fontSize=12.sp)} }
-                       Text(h.note,color=muted,fontSize=10.sp)
-                     }
-                   }
-                   OutlinedButton(onClick={historyRefresh++},modifier=Modifier.fillMaxWidth()){Text("تازه‌سازی تاریخچه")}
-                } } }
+         item { Text("سوابق سیگنال‌های ذخیره‌شده",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("آرشیو سیگنال‌های چندتایم‌فریمی اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
+            Text("ثبت بر اساس کندل بسته‌شده • نگهداری ۹۰ روزه • بدون اجرای سفارش",color=muted,fontSize=11.sp)
+            when {
+              archiveRefresh==0 -> Text("برای مشاهده سوابق، دکمه دریافت تاریخچه را بزن.",color=muted,fontSize=12.sp)
+              archivedSignals==null -> Text("در حال دریافت سوابق…",color=muted)
+              archivedSignals!!.isFailure -> Text("تاریخچه فعلاً در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              archivedSignals!!.getOrThrow().isEmpty() -> Text("هنوز سابقه‌ای ثبت نشده است؛ پس از ارزیابی موفق بازار ذخیره می‌شود.",color=muted,fontSize=12.sp)
+              else -> archivedSignals!!.getOrThrow().take(20).forEach { row ->
+                Column(Modifier.fillMaxWidth().padding(vertical=5.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                  Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                    Text(when(row.signal){"BUY"->"خرید";"SELL"->"فروش";else->"عدم معامله"},color=if(row.signal=="BUY") Color(0xFF8FD6A8) else if(row.signal=="SELL") Color(0xFFFF8D8D) else muted,fontWeight=FontWeight.Bold)
+                    Text("امتیاز ${row.confidence}",color=muted,fontSize=11.sp)
+                  }
+                  Text("روند: ${row.trend} • ثبت: ${formatLocalTimestamp(row.recordedAt)}",color=muted,fontSize=10.sp)
+                  if(row.entry.isNotBlank()) Text("ورود ${row.entry} | حدضرر ${row.stop} | هدف ${row.target}",color=Color.White,fontSize=11.sp)
+                }
+                Divider(color=Color(0xFF303746))
+              }
             }
-            if(selectedTab==1) {
-                item { PaperMonitorHealthCard(paperMonitor) }
-                item { PaperAccountCard() }
+            OutlinedButton(onClick={archiveRefresh++},modifier=Modifier.fillMaxWidth()){Text("دریافت تاریخچه سیگنال‌ها")}
+         } } }
+         item { Text("کارنامه واقعی سیگنال‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("ارزیابی پس از صدور سیگنال با کندل‌های بسته‌شده",color=Color.White,fontWeight=FontWeight.SemiBold)
+            Text("ورود فرضی در قیمت بازشدن کندل بعدی؛ افق‌های ۱، ۴ و ۲۴ کندلی",color=muted,fontSize=11.sp)
+            when {
+              performanceRefresh==0 -> Text("برای محاسبه نتایج واقعی سیگنال‌های آرشیوشده، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
+              performance==null -> Text("در حال ارزیابی نتایج سیگنال‌ها…",color=muted)
+              performance!!.isFailure -> Text("کارنامه فعلاً قابل محاسبه نیست؛ داده کندل یا آرشیو در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              else -> {
+                val p=performance!!.getOrThrow()
+                val maximumScoredSamples=p.horizons.maxOfOrNull { it.scored } ?: 0
+                Text("سیگنال جهت‌دار: ${p.directionalSignals} • در انتظار تکمیل: ${p.pending} • غیرقابل ارزیابی: ${p.unavailable}",color=muted,fontSize=11.sp)
+                Text(
+                  when {
+                    maximumScoredSamples==0 -> "هنوز هیچ نتیجه بالغ و قابل ارزیابی ثبت نشده است؛ درصد برد نمایش داده نمی‌شود."
+                    maximumScoredSamples<30 -> "نمونه‌ها فعلاً محدود است: حداکثر $maximumScoredSamples نتیجه. برای نمایش زمینه‌ای حداقل ۳۰ نتیجه لازم است."
+                    else -> "تعداد نتایج به آستانه زمینه‌ای ۳۰ رسیده؛ این عدد به‌تنهایی اعتبار آماری یا سودآوری را ثابت نمی‌کند."
+                  },
+                  color=Color(0xFFFFB86B),fontSize=11.sp
+                )
+                p.horizons.forEach { h ->
+                  Text("پس از ${h.horizon} کندل",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+                  Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                    Text("نمونه: ${h.scored} • برد: ${h.wins} • باخت: ${h.losses}",color=muted,fontSize=11.sp)
+                    Text(if(h.winRate==null) "—" else String.format(Locale.US,"%.1f%%",h.winRate),color=Color.White,fontSize=11.sp)
+                  }
+                  if(h.averageReturn!=null) {
+                    IndicatorRow("میانگین بازده",h.averageReturn)
+                    IndicatorRow("میانگین حرکت مطلوب",h.averageFavorable?:0.0)
+                    IndicatorRow("میانگین حرکت نامطلوب",h.averageAdverse?:0.0)
+                  }
+                }
+                Text("آخرین کندل ارزیابی: ${formatLocalTimestamp(p.lastCandle)}",color=muted,fontSize=10.sp)
+                Text(p.warning,color=muted,fontSize=10.sp)
+              }
             }
-            if(selectedTab==2) {
-                item { Text("سوابق سیگنال‌های ذخیره‌شده",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                   Text("آرشیو سیگنال‌های چندتایم‌فریمی اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
-                   Text("ثبت بر اساس کندل بسته‌شده • نگهداری ۹۰ روزه • بدون اجرای سفارش",color=muted,fontSize=11.sp)
-                   when {
-                     archiveRefresh==0 -> Text("برای مشاهده سوابق، دکمه دریافت تاریخچه را بزن.",color=muted,fontSize=12.sp)
-                     archivedSignals==null -> Text("در حال دریافت سوابق…",color=muted)
-                     archivedSignals!!.isFailure -> Text("تاریخچه فعلاً در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
-                     archivedSignals!!.getOrThrow().isEmpty() -> Text("هنوز سابقه‌ای ثبت نشده است؛ پس از ارزیابی موفق بازار ذخیره می‌شود.",color=muted,fontSize=12.sp)
-                     else -> archivedSignals!!.getOrThrow().take(20).forEach { row ->
-                       Column(Modifier.fillMaxWidth().padding(vertical=5.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
-                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                           Text(when(row.signal){"BUY"->"خرید";"SELL"->"فروش";else->"عدم معامله"},color=if(row.signal=="BUY") Color(0xFF8FD6A8) else if(row.signal=="SELL") Color(0xFFFF8D8D) else muted,fontWeight=FontWeight.Bold)
-                           Text("امتیاز ${row.confidence}",color=muted,fontSize=11.sp)
-                         }
-                         Text("روند: ${row.trend} • ثبت: ${formatLocalTimestamp(row.recordedAt)}",color=muted,fontSize=10.sp)
-                         if(row.entry.isNotBlank()) Text("ورود ${row.entry} | حدضرر ${row.stop} | هدف ${row.target}",color=Color.White,fontSize=11.sp)
-                       }
-                       Divider(color=Color(0xFF303746))
-                     }
-                   }
-                   OutlinedButton(onClick={archiveRefresh++},modifier=Modifier.fillMaxWidth()){Text("دریافت تاریخچه سیگنال‌ها")}
-                } } }
-                item { Text("کارنامه واقعی سیگنال‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                   Text("ارزیابی پس از صدور سیگنال با کندل‌های بسته‌شده",color=Color.White,fontWeight=FontWeight.SemiBold)
-                   Text("ورود فرضی در قیمت بازشدن کندل بعدی؛ افق‌های ۱، ۴ و ۲۴ کندلی",color=muted,fontSize=11.sp)
-                   when {
-                     performanceRefresh==0 -> Text("برای محاسبه نتایج واقعی سیگنال‌های آرشیوشده، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
-                     performance==null -> Text("در حال ارزیابی نتایج سیگنال‌ها…",color=muted)
-                     performance!!.isFailure -> Text("کارنامه فعلاً قابل محاسبه نیست؛ داده کندل یا آرشیو در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
-                     else -> {
-                       val p=performance!!.getOrThrow()
-                       val maximumScoredSamples=p.horizons.maxOfOrNull { it.scored } ?: 0
-                       Text("سیگنال جهت‌دار: ${p.directionalSignals} • در انتظار تکمیل: ${p.pending} • غیرقابل ارزیابی: ${p.unavailable}",color=muted,fontSize=11.sp)
-                       Text(
-                         when {
-                           maximumScoredSamples==0 -> "هنوز هیچ نتیجه بالغ و قابل ارزیابی ثبت نشده است؛ درصد برد نمایش داده نمی‌شود."
-                           maximumScoredSamples<30 -> "نمونه‌ها فعلاً محدود است: حداکثر $maximumScoredSamples نتیجه. برای نمایش زمینه‌ای حداقل ۳۰ نتیجه لازم است."
-                           else -> "تعداد نتایج به آستانه زمینه‌ای ۳۰ رسیده؛ این عدد به‌تنهایی اعتبار آماری یا سودآوری را ثابت نمی‌کند."
-                         },
-                         color=Color(0xFFFFB86B),fontSize=11.sp
-                       )
-                       p.horizons.forEach { h ->
-                         Text("پس از ${h.horizon} کندل",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
-                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                           Text("نمونه: ${h.scored} • برد: ${h.wins} • باخت: ${h.losses}",color=muted,fontSize=11.sp)
-                           Text(if(h.winRate==null) "—" else String.format(Locale.US,"%.1f%%",h.winRate),color=Color.White,fontSize=11.sp)
-                         }
-                         if(h.averageReturn!=null) {
-                           IndicatorRow("میانگین بازده",h.averageReturn)
-                           IndicatorRow("میانگین حرکت مطلوب",h.averageFavorable?:0.0)
-                           IndicatorRow("میانگین حرکت نامطلوب",h.averageAdverse?:0.0)
-                         }
-                       }
-                       Text("آخرین کندل ارزیابی: ${formatLocalTimestamp(p.lastCandle)}",color=muted,fontSize=10.sp)
-                       Text(p.warning,color=muted,fontSize=10.sp)
-                     }
-                   }
-                   OutlinedButton(onClick={performanceRefresh++},modifier=Modifier.fillMaxWidth()){Text(if(performanceRefresh==0) "محاسبه کارنامه سیگنال‌ها" else "به‌روزرسانی کارنامه")}
-                } } }
-                item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                   Text("بک‌تست EMA روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
-                   Text("تایم‌فریم و پارامترها را تغییر بده؛ هر اجرا فقط داده XAUS را بررسی می‌کند.",color=muted,fontSize=11.sp)
-                   var intervalExpanded by remember { mutableStateOf(false) }
-                   ExposedDropdownMenuBox(expanded=intervalExpanded,onExpandedChange={intervalExpanded=it}) {
-                     OutlinedTextField(value=when(backtestInterval){"15m"->"۱۵ دقیقه";"1d"->"روزانه";else->"۶۰ دقیقه"},onValueChange={},readOnly=true,label={Text("تایم‌فریم")},modifier=Modifier.fillMaxWidth().menuAnchor())
-                     ExposedDropdownMenu(expanded=intervalExpanded,onDismissRequest={intervalExpanded=false}) {
-                       listOf("15m" to "۱۵ دقیقه","60m" to "۶۰ دقیقه","1d" to "روزانه").forEach{(id,label)->DropdownMenuItem(text={Text(label)},onClick={backtestInterval=id;intervalExpanded=false})}
-                     }
-                   }
-                   Text("EMA سریع: $backtestFast",color=Color.White,fontSize=12.sp)
-                   Slider(value=backtestFast.toFloat(),onValueChange={backtestFast=it.toInt().coerceIn(3,backtestSlow-1)},valueRange=3f..59f,steps=55)
-                   Text("EMA کند: $backtestSlow",color=Color.White,fontSize=12.sp)
-                   Slider(value=backtestSlow.toFloat(),onValueChange={backtestSlow=it.toInt().coerceIn(backtestFast+1,100)},valueRange=4f..100f,steps=95)
-                   Text("ریسک ثابت ۱٪ • سرمایه فرضی ۱۰٬۰۰۰ • کارمزد ۱۰ و لغزش ۵ واحد پایه در هر سمت",color=muted,fontSize=10.sp)
-                   when {
-                     backtestRefresh==0 -> Text("برای دریافت داده واقعی و اجرای آزمون، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
-                     backtest==null -> Text("در حال دریافت کندل‌ها و اجرای بک‌تست…",color=muted)
-                     backtest!!.isFailure -> Text("بک‌تست انجام نشد؛ منبع OHLC در دسترس نیست یا داده معتبر کافی ندارد.",color=Color(0xFFFFB86B),fontSize=12.sp)
-                     else -> {
-                       val b=backtest!!.getOrThrow()
-                       Text("بازده خالص: ${String.format(Locale.US,"%.2f",b.netReturnPct)}٪",color=if(b.netReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=22.sp,fontWeight=FontWeight.Bold)
-                       IndicatorRow("سرمایه اولیه",b.startingCapital)
-                       IndicatorRow("ارزش نهایی",b.finalEquity)
-                       IndicatorRow("حداکثر افت سرمایه",b.maxDrawdownPct)
-                       IndicatorRow("تعداد معاملات بسته‌شده",b.closedTrades.toDouble(),0)
-                       IndicatorRow("درصد معاملات موفق",b.winRatePct)
-                       Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Profit Factor",color=muted,fontSize=12.sp);Text(b.profitFactor,color=Color.White,fontSize=12.sp)}
-                       Text("${b.candleCount} کندل • XAUS • ${b.interval} • آخرین کندل: ${formatLocalTimestamp(b.lastCandle)}",color=muted,fontSize=10.sp)
-                       Text(b.warning,color=muted,fontSize=10.sp)
-                     }
-                   }
-                   Button(onClick={backtestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(backtestRefresh==0) "اجرای بک‌تست با داده زنده" else "اجرای دوباره بک‌تست")}
-                } } }
-                item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                   Text("EMA 9/21 • EMA 12/26 • EMA 20/50",color=Color.White,fontWeight=FontWeight.SemiBold)
-                   Text("مقایسه روی کندل‌های واقعی ۱۵، ۳۰ و ۶۰ دقیقه و روزانه؛ سرمایه فرضی و هزینه یکسان",color=muted,fontSize=11.sp)
-                   when {
-                     compareRefresh==0 -> Text("برای مقایسه عملکرد تاریخی، دکمه اجرا را بزن.",color=muted,fontSize=12.sp)
-                     comparison==null -> Text("در حال دریافت داده و اجرای ۱۲ آزمون…",color=muted)
-                     comparison!!.isFailure -> Text("مقایسه فعلاً انجام نشد؛ داده معتبر کافی دریافت نشد.",color=Color(0xFFFFB86B),fontSize=12.sp)
-                     comparison!!.getOrThrow().isEmpty() -> Text("نتیجه قابل‌مقایسه‌ای موجود نیست.",color=muted)
-                     else -> comparison!!.getOrThrow().forEach { row ->
-                       Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
-                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                           Text("${row.interval} • EMA ${row.fast}/${row.slow}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
-                           Text(if(row.status=="OK") "${String.format(Locale.US,"%.2f",row.returnPct)}٪" else "ناموجود",color=if(row.returnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
-                         }
-                         if(row.status=="OK") Text("افت سرمایه ${String.format(Locale.US,"%.2f",row.drawdownPct)}٪ • ${row.trades} معامله • موفقیت ${String.format(Locale.US,"%.1f",row.winRate)}٪",color=muted,fontSize=10.sp)
-                       }
-                       Divider(color=Color(0xFF303746))
-                   Button(onClick={compareRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("مقایسه استراتژی‌ها")}
-                   Text("تعداد کندل‌ها و طول نمونه در تایم‌فریم‌ها متفاوت است؛ این نتایج پیش‌بینی آینده نیستند و اجرای سفارش غیرفعال است.",color=muted,fontSize=10.sp)
-                } } }
-                item { Text("آزمون خارج از نمونه Walk-forward",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
-                item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                   Text("انتخاب استراتژی با داده‌های گذشته و ارزیابی روی بازه‌های بعدیِ دیده‌نشده",color=Color.White,fontWeight=FontWeight.SemiBold)
-                   Text("سه مرحله ارزیابی روی کندل‌های واقعی ۶۰ دقیقه‌ای؛ حداقل ۱۸۰ کندل لازم است.",color=muted,fontSize=11.sp)
-                   when {
-                     walkForwardRefresh==0 -> Text("برای اجرای آزمون مستقل، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
-                     walkForward==null -> Text("در حال دریافت داده و اجرای سه مرحله آزمون…",color=muted)
-                     walkForward!!.isFailure -> Text("آزمون انجام نشد؛ داده معتبر کافی از منبع دریافت نشد.",color=Color(0xFFFFB86B),fontSize=12.sp)
-                     else -> {
-                       val w=walkForward!!.getOrThrow()
-                       Text("بازده ترکیبی خارج از نمونه: ${String.format(Locale.US,"%.2f",w.totalReturnPct)}٪",color=if(w.totalReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=20.sp,fontWeight=FontWeight.Bold)
-                       IndicatorRow("بدترین افت سرمایه در یک مرحله",w.worstDrawdownPct)
-                       IndicatorRow("مجموع معاملات بسته‌شده",w.totalTrades.toDouble(),0)
-                       IndicatorRow("درصد برد کل",w.winRate)
-                       w.folds.forEach { fold ->
-                         Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
-                           Text("مرحله ${fold.fold} • ${fold.strategy}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
-                           Text("بازده ${String.format(Locale.US,"%.2f",fold.returnPct)}٪ • افت ${String.format(Locale.US,"%.2f",fold.drawdownPct)}٪ • ${fold.trades} معامله • برد ${String.format(Locale.US,"%.1f",fold.winRate)}٪",color=muted,fontSize=10.sp)
-                           Text("${formatLocalTimestamp(fold.testStart)} تا ${formatLocalTimestamp(fold.testEnd)}",color=muted,fontSize=10.sp)
-                         }
-                         Divider(color=Color(0xFF303746))
-                       }
-                     }
-                   }
+            OutlinedButton(onClick={performanceRefresh++},modifier=Modifier.fillMaxWidth()){Text(if(performanceRefresh==0) "محاسبه کارنامه سیگنال‌ها" else "به‌روزرسانی کارنامه")}
+         } } }
+         item { Text("ارزیابی عملکرد استراتژی با داده واقعی",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("بک‌تست EMA روی کندل‌های بسته‌شده اونس جهانی",color=Color.White,fontWeight=FontWeight.SemiBold)
+            Text("تایم‌فریم و پارامترها را تغییر بده؛ هر اجرا فقط داده XAUS را بررسی می‌کند.",color=muted,fontSize=11.sp)
+            var intervalExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(expanded=intervalExpanded,onExpandedChange={intervalExpanded=it}) {
+              OutlinedTextField(value=when(backtestInterval){"15m"->"۱۵ دقیقه";"1d"->"روزانه";else->"۶۰ دقیقه"},onValueChange={},readOnly=true,label={Text("تایم‌فریم")},modifier=Modifier.fillMaxWidth().menuAnchor())
+              ExposedDropdownMenu(expanded=intervalExpanded,onDismissRequest={intervalExpanded=false}) {
+                listOf("15m" to "۱۵ دقیقه","60m" to "۶۰ دقیقه","1d" to "روزانه").forEach{(id,label)->DropdownMenuItem(text={Text(label)},onClick={backtestInterval=id;intervalExpanded=false})}
+              }
+            }
+            Text("EMA سریع: $backtestFast",color=Color.White,fontSize=12.sp)
+            Slider(value=backtestFast.toFloat(),onValueChange={backtestFast=it.toInt().coerceIn(3,backtestSlow-1)},valueRange=3f..59f,steps=55)
+            Text("EMA کند: $backtestSlow",color=Color.White,fontSize=12.sp)
+            Slider(value=backtestSlow.toFloat(),onValueChange={backtestSlow=it.toInt().coerceIn(backtestFast+1,100)},valueRange=4f..100f,steps=95)
+            Text("ریسک ثابت ۱٪ • سرمایه فرضی ۱۰٬۰۰۰ • کارمزد ۱۰ و لغزش ۵ واحد پایه در هر سمت",color=muted,fontSize=10.sp)
+            when {
+              backtestRefresh==0 -> Text("برای دریافت داده واقعی و اجرای آزمون، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
+              backtest==null -> Text("در حال دریافت کندل‌ها و اجرای بک‌تست…",color=muted)
+              backtest!!.isFailure -> Text("بک‌تست انجام نشد؛ منبع OHLC در دسترس نیست یا داده معتبر کافی ندارد.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              else -> {
+                val b=backtest!!.getOrThrow()
+                Text("بازده خالص: ${String.format(Locale.US,"%.2f",b.netReturnPct)}٪",color=if(b.netReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=22.sp,fontWeight=FontWeight.Bold)
+                IndicatorRow("سرمایه اولیه",b.startingCapital)
+                IndicatorRow("ارزش نهایی",b.finalEquity)
+                IndicatorRow("حداکثر افت سرمایه",b.maxDrawdownPct)
+                IndicatorRow("تعداد معاملات بسته‌شده",b.closedTrades.toDouble(),0)
+                IndicatorRow("درصد معاملات موفق",b.winRatePct)
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Profit Factor",color=muted,fontSize=12.sp);Text(b.profitFactor,color=Color.White,fontSize=12.sp)}
+                Text("${b.candleCount} کندل • XAUS • ${b.interval} • آخرین کندل: ${formatLocalTimestamp(b.lastCandle)}",color=muted,fontSize=10.sp)
+                Text(b.warning,color=muted,fontSize=10.sp)
+              }
+            }
+            Button(onClick={backtestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(backtestRefresh==0) "اجرای بک‌تست با داده زنده" else "اجرای دوباره بک‌تست")}
+         } } }
+         item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("EMA 9/21 • EMA 12/26 • EMA 20/50",color=Color.White,fontWeight=FontWeight.SemiBold)
+            Text("مقایسه روی کندل‌های واقعی ۱۵، ۳۰ و ۶۰ دقیقه و روزانه؛ سرمایه فرضی و هزینه یکسان",color=muted,fontSize=11.sp)
+            when {
+              compareRefresh==0 -> Text("برای مقایسه عملکرد تاریخی، دکمه اجرا را بزن.",color=muted,fontSize=12.sp)
+              comparison==null -> Text("در حال دریافت داده و اجرای ۱۲ آزمون…",color=muted)
+              comparison!!.isFailure -> Text("مقایسه فعلاً انجام نشد؛ داده معتبر کافی دریافت نشد.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              comparison!!.getOrThrow().isEmpty() -> Text("نتیجه قابل‌مقایسه‌ای موجود نیست.",color=muted)
+              else -> comparison!!.getOrThrow().forEach { row ->
+                Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                  Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                    Text("${row.interval} • EMA ${row.fast}/${row.slow}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                    Text(if(row.status=="OK") "${String.format(Locale.US,"%.2f",row.returnPct)}٪" else "ناموجود",color=if(row.returnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+                  }
+                  if(row.status=="OK") Text("افت سرمایه ${String.format(Locale.US,"%.2f",row.drawdownPct)}٪ • ${row.trades} معامله • موفقیت ${String.format(Locale.US,"%.1f",row.winRate)}٪",color=muted,fontSize=10.sp)
+                }
+                Divider(color=Color(0xFF303746))
+              }
+            }
+            Button(onClick={compareRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("مقایسه استراتژی‌ها")}
+            Text("تعداد کندل‌ها و طول نمونه در تایم‌فریم‌ها متفاوت است؛ این نتایج پیش‌بینی آینده نیستند و اجرای سفارش غیرفعال است.",color=muted,fontSize=10.sp)
+         } } }
+         item { Text("آزمون خارج از نمونه Walk-forward",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("انتخاب استراتژی با داده‌های گذشته و ارزیابی روی بازه‌های بعدیِ دیده‌نشده",color=Color.White,fontWeight=FontWeight.SemiBold)
+            Text("سه مرحله ارزیابی روی کندل‌های واقعی ۶۰ دقیقه‌ای؛ حداقل ۱۸۰ کندل لازم است.",color=muted,fontSize=11.sp)
+            when {
+              walkForwardRefresh==0 -> Text("برای اجرای آزمون مستقل، دکمه زیر را بزن.",color=muted,fontSize=12.sp)
+              walkForward==null -> Text("در حال دریافت داده و اجرای سه مرحله آزمون…",color=muted)
+              walkForward!!.isFailure -> Text("آزمون انجام نشد؛ داده معتبر کافی از منبع دریافت نشد.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              else -> {
+                val w=walkForward!!.getOrThrow()
+                Text("بازده ترکیبی خارج از نمونه: ${String.format(Locale.US,"%.2f",w.totalReturnPct)}٪",color=if(w.totalReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=20.sp,fontWeight=FontWeight.Bold)
+                IndicatorRow("بدترین افت سرمایه در یک مرحله",w.worstDrawdownPct)
+                IndicatorRow("مجموع معاملات بسته‌شده",w.totalTrades.toDouble(),0)
+                IndicatorRow("درصد برد کل",w.winRate)
+                w.folds.forEach { fold ->
+                  Column(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                    Text("مرحله ${fold.fold} • ${fold.strategy}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                    Text("بازده ${String.format(Locale.US,"%.2f",fold.returnPct)}٪ • افت ${String.format(Locale.US,"%.2f",fold.drawdownPct)}٪ • ${fold.trades} معامله • برد ${String.format(Locale.US,"%.1f",fold.winRate)}٪",color=muted,fontSize=10.sp)
+                    Text("${formatLocalTimestamp(fold.testStart)} تا ${formatLocalTimestamp(fold.testEnd)}",color=muted,fontSize=10.sp)
+                  }
+                  Divider(color=Color(0xFF303746))
+                }
+              }
+            }
+            Button(onClick={walkForwardRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("اجرای آزمون خارج از نمونه")}
+            Text("این آزمون تضمین سود نیست؛ داده آموزشی در سود و زیان دوره آزمون وارد نمی‌شود و سفارش واقعی اجرا نمی‌شود.",color=muted,fontSize=10.sp)
+         } } }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("موتور تحلیل اونس جهانی طلا • هم‌ترازی چندتایم‌فریمی",color=gold,fontWeight=FontWeight.Bold)
+            when {
+              signal==null -> Text("در حال دریافت کندل‌های واقعی و ارزیابی بازار…",color=muted)
+              signal!!.isFailure -> Text("دریافت سیگنال ناموفق بود؛ تا دریافت داده معتبر معامله‌ای پیشنهاد نمی‌شود.",color=Color(0xFFFFB86B))
+              else -> {
+                val s=signal!!.getOrThrow()
+                Text(when(s.signal){"BUY"->"سیگنال خرید";"SELL"->"سیگنال فروش";else->"بدون معامله"},color=when(s.signal){"BUY"->Color(0xFF8FD6A8);"SELL"->Color(0xFFFF8D8D);else->Color(0xFFFFB86B)},fontSize=22.sp,fontWeight=FontWeight.Bold)
+                Text("وضعیت داده: ${s.status}  •  روند ۶۰ دقیقه: ${s.trend}  •  امتیاز هم‌ترازی: ${s.confidence}/100",color=muted,fontSize=11.sp)
+                Text("کنترل کیفیت سیگنال: ${s.qualityStatus}  •  ${s.qualityProgress}",color=if(s.qualityStatus=="PASSED") Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                Text("رژیم بازار ۶۰ دقیقه: ${s.regime}",color=if(s.regime=="TRENDING") Color(0xFF8FD6A8) else Color(0xFFFFB86B),fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                Text(s.regimeReason,color=muted,fontSize=10.sp)
+                Text("وضعیت تایم‌فریم‌ها: ${s.timeframes}",color=muted,fontSize=11.sp)
+                if(s.qualityReasons.isNotBlank()) Text("دلایل عدم تأیید: ${s.qualityReasons}",color=Color(0xFFFFB86B),fontSize=11.sp)
+                if(s.signal!="NO_TRADE"){
+                  IndicatorRow("نقطه ورود",s.entry.toDoubleOrNull()?:Double.NaN,2)
+                  IndicatorRow("حد ضرر",s.stop.toDoubleOrNull()?:Double.NaN,2)
+                  IndicatorRow("حد سود",s.target.toDoubleOrNull()?:Double.NaN,2)
+                }
+                Text(s.reason,color=muted,fontSize=11.sp)
+                Text("آخرین کندل بسته‌شده: ${formatLocalTimestamp(s.lastCandle)}",color=muted,fontSize=10.sp)
+              }
+            }
+            Text("منبع کندل: XAUS (XAU/USD). فقط اونس جهانی؛ برای طلای ۱۸ عیار و سکه ایران هنوز فید OHLC مستقل و معتبر متصل نشده است. امتیاز همگرایی احتمال موفقیت نیست. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=11.sp)
+         } } }
+         item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
+       } } }
+    }
     if(selectedTab==3) {
-                     }
-                   }
+         item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
+         item { RiskCalculator() }
+    }
    }
   }
  }
-}
 }
 
 @Composable private fun HistoryChart(points:List<HistoryPoint>){
