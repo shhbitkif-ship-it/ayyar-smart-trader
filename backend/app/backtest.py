@@ -30,6 +30,7 @@ def run_ema_backtest(
     fee_bps: float = 10.0,
     slippage_bps: float = 5.0,
     spread_bps: float = 0.0,
+    start_index: int = 0,
 ) -> dict:
     """Long-only EMA20/EMA50 close-confirmed strategy, filled at next candle open.
 
@@ -47,6 +48,8 @@ def run_ema_backtest(
         raise ValueError("Candle timestamps must be unique and strictly increasing in input order.")
     if len(ordered) < 60:
         raise ValueError("At least 60 OHLC candles are required.")
+    if isinstance(start_index, bool) or not isinstance(start_index, int) or start_index < 0 or start_index >= len(ordered) - 1:
+        raise ValueError("start_index must identify a candle with at least one following fill candle.")
     if starting_capital <= 0 or fee_bps < 0 or slippage_bps < 0 or spread_bps < 0 or fee_bps > 500 or slippage_bps > 500 or spread_bps > 500:
         raise ValueError("Capital must be positive and costs cannot be negative.")
 
@@ -63,11 +66,11 @@ def run_ema_backtest(
     entry_price = None
     entry_time = None
     trades = []
-    equity_curve = [{"timestamp": ordered[0].timestamp.isoformat(), "equity": round(cash, 2)}]
+    equity_curve = [{"timestamp": ordered[start_index].timestamp.isoformat(), "equity": round(cash, 2)}]
     # Intrabar adverse marks make drawdown more conservative than close-only marks.
-    drawdown_curve = [{"timestamp": ordered[0].timestamp.isoformat(), "equity": cash}]
+    drawdown_curve = [{"timestamp": ordered[start_index].timestamp.isoformat(), "equity": cash}]
 
-    for fill_index in range(1, len(ordered)):
+    for fill_index in range(start_index + 1, len(ordered)):
         signal_index = fill_index - 1
         if signal_index >= 50:
             ema_index = signal_index - 49
@@ -132,7 +135,7 @@ def run_ema_backtest(
     average_win = sum(winning_trades) / len(winning_trades) if winning_trades else None
     average_loss = sum(losing_trades) / len(losing_trades) if losing_trades else None
     expectancy = sum(t["pnl"] for t in trades) / len(trades) if trades else None
-    benchmark_entry = float(ordered[0].open) * (1.0 + cost_rate)
+    benchmark_entry = float(ordered[start_index].open) * (1.0 + cost_rate)
     benchmark_quantity = starting_capital / benchmark_entry
     benchmark_final = benchmark_quantity * float(ordered[-1].close) * (1.0 - cost_rate)
     benchmark_return = (benchmark_final / starting_capital - 1.0) * 100.0
@@ -141,7 +144,9 @@ def run_ema_backtest(
         "strategy": "EMA20/EMA50 long-only crossover",
         "execution": "Signal confirmed at candle close; orders filled at next candle open",
         "cost_model": {"fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps, "spread_bps_full": spread_bps, "spread_bps_per_side": spread_bps / 2.0},
-        "starting_capital": round(starting_capital, 2),\n        "evaluation_start_index": start_index,\n        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),
+        "starting_capital": round(starting_capital, 2),
+        "evaluation_start_index": start_index,
+        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),\n        "evaluation_start_index": start_index,\n        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),
         "final_equity": round(final_equity, 2),
         "net_return_pct": round(strategy_return, 4),
         "benchmark": {
