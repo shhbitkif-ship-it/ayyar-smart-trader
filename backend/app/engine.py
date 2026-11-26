@@ -1,4 +1,5 @@
 from datetime import datetime,timedelta,timezone
+from hashlib import sha256
 import math
 from .indicators import ema,rsi,macd,bollinger,atr,vwap,support_resistance,fibonacci_levels
 from .schemas import EvaluateRequest,SignalResponse
@@ -84,7 +85,7 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
               "macd":macd(closes),"bollinger20":bollinger(closes),"atr14":atr_values,
               "vwap":vwap(highs,lows,closes,volumes),"support_resistance":support_resistance(highs,lows),
               "fibonacci":fibonacci_levels(highs,lows),**regime,
-              "setup_direction":"NONE","setup_detected":False}
+              "setup_direction":"NONE","setup_detected":False,"signal_key":None}
     base["analysis"]=analysis
     if not request.confirmation_candles: return SignalResponse(**base,action="NO_TRADE",status="NO_SETUP",reason="Higher-timeframe confirmation data is not available.")
     if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in request.confirmation_candles):
@@ -105,6 +106,10 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     # A detected setup is informational only. Order execution remains disabled.
     analysis["setup_direction"] = "LONG" if up else "SHORT" if down else "NONE"
     analysis["setup_detected"] = bool(up or down)
+    analysis["signal_key"] = (
+        sha256(f"{request.symbol.upper()}|{request.timeframe}|{latest_time.isoformat()}|{analysis['setup_direction']}".encode()).hexdigest()
+        if up or down else None
+    )
     if up or down:
         action="WAIT"
         reason="Trend and higher-timeframe alignment detected. Entry remains disabled pending spread, tick size, contract size, liquidity and risk verification."
