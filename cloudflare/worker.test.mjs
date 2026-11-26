@@ -1123,6 +1123,8 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
   assert.ok(Number.isFinite(body.stability.median_fold_return_pct));
   assert.ok(body.stability.fold_return_range_pct>=0);
   assert.equal(body.regime_diagnostics.lookahead_used,false);
+  assert.ok(body.regime_diagnostics.buckets.every(b=>
+    b.average_atr_pct===null||Number.isFinite(b.average_atr_pct)));
   assert.ok(Array.isArray(body.regime_diagnostics.buckets));
   assert.equal(body.regime_diagnostics.buckets.reduce((sum,b)=>sum+b.bars,0),108);
   for(const fold of body.folds){
