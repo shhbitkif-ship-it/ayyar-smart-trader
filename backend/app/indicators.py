@@ -134,8 +134,12 @@ def vwap(
     _finite_values(highs, "highs")
     _finite_values(lows, "lows")
     _finite_values(closes, "closes")
-    if any(volume is not None and not math.isfinite(float(volume)) for volume in volumes):
-        raise ValueError("volumes must contain only finite numbers or None.")
+    if any(
+        volume is not None
+        and (not math.isfinite(float(volume)) or volume < 0)
+        for volume in volumes
+    ):
+        raise ValueError("volumes must be finite and non-negative, or None.")
     if any(high < low for high, low in zip(highs, lows)):
         raise ValueError("Each high must be greater than or equal to its low.")
     valid = [
