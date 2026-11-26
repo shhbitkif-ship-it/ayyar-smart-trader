@@ -37,9 +37,11 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     if not request.confirmation_candles: return SignalResponse(**base,action="NO_TRADE",status="NO_SETUP",reason="Higher-timeframe confirmation data is not available.")
     if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in request.confirmation_candles):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Every confirmation candle timestamp must include a timezone.")
-    confirm=sorted(request.confirmation_candles,key=lambda x:x.timestamp)
+    confirm=list(request.confirmation_candles)
     if any(confirm[i].timestamp == confirm[i + 1].timestamp for i in range(len(confirm)-1)):
         return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Duplicate confirmation candle timestamps detected.")
+    if any(confirm[i].timestamp > confirm[i + 1].timestamp for i in range(len(confirm)-1)):
+        return SignalResponse(**base,action="NO_TRADE",status="STALE",reason="Confirmation candle timestamps are out of order; input history must be strictly chronological.")
     confirm_time=confirm[-1].timestamp
     confirm_time=confirm_time.astimezone(timezone.utc)
     if confirm_time>now+timedelta(seconds=30) or confirm_time>latest_time+timedelta(seconds=30) or now-confirm_time>timedelta(minutes=max_age*2):
