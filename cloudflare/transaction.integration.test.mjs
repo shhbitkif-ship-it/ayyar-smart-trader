@@ -229,6 +229,35 @@ test("single-trade risk accepts the exact one percent boundary and rejects any e
   assert.equal(integrity.execution_enabled,false);
 });
 
+test("single-trade risk boundary includes both entry and stop-loss fees", async () => {
+  const acceptedId="sqlite-fee-aware-risk-accepted";
+  const acceptedToken="token-hash-fee-aware-risk-accepted";
+  const accepted=namespace.get(namespace.idFromName(acceptedId));
+  await accepted.createAccount(acceptedId,acceptedToken,"USD",100000,"2026-11-25T06:00:00.000Z");
+  const within=await accepted.createTrade(acceptedToken,{
+    trade_id:"fee-aware-risk-within",symbol:"XAUUSD",side:"BUY",quantity:99.05,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:5,
+    idempotency_key:"idem-fee-aware-risk-within"
+  },"2026-11-25T06:01:00.000Z");
+  assert.equal(within.status,"OPEN");
+
+  const rejectedId="sqlite-fee-aware-risk-rejected";
+  const rejectedToken="token-hash-fee-aware-risk-rejected";
+  const rejected=namespace.get(namespace.idFromName(rejectedId));
+  await rejected.createAccount(rejectedId,rejectedToken,"USD",100000,"2026-11-25T06:00:00.000Z");
+  const over=await rejected.runCreateTradeWithFault(rejectedToken,{
+    trade_id:"fee-aware-risk-over",symbol:"XAGUSD",side:"BUY",quantity:99.06,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:5,
+    idempotency_key:"idem-fee-aware-risk-over"
+  },"2026-11-25T06:01:00.000Z");
+  assert.equal(over.ok,false);
+  assert.match(over.error,/RISK_LIMIT_EXCEEDED/);
+  assert.equal((await rejected.listTrades(rejectedToken)).length,0);
+  const integrity=await rejected.getIntegrityReport(rejectedToken);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled,false);
+});
+
 test("aggregate open risk is capped at two percent of paper equity", async () => {
   const accountId = "sqlite-aggregate-risk";
   const tokenHash = "token-hash-aggregate-risk";
