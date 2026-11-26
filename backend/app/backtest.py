@@ -237,3 +237,67 @@ def run_cost_sensitivity(
         "cost_order_is_monotonic": monotonic_cost_order,
         "warning": "Higher assumed costs should not improve comparable results; scenarios are listed in caller-supplied order.",
     }
+
+
+def run_out_of_sample_backtest(
+    candles: Sequence[Candle],
+    *,
+    train_fraction: float = 0.70,
+    starting_capital: float = 10000.0,
+    fee_bps: float = 10.0,
+    slippage_bps: float = 5.0,
+    spread_bps: float = 0.0,
+) -> dict:
+    """Evaluate fixed EMA rules on a chronological holdout without fitting."""
+    if not math.isfinite(train_fraction) or not 0.5 <= train_fraction <= 0.9:
+        raise ValueError("train_fraction must be finite and between 0.5 and 0.9.")
+    ordered = list(candles)
+    if len(ordered) < 120:
+        raise ValueError("At least 120 candles are required for 60-candle train and test segments.")
+    split_index = int(len(ordered) * train_fraction)
+    if split_index < 60 or len(ordered) - split_index < 60:
+        raise ValueError("Train and test segments must each contain at least 60 candles.")
+    train = run_ema_backtest(
+        ordered[:split_index], starting_capital=starting_capital,
+        fee_bps=fee_bps, slippage_bps=slippage_bps, spread_bps=spread_bps,
+    )
+    # Keep pre-test candles solely as causal indicator warmup. Trading and the
+    # benchmark both begin at the first test candle, with fresh test capital.
+    test = run_ema_backtest(
+        ordered, starting_capital=starting_capital,
+        fee_bps=fee_bps, slippage_bps=slippage_bps, spread_bps=spread_bps,
+        start_index=split_index,
+    )
+    return {
+        "method": "Chronological holdout; fixed EMA20/EMA50 rules; no parameter fitting.",
+        "train_fraction": train_fraction,
+        "train_candles": split_index,
+        "test_candles": len(ordered) - split_index,
+        "split_time": ordered[split_index].timestamp.isoformat(),
+        "train": {
+            "net_return_pct": train["net_return_pct"],
+            "max_drawdown_pct": train["max_drawdown_pct"],
+            "closed_trades": train["closed_trades"],
+            "profit_factor": train["profit_factor"],
+            "expectancy_per_closed_trade": train["expectancy_per_closed_trade"],
+        },
+        "out_of_sample": {
+            "net_return_pct": test["net_return_pct"],
+            "final_equity": test["final_equity"],
+            "max_drawdown_pct": test["max_drawdown_pct"],
+            "closed_trades": test["closed_trades"],
+            "profit_factor": test["profit_factor"],
+            "expectancy_per_closed_trade": test["expectancy_per_closed_trade"],
+            "benchmark": test["benchmark"],
+            "open_position": test["open_position"],
+            "unrealized_pnl": test["unrealized_pnl"],
+            "evaluation_start_time": test["evaluation_start_time"],
+        },
+        "leakage_controls": [
+            "Chronological split; no random shuffling.",
+            "Test indicators use only candles available at or before each signal.",
+            "No strategy parameters are optimized on train or test data.",
+            "Test trading and buy-and-hold benchmark both start at the test boundary.",
+        ],
+        "warning": "A single holdout is not proof of future profitability. Validate across multiple instruments, regimes, and rolling periods before live use.",
+    }
