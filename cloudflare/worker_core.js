@@ -533,7 +533,7 @@ function diagnoseCandleGaps(gaps) {
       const key=new Date(from).toISOString().slice(11,16)+"-"+new Date(to).toISOString().slice(11,16);
       return !recurring.some(item=>key===item.start_time_utc+"-"+item.end_time_utc);
     }).length,
-    note:"Per-gap timing and duration are diagnostic only. No gap is assumed to be a market closure, and no missing candle is filled, interpolated, or ignored."};
+    note:"Repeated timing patterns do not prove a market closure. Per-gap timing and duration are diagnostic only; no missing candle is filled, interpolated, or ignored."};
 }
 
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
