@@ -291,6 +291,7 @@ def run_out_of_sample_backtest(
             "benchmark": test["benchmark"],
             "open_position": test["open_position"],
             "unrealized_pnl": test["unrealized_pnl"],
+            "trades": test["trades"],
             "evaluation_start_time": test["evaluation_start_time"],
         },
         "leakage_controls": [
