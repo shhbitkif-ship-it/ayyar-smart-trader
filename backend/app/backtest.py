@@ -405,6 +405,7 @@ def run_walk_forward_backtest(
         "test_size": test_size,
         "fold_count": len(folds),
         "total_test_candles": sum(fold["test_candles"] for fold in folds),
+        "unused_trailing_candles": len(ordered) - initial_train_size - sum(fold["test_candles"] for fold in folds),
         "out_of_sample": {
             "compounded_return_pct": round((compounded_strategy - 1.0) * 100.0, 4),
             "compounded_benchmark_return_pct": round((compounded_benchmark - 1.0) * 100.0, 4),
