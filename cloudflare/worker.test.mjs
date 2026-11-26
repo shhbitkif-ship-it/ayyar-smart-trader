@@ -197,7 +197,7 @@ test("signal endpoint blocks fresh but gapped candle history", async () => {
 test("signal endpoint blocks non-integral candle intervals instead of tolerating partial gaps", async () => {
   const candles=[];
   let close=100;
-  const base=Math.floor(Date.now()/3600000)*3600000;
+  const base=Math.floor((Date.now()-3600000)/3600000)*3600000;
   for(let i=0;i<80;i++){
     const previous=close;
     close+=i%2===0?0.5:-0.3;
