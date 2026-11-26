@@ -79,15 +79,17 @@ function runBacktest(payload) {
   const starting = Number(payload.starting_capital ?? 10000);
   const fee = Number(payload.fee_bps ?? 10);
   const slippage = Number(payload.slippage_bps ?? 5);
+  const spread = Number(payload.spread_bps ?? 0);
   if (!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
-      !Number.isFinite(slippage)||slippage<0||slippage>500)
-    throw new Error("starting_capital must be positive and within the supported numeric range; fee/slippage must be between 0 and 500 bps");
+      !Number.isFinite(slippage)||slippage<0||slippage>500||!Number.isFinite(spread)||spread<0||spread>500)
+    throw new Error("starting_capital must be positive and within the supported numeric range; fee/slippage/spread must be between 0 and 500 bps");
   const evaluationStart=Number(payload.evaluation_start_index??0);
   if(!Number.isInteger(evaluationStart)||evaluationStart<0||evaluationStart>candles.length-2||
      (evaluationStart>0&&evaluationStart<slowPeriod+1))
     throw new Error("evaluation_start_index must be zero or at least slow_period + 1 and leave at least one evaluation candle");
   const closes=candles.map(c=>c.close), slow=ema(closes,slowPeriod), fastAligned=ema(closes,fastPeriod).slice(slowPeriod-fastPeriod);
-  const cost=(fee+slippage)/10000;
+  // spread_bps is the full quoted bid/ask spread; each side pays half.
+  const cost=(fee+slippage+spread/2)/10000;
   let cash=starting, quantity=0, entryPrice=null, entryTime=null;
   const trades=[], equityCurve=[{timestamp:candles[evaluationStart].iso,equity:round2(starting)}];
   // Indicators use only candles available before each decision. In walk-forward
@@ -132,7 +134,7 @@ function runBacktest(payload) {
   return {strategy:`EMA${fastPeriod}/EMA${slowPeriod} long-only crossover`,fast_period:fastPeriod,slow_period:slowPeriod,
     execution:"Signal confirmed at candle close; orders filled at next candle open",
     evaluation_start_index:evaluationStart,evaluation_start_at:candles[evaluationStart].iso,
-    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
+    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage,spread_bps_full:spread,spread_bps_per_side:spread/2},
     timeframe_minutes:continuity.timeframe_minutes,timeframe_inferred:continuity.timeframe_inferred,
     data_quality:{status:continuity.status,gap_count:continuity.gap_count,
       misaligned_interval_count:continuity.misaligned_interval_count,
@@ -157,10 +159,10 @@ function runWalkForward(payload) {
     throw new Error("Walk-forward candle history is "+continuity.status.toLowerCase()+"; missing or irregular intervals are not bridged");
   const candidates=[[9,21],[12,26],[20,50]];
   const starting=Number(payload.starting_capital??10000);
-  const fee=Number(payload.fee_bps??10),slippage=Number(payload.slippage_bps??5);
+  const fee=Number(payload.fee_bps??10),slippage=Number(payload.slippage_bps??5),spread=Number(payload.spread_bps??0);
   if(!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
-     !Number.isFinite(slippage)||slippage<0||slippage>500)
-    throw new Error("Invalid starting capital or transaction costs");
+     !Number.isFinite(slippage)||slippage<0||slippage>500||!Number.isFinite(spread)||spread>500||spread<0)
+    throw new Error("Invalid starting capital or transaction costs; fee/slippage/spread must be between 0 and 500 bps");
   const n=candles.length;
   const boundaries=[Math.floor(n*0.55),Math.floor(n*0.70),Math.floor(n*0.85)];
   let compounded=1,totalTrades=0,weightedWins=0,maxDrawdown=0;
@@ -170,14 +172,14 @@ function runWalkForward(payload) {
     let best=null;
     for(const [fast,slow] of candidates){
       const train=runBacktest({candles:candles.slice(0,trainEnd),fast_period:fast,slow_period:slow,
-        starting_capital:starting,fee_bps:fee,slippage_bps:slippage});
+        starting_capital:starting,fee_bps:fee,slippage_bps:slippage,spread_bps:spread});
       const score=train.net_return_pct-0.5*train.max_drawdown_pct;
       if(!best||score>best.selection_score)
         best={fast_period:fast,slow_period:slow,selection_score:round4(score),
           training_return_pct:train.net_return_pct,training_drawdown_pct:train.max_drawdown_pct};
     }
     const test=runBacktest({candles:candles.slice(0,testEnd),fast_period:best.fast_period,
-      slow_period:best.slow_period,starting_capital:starting,fee_bps:fee,slippage_bps:slippage,
+      slow_period:best.slow_period,starting_capital:starting,fee_bps:fee,slippage_bps:slippage,spread_bps:spread,
       evaluation_start_index:trainEnd});
     compounded*=test.final_equity/starting;
     totalTrades+=test.closed_trades;
@@ -201,7 +203,7 @@ function runWalkForward(payload) {
     compounded_out_of_sample_return_pct:round4((compounded-1)*100),
     worst_fold_drawdown_pct:round4(maxDrawdown),total_out_of_sample_trades:totalTrades,
     aggregate_out_of_sample_win_rate_pct:totalTrades?round2(weightedWins/totalTrades*100):0,
-    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage},
+    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage,spread_bps_full:spread,spread_bps_per_side:spread/2},
     execution_enabled:false,
     warning:"Research only. Parameters are selected on each training window and evaluated only on the following unseen window. Small samples, provider quality, spread changes, market impact and broker execution can materially change results; this is not a prediction or trading recommendation."};
 }
