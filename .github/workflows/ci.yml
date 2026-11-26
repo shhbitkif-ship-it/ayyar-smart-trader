@@ -211,14 +211,21 @@ jobs:
           except urllib.error.HTTPError as error:
               candles = json.loads(error.read().decode("utf-8", errors="replace"))
 
-          assert candles.get("status") in {"LIVE", "PARTIAL"}, candles
-          assert candles.get("provider") in {"XAUS", "BIQUOTE"}, candles
-          assert len(candles.get("candles", [])) >= 60, candles
-          quality_status = candles.get("data_quality", {}).get("status")
-          assert quality_status in {"CLEAN", "GAPS_DETECTED"}, candles
-          # Production may lag source until the next controlled Worker deployment; unit tests enforce status semantics.
-          if candles.get("provider") == "BIQUOTE":
-              assert candles.get("fallback_reason"), candles
+          candle_status = candles.get("status")
+          if candle_status in {"LIVE", "PARTIAL"}:
+              assert candles.get("provider") in {"XAUS", "BIQUOTE"}, candles
+              assert len(candles.get("candles", [])) >= 60, candles
+              quality_status = candles.get("data_quality", {}).get("status")
+              assert quality_status in {"CLEAN", "GAPS_DETECTED"}, candles
+              if candles.get("provider") == "BIQUOTE":
+                  assert candles.get("fallback_reason"), candles
+          else:
+              # A stale or unavailable provider is an expected market-data condition,
+              # not a healthy feed. The API must fail closed and never fabricate candles.
+              assert candle_status == "UNAVAILABLE", candles
+              assert candles.get("candles") == [], candles
+              assert candles.get("execution_enabled") is False, candles
+              print("WARNING: verified OHLC feed unavailable; signal generation must remain NO_TRADE.")
 
           print(json.dumps({
               "health": health["status"],
