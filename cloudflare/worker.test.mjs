@@ -1430,7 +1430,7 @@ test("paper trade journal reports bounded risk, fees and supported exit reasons"
  const body=await response.json();
  assert.equal(response.status,200);
  assert.equal(body.execution_enabled,false);
- assert.deepEqual(body.cost_model,{fee_bps_per_side:2,slippage_bps_per_side:1});
+ assert.deepEqual(body.cost_model,{fee_bps_per_side:2,slippage_bps_per_side:1,spread_bps_full:0,spread_bps_per_side:0});
  assert.ok(body.trades.every(t=>t.quantity>0&&Number.isFinite(t.fees)&&
   ["STOP_LOSS","STOP_GAP","TAKE_PROFIT","TAKE_PROFIT_GAP"].includes(t.exit_reason)));
 });
