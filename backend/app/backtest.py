@@ -302,3 +302,102 @@ def run_out_of_sample_backtest(
         ],
         "warning": "A single holdout is not proof of future profitability. Validate across multiple instruments, regimes, and rolling periods before live use.",
     }
+
+
+def run_walk_forward_backtest(
+    candles: Sequence[Candle],
+    *,
+    initial_train_size: int = 120,
+    test_size: int = 60,
+    starting_capital: float = 10000.0,
+    fee_bps: float = 10.0,
+    slippage_bps: float = 5.0,
+    spread_bps: float = 0.0,
+) -> dict:
+    """Run sequential, non-overlapping holdout windows with expanding history.
+
+    EMA20/EMA50 parameters remain fixed. Each fold's training report uses only
+    candles preceding that fold; the test fold is evaluated once and never
+    used to alter strategy parameters. Capital is reset and positions are
+    force-liquidated at each fold boundary for comparable independent returns.
+    """
+    if isinstance(initial_train_size, bool) or not isinstance(initial_train_size, int) or initial_train_size < 60:
+        raise ValueError("initial_train_size must be an integer of at least 60.")
+    if isinstance(test_size, bool) or not isinstance(test_size, int) or test_size < 20:
+        raise ValueError("test_size must be an integer of at least 20.")
+    ordered = list(candles)
+    if len(ordered) < initial_train_size + 2 * test_size:
+        raise ValueError("At least two complete test windows are required after the initial training history.")
+    folds = []
+    compounded_strategy = 1.0
+    compounded_benchmark = 1.0
+    total_closed_trades = 0
+    test_start = initial_train_size
+    fold_number = 1
+    while test_start < len(ordered):
+        test_end = min(test_start + test_size, len(ordered))
+        if test_end - test_start < 20:
+            break
+        history = ordered[:test_start]
+        training = run_ema_backtest(
+            history, starting_capital=starting_capital,
+            fee_bps=fee_bps, slippage_bps=slippage_bps, spread_bps=spread_bps,
+        )
+        evaluation = run_ema_backtest(
+            ordered[:test_end], starting_capital=starting_capital,
+            fee_bps=fee_bps, slippage_bps=slippage_bps, spread_bps=spread_bps,
+            start_index=test_start,
+        )
+        strategy_factor = evaluation["final_equity"] / starting_capital
+        benchmark_factor = evaluation["benchmark"]["final_equity"] / starting_capital
+        compounded_strategy *= strategy_factor
+        compounded_benchmark *= benchmark_factor
+        total_closed_trades += evaluation["closed_trades"]
+        folds.append({
+            "fold": fold_number,
+            "train_start": ordered[0].timestamp.isoformat(),
+            "train_end": ordered[test_start - 1].timestamp.isoformat(),
+            "test_start": ordered[test_start].timestamp.isoformat(),
+            "test_end": ordered[test_end - 1].timestamp.isoformat(),
+            "train_candles": test_start,
+            "test_candles": test_end - test_start,
+            "train_net_return_pct": training["net_return_pct"],
+            "test_net_return_pct": evaluation["net_return_pct"],
+            "test_max_drawdown_pct": evaluation["max_drawdown_pct"],
+            "test_closed_trades": evaluation["closed_trades"],
+            "test_profit_factor": evaluation["profit_factor"],
+            "test_expectancy_per_closed_trade": evaluation["expectancy_per_closed_trade"],
+            "test_benchmark_return_pct": evaluation["benchmark"]["net_return_pct"],
+            "test_excess_return_pct": evaluation["benchmark"]["excess_return_pct"],
+            "test_trades": evaluation["trades"],
+        })
+        fold_number += 1
+        test_start = test_end
+    if len(folds) < 2:
+        raise ValueError("At least two valid out-of-sample windows are required.")
+    returns = [fold["test_net_return_pct"] for fold in folds]
+    drawdowns = [fold["test_max_drawdown_pct"] for fold in folds]
+    return {
+        "method": "Expanding-window walk-forward; chronological non-overlapping tests; fixed EMA20/EMA50 parameters; no tuning.",
+        "initial_train_size": initial_train_size,
+        "test_size": test_size,
+        "fold_count": len(folds),
+        "total_test_candles": sum(fold["test_candles"] for fold in folds),
+        "out_of_sample": {
+            "compounded_return_pct": round((compounded_strategy - 1.0) * 100.0, 4),
+            "compounded_benchmark_return_pct": round((compounded_benchmark - 1.0) * 100.0, 4),
+            "excess_compounded_return_pct": round((compounded_strategy - compounded_benchmark) * 100.0, 4),
+            "worst_fold_drawdown_pct": round(max(drawdowns), 4),
+            "average_fold_return_pct": round(sum(returns) / len(returns), 4),
+            "total_closed_trades": total_closed_trades,
+        },
+        "folds": folds,
+        "leakage_controls": [
+            "Each training window ends before its corresponding test window.",
+            "Test windows are chronological and do not overlap.",
+            "EMA parameters are fixed; no optimization or selection uses test results.",
+            "Each test uses only prior candles for indicator warmup.",
+            "Strategy and benchmark are both reset and liquidated at each test-window boundary.",
+        ],
+        "warning": "Fold returns compound under an explicit reset-and-liquidate assumption. This is a research diagnostic, not a continuous portfolio simulation or evidence of future profitability.",
+    }
