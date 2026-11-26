@@ -33,14 +33,17 @@ def run_ema_backtest(
     """Long-only EMA20/EMA50 close-confirmed strategy, filled at next candle open.
 
     This is a research simulation, not a live signal. Costs are charged on both
-    entry and exit. No leverage, funding, taxes, or broker-specific lot rules.
+    entry and exit. Input order is preserved and must already be strictly
+    increasing; silently sorting would conceal a data-quality defect.
     """
     for name, value in (("starting_capital", starting_capital), ("fee_bps", fee_bps), ("slippage_bps", slippage_bps), ("spread_bps", spread_bps)):
         if not math.isfinite(value):
             raise ValueError(f"{name} must be finite.")
-    ordered = sorted(candles, key=lambda c: c.timestamp)
+    ordered = list(candles)
+    if any(c.timestamp.tzinfo is None or c.timestamp.utcoffset() is None for c in ordered):
+        raise ValueError("Candle timestamps must be timezone-aware.")
     if any(ordered[i].timestamp >= ordered[i + 1].timestamp for i in range(len(ordered) - 1)):
-        raise ValueError("Candle timestamps must be unique and strictly increasing.")
+        raise ValueError("Candle timestamps must be unique and strictly increasing in input order.")
     if len(ordered) < 60:
         raise ValueError("At least 60 OHLC candles are required.")
     if starting_capital <= 0 or fee_bps < 0 or slippage_bps < 0 or spread_bps < 0 or fee_bps > 500 or slippage_bps > 500 or spread_bps > 500:
@@ -48,13 +51,11 @@ def run_ema_backtest(
 
     closes = [float(c.close) for c in ordered]
     fast, slow = ema(closes, 20), ema(closes, 50)
-    # Align EMA20 with EMA50; both arrays start after their own warm-up.
     offset = 50 - 20
     fast_aligned = fast[offset:]
     if len(fast_aligned) != len(slow):
         raise ValueError("Indicator alignment failed.")
 
-    # spread_bps is the full bid/ask spread; charge half on entry and half on exit.
     cost_rate = (fee_bps + slippage_bps + spread_bps / 2.0) / 10000.0
     cash = float(starting_capital)
     quantity = 0.0
@@ -63,8 +64,6 @@ def run_ema_backtest(
     trades = []
     equity_curve = [{"timestamp": ordered[0].timestamp.isoformat(), "equity": round(cash, 2)}]
 
-    # Process each next-candle open and mark equity at every candle close.
-    # EMA20/EMA50 values are only consulted after their signal candle has closed.
     for fill_index in range(1, len(ordered)):
         signal_index = fill_index - 1
         if signal_index >= 50:
@@ -98,16 +97,9 @@ def run_ema_backtest(
                     cash = 0.0
                     entry_time = ordered[fill_index].timestamp.isoformat()
 
-        # Mark open positions at estimated net liquidation value on every bar,
-        # not just at the final bar, so drawdown includes exit-side costs.
         marked_equity = cash if quantity == 0 else quantity * float(ordered[fill_index].close) * (1.0 - cost_rate)
-        equity_curve.append({
-            "timestamp": ordered[fill_index].timestamp.isoformat(),
-            "equity": round(marked_equity, 2),
-        })
+        equity_curve.append({"timestamp": ordered[fill_index].timestamp.isoformat(), "equity": round(marked_equity, 2)})
 
-    # Report open positions at estimated net liquidation value, including the
-    # exit-side fee and slippage that would be paid to close at the final close.
     if quantity > 0:
         liquidation_price = float(ordered[-1].close) * (1.0 - cost_rate)
         final_equity = quantity * liquidation_price
