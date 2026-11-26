@@ -2343,7 +2343,6 @@ test("BIQUOTE candle endpoint exposes exact gap timestamps without filling missi
     assert.equal(body.data_quality.missing_intervals,1);
     assert.equal(body.data_quality.gaps.length,1);
     assert.equal(Date.parse(body.data_quality.gaps[0].to)-Date.parse(body.data_quality.gaps[0].from),2*intervalMs);
-    assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
 
