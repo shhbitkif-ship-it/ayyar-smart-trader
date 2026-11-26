@@ -333,3 +333,31 @@ def test_engine_reports_setup_none_for_missing_higher_timeframe_confirmation():
     assert result.action == "NO_TRADE"
     assert result.analysis["setup_direction"] == "NONE"
     assert result.analysis["setup_detected"] is False
+
+
+def test_signal_fingerprint_is_stable_for_repeated_evaluation():
+    now = datetime.now(timezone.utc)
+    market = _regime_scenario_candles("BULLISH", 220, now - timedelta(minutes=220))
+    confirmation = _regime_scenario_candles("BULLISH", 60, now - timedelta(minutes=297), 5)
+    confirmation[-1] = confirmation[-1].model_copy(
+        update={"timestamp": market[-1].timestamp - timedelta(seconds=30)}
+    )
+    request = EvaluateRequest(
+        symbol="XAUUSD", timeframe="1m",
+        candles=market, confirmation_candles=confirmation,
+    )
+    first = evaluate(request, now)
+    second = evaluate(request, now)
+    assert first.analysis["signal_key"] == second.analysis["signal_key"]
+    assert first.analysis["signal_key"] is None or len(first.analysis["signal_key"]) == 64
+
+
+def test_no_setup_has_no_signal_fingerprint():
+    now = datetime.now(timezone.utc)
+    request = EvaluateRequest(
+        symbol="XAUUSD",
+        candles=_regime_scenario_candles("SIDEWAYS", 220, now - timedelta(minutes=220)),
+    )
+    result = evaluate(request, now)
+    assert result.analysis["setup_direction"] == "NONE"
+    assert result.analysis["signal_key"] is None
