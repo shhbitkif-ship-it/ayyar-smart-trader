@@ -56,8 +56,8 @@ jobs:
               raise SystemExit("No eligible text patches found; review not sent.")
           # Basic credential redaction before any third-party transmission.
           import re
-          patch=re.sub(r'(?i)(api[_-]?key|token|secret|password)(\\s*[:=]\\s*)[^\\s,;]+', r'\\1\\2[REDACTED]', patch)
-          patch=re.sub(r'(?i)(Bearer\\s+)[A-Za-z0-9._~+/-]+=*', r'\\1[REDACTED]', patch)
+          patch=re.sub(r'(?i)(api[_-]?key|token|secret|password)(\s*[:=]\s*)[^\s,;]+', r'\1\2[REDACTED]', patch)
+          patch=re.sub(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*', r'\1[REDACTED]', patch)
           open("review-patch.txt","w",encoding="utf-8").write(patch)
           print(f"Prepared {len(chunks)} text patches ({len(patch)} chars); excluded secret/config/binary paths.")
           PY
