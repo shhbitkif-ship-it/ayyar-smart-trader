@@ -190,12 +190,27 @@ function evaluateSignal(payload) {
       execution_enabled:false};
   const intervalMs=timeframe*60*1000;
   const gaps=[];
+  const irregularIntervals=[];
   for(let i=1;i<candles.length;i++){
     const delta=candles[i].timestamp-candles[i-1].timestamp;
-    if(delta>intervalMs*1.5){
-      gaps.push({from:candles[i-1].iso,to:candles[i].iso,
-        missing_intervals:Math.max(1,Math.round(delta/intervalMs)-1)});
+    const intervalCount=Math.round(delta/intervalMs);
+    const alignmentErrorMs=Math.abs(delta-intervalCount*intervalMs);
+    if(intervalCount<1||alignmentErrorMs>Math.max(1000,intervalMs*0.01)){
+      irregularIntervals.push({from:candles[i-1].iso,to:candles[i].iso,
+        delta_seconds:Math.round(delta/1000),expected_interval_minutes:timeframe});
+      continue;
     }
+    if(intervalCount>1){
+      gaps.push({from:candles[i-1].iso,to:candles[i].iso,
+        missing_intervals:intervalCount-1});
+    }
+  }
+  if(irregularIntervals.length){
+    return {signal:"NO_TRADE",confidence:0,
+      reason:"Candle timestamps do not follow the declared timeframe; irregular intervals are blocked.",
+      data_status:"MISALIGNED",irregular_interval_count:irregularIntervals.length,
+      irregular_intervals:irregularIntervals.slice(0,20),last_candle_at:last.iso,
+      age_seconds:Math.round(ageSeconds),timeframe_minutes:timeframe,execution_enabled:false};
   }
   if(gaps.length){
     return {signal:"NO_TRADE",confidence:0,reason:"Candle history contains missing intervals; signal generation is blocked until a continuous history is available.",
