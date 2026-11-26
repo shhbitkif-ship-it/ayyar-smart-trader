@@ -2844,3 +2844,27 @@ test("candle endpoint rejects fresh but insufficient BIQUOTE history instead of 
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("XAUS candle freshness is measured from completed bar close, not bar open", async () => {
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{
+    const close=2600+i*.1;
+    return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),
+      open:close,high:close+1,low:close-1,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{
+    status:200,headers:{"content-type":"application/json"}
+  });
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.candle_timestamp_semantics,"BAR_OPEN_TIME");
+    assert.equal(body.age_reference,"COMPLETED_BAR_CLOSE");
+    assert.equal(body.last_candle_close_at,new Date(lastClosed+intervalMs).toISOString());
+    assert.ok(body.age_seconds>=0&&body.age_seconds<3600,
+      "age must be measured from the last completed candle close");
+  } finally {globalThis.fetch=originalFetch;}
+});
