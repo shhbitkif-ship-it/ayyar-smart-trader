@@ -392,6 +392,35 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.ok(body.warning.startsWith("Research only"));
 });
 
+test("EMA backtest applies half-spread on each side and reports the full spread", async () => {
+  const candles=[];
+  for(let i=0;i<150;i++){
+    const close=i<70?3100-i*2:i<110?2960+(i-70)*5:3160-(i-110)*5;
+    candles.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),open:close,high:close+3,low:close-3,close});
+  }
+  async function run(spread_bps){
+    const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+      method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles,spread_bps})
+    }));
+    assert.equal(response.status,200);
+    return response.json();
+  }
+  const zero=await run(0),wide=await run(20);
+  assert.equal(wide.cost_model.spread_bps_full,20);
+  assert.equal(wide.cost_model.spread_bps_per_side,10);
+  assert.ok(wide.final_equity<zero.final_equity,"wider spread must not improve long-only backtest equity");
+});
+
+test("EMA backtest rejects invalid spread assumptions", async () => {
+  const candles=Array.from({length:80},(_,i)=>({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),open:3000+i,high:3002+i,low:2998+i,close:3000+i}));
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/ema-crossover",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({candles,spread_bps:-1})
+  }));
+  assert.equal(response.status,400);
+  const body=await response.json();
+  assert.match(body.error,/spread/i);
+});
+
 test("EMA backtest accepts validated strategy periods and reports the selected parameters", async () => {
   const candles=[];
   for(let i=0;i<100;i++){
