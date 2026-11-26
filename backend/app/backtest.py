@@ -171,3 +171,64 @@ def run_ema_backtest(
 
 def backtest(payload: BacktestRequest) -> dict:
     return run_ema_backtest(payload.candles, starting_capital=payload.starting_capital, fee_bps=payload.fee_bps, slippage_bps=payload.slippage_bps, spread_bps=payload.spread_bps)
+
+
+def run_cost_sensitivity(
+    candles: Sequence[Candle],
+    *,
+    starting_capital: float = 10000.0,
+    scenarios: Sequence[dict] | None = None,
+) -> dict:
+    """Re-run the same strategy under progressively different execution costs.
+
+    This is a robustness diagnostic, not parameter optimization. Scenarios are
+    explicit and independently validated by run_ema_backtest.
+    """
+    selected = scenarios or (
+        {"name": "low_cost", "fee_bps": 2.0, "slippage_bps": 1.0, "spread_bps": 2.0},
+        {"name": "base_cost", "fee_bps": 10.0, "slippage_bps": 5.0, "spread_bps": 6.0},
+        {"name": "stressed_cost", "fee_bps": 20.0, "slippage_bps": 15.0, "spread_bps": 20.0},
+    )
+    if not selected:
+        raise ValueError("At least one cost scenario is required.")
+    results = []
+    names = set()
+    for scenario in selected:
+        if not isinstance(scenario, dict):
+            raise ValueError("Each cost scenario must be a mapping.")
+        name = scenario.get("name")
+        if not isinstance(name, str) or not name.strip() or name in names:
+            raise ValueError("Scenario names must be non-empty and unique.")
+        names.add(name)
+        result = run_ema_backtest(
+            candles,
+            starting_capital=starting_capital,
+            fee_bps=scenario.get("fee_bps", 10.0),
+            slippage_bps=scenario.get("slippage_bps", 5.0),
+            spread_bps=scenario.get("spread_bps", 0.0),
+        )
+        results.append({
+            "name": name,
+            "fee_bps_per_side": scenario.get("fee_bps", 10.0),
+            "slippage_bps_per_side": scenario.get("slippage_bps", 5.0),
+            "spread_bps_full": scenario.get("spread_bps", 0.0),
+            "final_equity": result["final_equity"],
+            "net_return_pct": result["net_return_pct"],
+            "max_drawdown_pct": result["max_drawdown_pct"],
+            "closed_trades": result["closed_trades"],
+            "profit_factor": result["profit_factor"],
+        })
+    ordered_costs = [
+        item["fee_bps_per_side"] + item["slippage_bps_per_side"] + item["spread_bps_full"] / 2
+        for item in results
+    ]
+    monotonic_cost_order = all(
+        ordered_costs[i] <= ordered_costs[i + 1]
+        for i in range(len(ordered_costs) - 1)
+    )
+    return {
+        "diagnostic": "Execution-cost sensitivity; not an optimization result.",
+        "scenarios": results,
+        "cost_order_is_monotonic": monotonic_cost_order,
+        "warning": "Higher assumed costs should not improve comparable results; scenarios are listed in caller-supplied order.",
+    }
