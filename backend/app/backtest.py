@@ -12,10 +12,11 @@ class BacktestRequest(BaseModel):
     starting_capital: float = Field(default=10000.0, gt=0)
     fee_bps: float = Field(default=10.0, ge=0, le=500)
     slippage_bps: float = Field(default=5.0, ge=0, le=500)
+    spread_bps: float = Field(default=0.0, ge=0, le=500, description="Full quoted bid/ask spread; half is charged per side.")
 
     @model_validator(mode="after")
     def validate_finite_parameters(self):
-        for name in ("starting_capital", "fee_bps", "slippage_bps"):
+        for name in ("starting_capital", "fee_bps", "slippage_bps", "spread_bps"):
             if not math.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite")
         return self
@@ -27,13 +28,14 @@ def run_ema_backtest(
     starting_capital: float = 10000.0,
     fee_bps: float = 10.0,
     slippage_bps: float = 5.0,
+    spread_bps: float = 0.0,
 ) -> dict:
     """Long-only EMA20/EMA50 close-confirmed strategy, filled at next candle open.
 
     This is a research simulation, not a live signal. Costs are charged on both
     entry and exit. No leverage, funding, taxes, or broker-specific lot rules.
     """
-    for name, value in (("starting_capital", starting_capital), ("fee_bps", fee_bps), ("slippage_bps", slippage_bps)):
+    for name, value in (("starting_capital", starting_capital), ("fee_bps", fee_bps), ("slippage_bps", slippage_bps), ("spread_bps", spread_bps)):
         if not math.isfinite(value):
             raise ValueError(f"{name} must be finite.")
     ordered = sorted(candles, key=lambda c: c.timestamp)
@@ -41,7 +43,7 @@ def run_ema_backtest(
         raise ValueError("Candle timestamps must be unique and strictly increasing.")
     if len(ordered) < 60:
         raise ValueError("At least 60 OHLC candles are required.")
-    if starting_capital <= 0 or fee_bps < 0 or slippage_bps < 0:
+    if starting_capital <= 0 or fee_bps < 0 or slippage_bps < 0 or spread_bps < 0 or fee_bps > 500 or slippage_bps > 500 or spread_bps > 500:
         raise ValueError("Capital must be positive and costs cannot be negative.")
 
     closes = [float(c.close) for c in ordered]
@@ -52,7 +54,8 @@ def run_ema_backtest(
     if len(fast_aligned) != len(slow):
         raise ValueError("Indicator alignment failed.")
 
-    cost_rate = (fee_bps + slippage_bps) / 10000.0
+    # spread_bps is the full bid/ask spread; charge half on entry and half on exit.
+    cost_rate = (fee_bps + slippage_bps + spread_bps / 2.0) / 10000.0
     cash = float(starting_capital)
     quantity = 0.0
     entry_price = None
@@ -128,7 +131,7 @@ def run_ema_backtest(
     return {
         "strategy": "EMA20/EMA50 long-only crossover",
         "execution": "Signal confirmed at candle close; orders filled at next candle open",
-        "cost_model": {"fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps},
+        "cost_model": {"fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps, "spread_bps_full": spread_bps, "spread_bps_per_side": spread_bps / 2.0},
         "starting_capital": round(starting_capital, 2),
         "final_equity": round(final_equity, 2),
         "net_return_pct": round((final_equity / starting_capital - 1.0) * 100.0, 4),
@@ -145,4 +148,4 @@ def run_ema_backtest(
 
 
 def backtest(payload: BacktestRequest) -> dict:
-    return run_ema_backtest(payload.candles, starting_capital=payload.starting_capital, fee_bps=payload.fee_bps, slippage_bps=payload.slippage_bps)
+    return run_ema_backtest(payload.candles, starting_capital=payload.starting_capital, fee_bps=payload.fee_bps, slippage_bps=payload.slippage_bps, spread_bps=payload.spread_bps)
