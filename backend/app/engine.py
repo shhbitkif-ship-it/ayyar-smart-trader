@@ -10,7 +10,7 @@ def _classify_market_regime(e20, e50, e100, e200, closes, momentum, atr_values):
     """Classify trend from aligned EMA structure, short EMA slope and volatility."""
     if any(len(series) < 6 for series in (e20, e50, e100, e200, closes, momentum, atr_values)):
         return {"trend": "UNKNOWN", "trend_strength": "UNKNOWN",
-                "momentum_state": "UNKNOWN", "volatility_pct": None,
+                "momentum_state": "UNKNOWN", "volatility_pct": None, "volatility_regime": "UNKNOWN",
                 "trend_spread_pct": None, "trend_slope_pct": None,
                 "signal_quality": "INSUFFICIENT"}
     price = closes[-1]
@@ -22,6 +22,8 @@ def _classify_market_regime(e20, e50, e100, e200, closes, momentum, atr_values):
     spread_pct = abs(e20[-1] - e200[-1]) / price * 100
     slope_pct = (e20[-1] - e20[-6]) / price * 100
     volatility_pct = atr_values[-1] / price * 100
+    volatility_regime = ("HIGH" if volatility_pct > 2.0 else
+                         "LOW" if volatility_pct < 0.015 else "NORMAL")
     bullish_stack = e20[-1] > e50[-1] > e100[-1] > e200[-1]
     bearish_stack = e20[-1] < e50[-1] < e100[-1] < e200[-1]
     if bullish_stack and slope_pct > 0.01:
@@ -39,11 +41,12 @@ def _classify_market_regime(e20, e50, e100, e200, closes, momentum, atr_values):
     quality = "GOOD"
     if trend == "SIDEWAYS" or strength == "WEAK":
         quality = "WEAK"
-    if volatility_pct > 2.0 or volatility_pct < 0.015:
+    if volatility_regime != "NORMAL":
         quality = "WEAK"
     return {"trend": trend, "trend_strength": strength,
             "momentum_state": momentum_state,
             "volatility_pct": round(volatility_pct, 5),
+            "volatility_regime": volatility_regime,
             "trend_spread_pct": round(spread_pct, 5),
             "trend_slope_pct": round(slope_pct, 5),
             "signal_quality": quality}
