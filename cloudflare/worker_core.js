@@ -609,7 +609,7 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     note:"Gaps are reported for transparency and may reflect market closures or provider omissions; they are not silently filled."};
   return {
     symbol, provider:"XAUS", provider_symbol:providerSymbol, source_url:"https://xaus.com/api/v1/chart",
-    interval, interval_seconds:intervalSeconds, status:"LIVE",data_quality:dataQuality,
+    interval, interval_seconds:intervalSeconds, status:gaps.length?"PARTIAL":"LIVE",data_quality:dataQuality,
     analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
     age_seconds:Math.round(ageSeconds), candles,
@@ -680,7 +680,7 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
   return {
     symbol,provider:"BIQUOTE",provider_symbol:"XAUUSD",
     source_url:"https://biquote.io/api/XAUUSD/ohlc",
-    interval,interval_seconds:intervalSeconds,status:"LIVE",data_quality:dataQuality,
+    interval,interval_seconds:intervalSeconds,status:gaps.length?"PARTIAL":"LIVE",data_quality:dataQuality,
     analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(),last_candle_at:last.timestamp,
     age_seconds:Math.max(0,Math.round(ageSeconds)),candles,
