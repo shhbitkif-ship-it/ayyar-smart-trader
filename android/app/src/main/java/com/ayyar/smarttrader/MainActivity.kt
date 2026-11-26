@@ -344,7 +344,6 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
          } } }
 
          }
-         if(selectedAnalysisTab==6) {
          item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
     }
     if(selectedTab==3) {
