@@ -46,6 +46,7 @@ def test_quote_marks_data_older_than_provider_window_stale():
     stamp = datetime.now(timezone.utc) - timedelta(seconds=MAX_AGE_SECONDS + 30)
     q = _normalise(_item(stamp.isoformat()), "XAUUSD", "Gold", "xau")
     assert q["status"] == "STALE"
+    assert q["price"] is None
 
 
 def test_quote_rejects_missing_timestamp():
@@ -180,6 +181,7 @@ def test_cached_snapshot_expires_at_quote_freshness_limit():
     snapshot = {"status": "LIVE", "provider_generated_at": now, "quotes": [quote]}
     refreshed = _refresh_snapshot_status(snapshot, now + timedelta(seconds=5))
     assert refreshed["quotes"][0]["status"] == "STALE"
+    assert refreshed["quotes"][0]["price"] is None
     assert refreshed["status"] == "UNAVAILABLE"
 
 
