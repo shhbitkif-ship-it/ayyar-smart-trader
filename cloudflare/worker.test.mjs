@@ -940,6 +940,14 @@ test("signal performance uses next candle open, completed horizons and refuses c
     market_data_status:"LIVE",execution_enabled:false,
     archive_source:"validated completed OHLC multi-timeframe evaluation",
     last_candle_at:signalTimeWithOffset,recorded_at:new Date(Date.parse(signalTime)+1000).toISOString()});
+  store.set("xau:latest:no-trade",{signal:"NO_TRADE",symbol:"xau",confidence:0,
+    market_data_status:"LIVE",execution_enabled:false,
+    archive_source:"validated completed OHLC multi-timeframe evaluation",
+    last_candle_at:signalTimeWithOffset,recorded_at:new Date(Date.parse(signalTime)+1000).toISOString()});
+  store.set("xau:latest:invalid",{signal:"BUY",symbol:"xau",confidence:150,entry:2610,stop_loss:2600,take_profit:2630,
+    market_data_status:"LIVE",execution_enabled:false,
+    archive_source:"validated completed OHLC multi-timeframe evaluation",
+    last_candle_at:signalTimeWithOffset,recorded_at:new Date(Date.parse(signalTime)+1000).toISOString()});
   const kv={async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)||null;}};
   globalThis.fetch=async url=>new Response(JSON.stringify(xausChartFixture(candles)),
@@ -949,6 +957,9 @@ test("signal performance uses next candle open, completed horizons and refuses c
     const body=await response.json();
     assert.equal(response.status,200,JSON.stringify(body));
     assert.equal(body.directional_signals,1);
+    assert.deepEqual(body.archive_quality,{fetched_records:3,valid_records:2,invalid_records:1,
+      directional_records:1,non_directional_records:1,
+      note:"Invalid archive entries and valid NO_TRADE records are excluded from directional outcome scoring."});
     assert.equal(body.history_coverage.requested_retention_days,90);
     assert.equal(body.history_coverage.candle_count,40);
     assert.ok(body.history_coverage.coverage_days>1.6&&body.history_coverage.coverage_days<1.7);
