@@ -1382,6 +1382,30 @@ test("paper trading simulation returns a trade journal and virtual equity withou
  assert.ok(body.trades.every(t=>Number.isFinite(t.net_pnl)&&t.exit_reason));
 });
 
+test("paper simulation charges commission once per side and applies spread separately",async()=>{
+ const call=payload=>worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}));
+ const base={candles:paperFixture(),fast_period:3,slow_period:8,starting_capital:10000,
+  risk_fraction:0.01,contract_value_per_price_unit:1,fee_bps:2,slippage_bps:1,spread_bps:0};
+ const zero=await call(base),wide=await call({...base,spread_bps:20});
+ const a=await zero.json(),b=await wide.json();
+ assert.equal(zero.status,200,JSON.stringify(a));assert.equal(wide.status,200,JSON.stringify(b));
+ assert.equal(b.cost_model.spread_bps_full,20);
+ assert.equal(b.cost_model.spread_bps_per_side,10);
+ assert.ok(b.final_equity<a.final_equity,"wider spread must not improve simulated equity");
+ assert.ok(b.trades.every(t=>Math.abs(t.fees)>=0));
+ assert.equal(b.execution_enabled,false);
+});
+
+test("paper simulation rejects negative spread assumptions",async()=>{
+ const response=await worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
+  method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({candles:paperFixture(),fast_period:3,slow_period:8,
+   starting_capital:10000,risk_fraction:0.01,contract_value_per_price_unit:1,spread_bps:-1})
+ }));
+ assert.equal(response.status,400);
+});
+
 test("paper trading simulation rejects malformed and nonnumeric configuration",async()=>{
  const call=payload=>worker.fetch(new Request("https://unit.test/v1/paper-trading/simulate",{
   method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}));
