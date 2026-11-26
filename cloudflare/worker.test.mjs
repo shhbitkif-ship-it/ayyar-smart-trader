@@ -2680,7 +2680,9 @@ test("BIQUOTE candle endpoint exposes exact gap timestamps without filling missi
     const body=await response.json();
     assert.equal(response.status,200,JSON.stringify(body));
     assert.equal(body.provider,"BIQUOTE");
+    assert.equal(body.status,"PARTIAL");
     assert.equal(body.candles.length,89);
+    assert.equal(body.status,"PARTIAL");
     assert.equal(body.data_quality.status,"GAPS_DETECTED");
     assert.equal(body.data_quality.gap_count,1);
     assert.equal(body.data_quality.missing_intervals,1);
