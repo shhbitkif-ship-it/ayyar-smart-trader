@@ -91,10 +91,10 @@ function runBacktest(payload) {
   // spread_bps is the full quoted bid/ask spread; each side pays half.
   const cost=(fee+slippage+spread/2)/10000;
   let cash=starting, quantity=0, entryPrice=null, entryTime=null;
-  const trades=[], equityCurve=[{timestamp:candles[evaluationStart].iso,equity:round2(starting)}];
+  const trades=[], equityCurve=[{timestamp:candles[Math.max(0,evaluationStart-1)].iso,equity:round2(starting)}];
   // Indicators use only candles available before each decision. In walk-forward
   // mode, pre-test candles warm the indicators but are excluded from test P&L.
-  for(let candleIndex=evaluationStart+1;candleIndex<candles.length;candleIndex++){
+  for(let candleIndex=Math.max(1,evaluationStart);candleIndex<candles.length;candleIndex++){
     const signalIndex=candleIndex-slowPeriod;
     if(signalIndex>=1 && signalIndex<slow.length){
       const prevUp=fastAligned[signalIndex-1]>slow[signalIndex-1];
@@ -118,12 +118,12 @@ function runBacktest(payload) {
         cash=0;entryTime=candles[candleIndex].iso;
       }
     }
-    const equity=quantity===0?cash:quantity*candles[candleIndex].close;
+    const equity=quantity===0?cash:quantity*candles[candleIndex].close*(1-cost);
     if(!Number.isFinite(equity)||equity<=0)
       throw new Error("Backtest equity is outside the supported numeric range");
     equityCurve.push({timestamp:candles[candleIndex].iso,equity:round2(equity)});
   }
-  const finalEquity=quantity===0?cash:quantity*candles[candles.length-1].close;
+  const finalEquity=quantity===0?cash:quantity*candles[candles.length-1].close*(1-cost);
   if(!Number.isFinite(finalEquity)||finalEquity<=0)
     throw new Error("Final backtest equity is outside the supported numeric range");
   let peak=starting,maxDrawdown=0;
