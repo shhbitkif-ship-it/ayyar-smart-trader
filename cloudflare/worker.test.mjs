@@ -2125,3 +2125,46 @@ test("market snapshot recovers immediately after provider outage without serving
     assert.equal(calls,2,"provider must be retried after an unavailable snapshot");
   } finally { globalThis.fetch=originalFetch; }
 });
+
+test("paper account bearer tokens cannot cross account boundaries or leak from read APIs",async()=>{
+  const env=paperAccountEnv();
+  const create=async(ip)=>worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":ip},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const first=await (await create("192.0.2.101")).json();
+  const second=await (await create("192.0.2.102")).json();
+  assert.notEqual(first.account_id,second.account_id);
+  assert.notEqual(first.access_token,second.access_token);
+
+  const protectedPaths=[
+    "",
+    "/trades",
+    "/integrity",
+    "/notifications",
+    "/report/daily",
+    "/report/performance",
+    "/analytics/strategy"
+  ];
+  for(const suffix of protectedPaths){
+    const response=await worker.fetch(new Request(
+      "https://unit.test/v1/paper/accounts/"+second.account_id+suffix,
+      {headers:{authorization:"Bearer "+first.access_token}}
+    ),env);
+    assert.equal(response.status,404,"cross-account access must be denied for "+suffix);
+    const body=await response.text();
+    assert.ok(!body.includes(first.access_token),"bearer token must not appear in error response");
+  }
+
+  for(const suffix of protectedPaths){
+    const response=await worker.fetch(new Request(
+      "https://unit.test/v1/paper/accounts/"+first.account_id+suffix,
+      {headers:{authorization:"Bearer "+first.access_token}}
+    ),env);
+    assert.ok(response.status===200||response.status===400,
+      "owner token should reach its resource for "+suffix+" (got "+response.status+")");
+    const body=await response.text();
+    assert.ok(!body.includes(first.access_token),"bearer token must never be echoed by read APIs");
+  }
+});
+
