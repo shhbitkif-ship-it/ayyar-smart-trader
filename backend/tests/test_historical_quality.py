@@ -30,6 +30,8 @@ def test_quality_audit_reports_missing_intervals_without_filling():
     assert result["largest_gap_intervals"] == 2
     assert result["candle_count"] == 4
     assert result["interpolation_applied"] is False
+    assert result["gap_windows"][0]["missing_intervals"] == 2
+    assert result["gap_windows"][0]["spans_weekend_calendar_days"] is False
 
 
 def test_quality_audit_detects_duplicate_timestamps():
@@ -63,4 +65,5 @@ def test_quality_audit_reports_weekend_span_as_gap_not_assumed_closure():
     result = inspect_candle_series(candles, "15m")
     assert result["status"] == "GAPPED"
     assert result["missing_intervals"] > 100
+    assert result["gap_windows"][0]["spans_weekend_calendar_days"] is True
     assert "not automatically assumed" in result["note"]
