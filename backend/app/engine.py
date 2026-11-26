@@ -110,7 +110,7 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     analysis["setup_direction"] = "LONG" if up else "SHORT" if down else "NONE"
     analysis["setup_detected"] = bool(up or down)
     analysis["signal_key"] = (
-        sha256(f"{request.symbol.upper()}|{request.timeframe}|{latest_time.isoformat()}|{analysis['setup_direction']}".encode()).hexdigest()
+        sha256(f"{request.symbol.upper()}|{request.timeframe}|{latest_time.isoformat()}|{confirm_time.isoformat()}|{analysis['setup_direction']}".encode()).hexdigest()
         if up or down else None
     )
     if up or down:
