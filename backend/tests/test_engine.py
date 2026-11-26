@@ -121,7 +121,9 @@ def test_out_of_order_market_candles_are_rejected_without_sorting():
     assert "out of order" in result.reason.lower()
 
 
-def test_out_of_order_confirmation_candles_are_rejected():
+
+
+def test_confirmation_candles_are_not_silently_sorted():
     now = datetime.now(timezone.utc)
     market = candles(220, 1, now - timedelta(minutes=220))
     confirmation = candles(60, 1, now - timedelta(minutes=60))
