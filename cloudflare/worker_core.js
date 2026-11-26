@@ -168,7 +168,8 @@ function runWalkForward(payload) {
     throw new Error("Invalid starting capital or transaction costs; fee/slippage/spread must be between 0 and 500 bps");
   const n=candles.length;
   const boundaries=[Math.floor(n*0.55),Math.floor(n*0.70),Math.floor(n*0.85)];
-  let compounded=1,totalTrades=0,weightedWins=0,maxDrawdown=0;
+  let compounded=1,stressedCompounded=1,totalTrades=0,weightedWins=0,maxDrawdown=0;
+  const stressCosts={fee_bps:Math.min(500,fee*2),slippage_bps:Math.min(500,slippage*2),spread_bps:Math.min(500,spread*2)};
   const folds=[];
   for(let i=0;i<boundaries.length;i++){
     const trainEnd=boundaries[i],testEnd=i+1<boundaries.length?boundaries[i+1]:n;
@@ -184,7 +185,12 @@ function runWalkForward(payload) {
     const test=runBacktest({candles:candles.slice(0,testEnd),fast_period:best.fast_period,
       slow_period:best.slow_period,starting_capital:starting,fee_bps:fee,slippage_bps:slippage,spread_bps:spread,
       evaluation_start_index:trainEnd});
+    // Re-evaluate the exact same training-selected parameters and OOS window
+    // under doubled transaction costs. No parameter reselection is performed.
+    const stressedTest=runBacktest({candles:candles.slice(0,testEnd),fast_period:best.fast_period,
+      slow_period:best.slow_period,starting_capital:starting,...stressCosts,evaluation_start_index:trainEnd});
     compounded*=test.final_equity/starting;
+    stressedCompounded*=stressedTest.final_equity/starting;
     totalTrades+=test.closed_trades;
     weightedWins+=test.closed_trades*test.win_rate_pct/100;
     maxDrawdown=Math.max(maxDrawdown,test.max_drawdown_pct);
@@ -194,8 +200,12 @@ function runWalkForward(payload) {
       selected_parameters:{fast_period:best.fast_period,slow_period:best.slow_period},
       training_selection_score:best.selection_score,training_return_pct:best.training_return_pct,
       training_drawdown_pct:best.training_drawdown_pct,
-      out_of_sample_return_pct:test.net_return_pct,first_test_fill_at:test.evaluation_start_at,
+      out_of_sample_return_pct:test.net_return_pct,
+      stressed_out_of_sample_return_pct:stressedTest.net_return_pct,
+      stress_return_delta_pct:round4(stressedTest.net_return_pct-test.net_return_pct),
+      first_test_fill_at:test.evaluation_start_at,
       first_test_fill_included:true,out_of_sample_drawdown_pct:test.max_drawdown_pct,
+      stressed_out_of_sample_drawdown_pct:stressedTest.max_drawdown_pct,
       out_of_sample_trades:test.closed_trades,out_of_sample_win_rate_pct:test.win_rate_pct,
       out_of_sample_profit_factor:test.profit_factor});
   }
@@ -218,11 +228,18 @@ function runWalkForward(payload) {
       misaligned_interval_count:continuity.misaligned_interval_count},
     folds,fold_count:folds.length,starting_capital:round2(starting),
     compounded_out_of_sample_return_pct:round4((compounded-1)*100),
+    stress_test:{method:"same out-of-sample folds and training-selected parameters; transaction costs doubled; no reselection",
+      cost_multiplier:2,cost_model:{fee_bps_per_side:stressCosts.fee_bps,
+        slippage_bps_per_side:stressCosts.slippage_bps,spread_bps_full:stressCosts.spread_bps,
+        spread_bps_per_side:stressCosts.spread_bps/2},
+      compounded_out_of_sample_return_pct:round4((stressedCompounded-1)*100),
+      return_delta_vs_baseline_pct:round4((stressedCompounded-compounded)*100),
+      folds_with_lower_return:folds.filter(f=>f.stress_return_delta_pct<0).length},
     worst_fold_drawdown_pct:round4(maxDrawdown),total_out_of_sample_trades:totalTrades,
     aggregate_out_of_sample_win_rate_pct:totalTrades?round2(weightedWins/totalTrades*100):0,
     cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage,spread_bps_full:spread,spread_bps_per_side:spread/2},
     execution_enabled:false,
-    warning:"Research only. Parameters are selected on each training window and evaluated only on the following unseen window. Small samples, provider quality, spread changes, market impact and broker execution can materially change results; this is not a prediction or trading recommendation."};
+    warning:"Research only. Parameters are selected on each training window and evaluated only on the following unseen window. The doubled-cost stress case is a sensitivity scenario, not a forecast of actual broker costs. Small samples, provider quality, spread changes, market impact and broker execution can materially change results; this is not a prediction or trading recommendation."};
 }
 
 function evaluateSignal(payload) {
