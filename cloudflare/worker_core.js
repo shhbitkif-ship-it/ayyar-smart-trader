@@ -1311,7 +1311,8 @@ export default {
           candles:market.candles,timeframe_minutes:market.interval_seconds/60,
           starting_capital:readNumber("starting_capital",10000),
           fee_bps:readNumber("fee_bps",10),
-          slippage_bps:readNumber("slippage_bps",5)
+          slippage_bps:readNumber("slippage_bps",5),
+          spread_bps:readNumber("spread_bps",0)
         });
         return json({...result,market_symbol:symbol,market_provider:market.provider,
           market_source_url:market.source_url,market_interval:market.interval,
@@ -1366,7 +1367,8 @@ export default {
         const result=runWalkForward({candles:market.candles,timeframe_minutes:market.interval_seconds/60,
           starting_capital:url.searchParams.has("starting_capital")?Number(url.searchParams.get("starting_capital")):10000,
           fee_bps:url.searchParams.has("fee_bps")?Number(url.searchParams.get("fee_bps")):10,
-          slippage_bps:url.searchParams.has("slippage_bps")?Number(url.searchParams.get("slippage_bps")):5});
+          slippage_bps:url.searchParams.has("slippage_bps")?Number(url.searchParams.get("slippage_bps")):5,
+          spread_bps:url.searchParams.has("spread_bps")?Number(url.searchParams.get("spread_bps")):0});
         return json({...result,market_symbol:symbol,market_provider:market.provider,
           market_interval:market.interval,market_data_status:market.status,
           market_last_candle_at:market.last_candle_at,candle_count:market.candles.length,
