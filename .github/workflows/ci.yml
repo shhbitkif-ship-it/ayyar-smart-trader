@@ -130,9 +130,9 @@ jobs:
 
           probes = {
               "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?range=5d&interval=15m",
-              "yahoo_gc_f_15m": "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=5d&interval=15m",
+              "yahoo_gc_f_15m": "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=1d&interval=15m",
               "stooq_xauusd_daily": "https://stooq.com/q/d/l/?s=xauusd&i=d",
-              "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=200"
+              "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=20"
           }
           probe_results = {}
           for name, url in probes.items():
@@ -142,7 +142,7 @@ jobs:
               })
               try:
                   with urllib.request.urlopen(req, timeout=15) as response:
-                      raw = response.read(12000).decode("utf-8", errors="replace")
+                      raw = response.read(100000).decode("utf-8", errors="replace")
                       if name.startswith("biquote"):
                           data = json.loads(raw)
                           bars = data.get("bars") or []
