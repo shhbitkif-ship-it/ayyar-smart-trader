@@ -750,8 +750,9 @@ function isValidArchivedSignal(record) {
 function calculateSignalPerformance(records,candles) {
   const horizons=[1,4,24];
   const times=new Map(candles.map((c,i)=>[Date.parse(c.timestamp),i]));
-  const stats=Object.fromEntries(horizons.map(h=>[h,{horizon_candles:h,scored:0,wins:0,losses:0,flats:0,
-    win_rate_pct:null,average_return_pct:null,average_favorable_pct:null,average_adverse_pct:null}]));
+  const stats=Object.fromEntries(horizons.map(h=>[h,{horizon_candles:h,scored:0,pending:0,unavailable:0,
+    wins:0,losses:0,flats:0,win_rate_pct:null,average_return_pct:null,
+    average_favorable_pct:null,average_adverse_pct:null}]));
   const outcomes=[];
   let pending=0,unavailable=0;
   const ordered=[...records].filter(r=>isValidArchivedSignal(r)&&["BUY","SELL"].includes(r.signal))
@@ -759,20 +760,34 @@ function calculateSignalPerformance(records,candles) {
   for(const record of ordered) {
     const signalTime=Date.parse(record.last_candle_at);
     const index=times.get(signalTime);
-    if(!Number.isFinite(signalTime)||index===undefined) { unavailable++; continue; }
+    if(!Number.isFinite(signalTime)||index===undefined) {
+      unavailable++;
+      for(const horizon of horizons) stats[horizon].unavailable++;
+      continue;
+    }
     const row={signal:record.signal,last_candle_at:record.last_candle_at,outcomes:{}};
     for(const horizon of horizons) {
       const end=index+horizon;
-      if(end>=candles.length) { pending++; row.outcomes[horizon]={status:"PENDING",required_future_candles:horizon}; continue; }
+      if(end>=candles.length) {
+        pending++; stats[horizon].pending++;
+        row.outcomes[horizon]={status:"PENDING",required_future_candles:horizon};
+        continue;
+      }
       let contiguous=true;
       for(let step=1;step<=horizon;step++) {
         if(times.get(signalTime+step*3600000)!==index+step) { contiguous=false; break; }
       }
-      if(!contiguous) { unavailable++; row.outcomes[horizon]={status:"DATA_GAP"}; continue; }
+      if(!contiguous) {
+        unavailable++; stats[horizon].unavailable++;
+        row.outcomes[horizon]={status:"DATA_GAP"};
+        continue;
+      }
       const window=candles.slice(index+1,end+1);
       const entry=window[0].open, exit=window[window.length-1].close;
       if(!Number.isFinite(entry)||entry<=0||!Number.isFinite(exit)||exit<=0) {
-        unavailable++; row.outcomes[horizon]={status:"INVALID_PRICE"}; continue;
+        unavailable++; stats[horizon].unavailable++;
+        row.outcomes[horizon]={status:"INVALID_PRICE"};
+        continue;
       }
       const direction=record.signal==="BUY"?1:-1;
       const returnPct=direction*(exit/entry-1)*100;
