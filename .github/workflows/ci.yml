@@ -128,12 +128,28 @@ jobs:
           assert monitor.get("execution_enabled") is False, monitor
           assert monitor.get("mode") == "PAPER_ONLY", monitor
 
+          candle_req = urllib.request.Request(base + "/v1/market/candles?symbol=xau&interval=15m",
+              headers={"Accept": "application/json", "User-Agent": "AyyarSmartTrader-ProductionSmoke/1.0"})
+          try:
+              with urllib.request.urlopen(candle_req, timeout=20) as response:
+                  candles = json.loads(response.read())
+          except urllib.error.HTTPError as error:
+              candles = json.loads(error.read().decode("utf-8", errors="replace"))
+
           print(json.dumps({
               "health": health["status"],
               "market_status": market["status"],
               "live_quotes": market["live_quotes"],
               "total_quotes": market["total_quotes"],
+              "xau_15m_candles": {
+                  "status": candles.get("status"),
+                  "provider": candles.get("provider"),
+                  "last_candle_at": candles.get("last_candle_at"),
+                  "age_seconds": candles.get("age_seconds"),
+                  "error": candles.get("error")
+              },
               "paper_monitor_status": monitor.get("status"),
+              "paper_monitor_error": (monitor.get("monitor") or {}).get("error"),
               "execution_enabled": policy["execution_enabled"]
           }, ensure_ascii=False))
           PY
