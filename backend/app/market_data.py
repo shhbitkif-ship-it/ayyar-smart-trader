@@ -143,7 +143,8 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
         "reason": None if valid and unit_valid else "Symbol is missing, price is invalid, or its unit does not match the expected market unit",
     }
     return {
-        "symbol": symbol, "name": display_name, "price": price if valid and unit_valid else None,
+        # Expose a numeric quote only when timestamp and unit are verified LIVE.
+        "symbol": symbol, "name": display_name, "price": price if status == "LIVE" else None,
         "unit": unit, "source": "NerkhAra", "timestamp": stamp,
         "age_seconds": round(age, 1) if age is not None else None,
         "status": status, "meta": meta,
@@ -184,6 +185,9 @@ def _refresh_snapshot_status(snapshot: dict, now: datetime | None = None) -> dic
         else:
             quote["status"] = "LIVE"
         quote["age_seconds"] = round(age, 1) if age is not None else None
+        # Revalidate cached quotes on every request and hide stale numeric values.
+        if quote["status"] != "LIVE":
+            quote["price"] = None
         if not generated_valid and price_valid and meta.get("unit_valid") is True:
             meta["reason"] = "Provider snapshot timestamp is missing, malformed, future-dated, or stale"
         elif quote_after_snapshot:
