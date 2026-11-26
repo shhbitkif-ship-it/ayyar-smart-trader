@@ -133,3 +133,44 @@ def test_confirmation_candles_are_not_silently_sorted():
     assert result.action == "NO_TRADE"
     assert result.status == "STALE"
     assert "out of order" in result.reason.lower()
+
+
+def test_market_regime_classifier_detects_bullish_bearish_and_sideways():
+    from app.engine import _classify_market_regime
+    closes = [100 + i * 0.2 for i in range(220)]
+    bullish = _classify_market_regime(
+        [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+        [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+        closes, [60]*6, [0.5]*6)
+    assert bullish["trend"] == "BULLISH"
+    assert bullish["signal_quality"] == "GOOD"
+
+    bearish = _classify_market_regime(
+        [110-i*.1 for i in range(6)], [111-i*.08 for i in range(6)],
+        [112-i*.06 for i in range(6)], [113-i*.04 for i in range(6)],
+        closes, [40]*6, [0.5]*6)
+    assert bearish["trend"] == "BEARISH"
+
+    sideways = _classify_market_regime(
+        [100]*6, [100]*6, [100]*6, [100]*6,
+        [100]*220, [50]*6, [0.5]*6)
+    assert sideways["trend"] == "SIDEWAYS"
+    assert sideways["signal_quality"] == "WEAK"
+
+
+def test_market_regime_flags_extreme_volatility_as_weak():
+    from app.engine import _classify_market_regime
+    result = _classify_market_regime(
+        [110+i*.1 for i in range(6)], [109+i*.08 for i in range(6)],
+        [108+i*.06 for i in range(6)], [107+i*.04 for i in range(6)],
+        [100+i*.2 for i in range(220)], [60]*6, [3.0]*6)
+    assert result["signal_quality"] == "WEAK"
+    assert result["volatility_pct"] > 2.0
+
+
+def test_engine_exposes_market_regime_analysis():
+    now = datetime.now(timezone.utc)
+    req = EvaluateRequest(symbol="XAUUSD", candles=candles(220, 1, now-timedelta(minutes=219)))
+    result = evaluate(req, now)
+    assert result.analysis["trend"] in {"BULLISH", "BEARISH", "SIDEWAYS", "UNKNOWN"}
+    assert result.analysis["signal_quality"] in {"GOOD", "WEAK", "INSUFFICIENT"}
