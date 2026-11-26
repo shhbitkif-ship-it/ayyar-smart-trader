@@ -178,3 +178,8 @@ EMA backtests and walk-forward evaluations accept `spread_bps` as the **full quo
   ]
 }
 ```
+
+
+## Walk-forward stability diagnostics
+
+The Cloudflare Worker walk-forward response now includes descriptive fold-stability diagnostics: positive/negative fold counts, positive-fold ratio, median fold return, fold-return range, and minimum out-of-sample trades per fold. The sample is marked `INSUFFICIENT_SAMPLE` unless it contains at least 20 out-of-sample trades overall and at least 5 in every fold. Other statuses (`CONSISTENT_POSITIVE`, `CONSISTENT_NEGATIVE`, `MIXED`) describe the observed folds only; they are not statistical proof or a profitability guarantee. The evaluator also rejects invalid, duplicate, or out-of-order timestamps rather than silently sorting user-supplied candles. Gaps and irregular intervals continue to block evaluation. Research only; execution remains disabled.
