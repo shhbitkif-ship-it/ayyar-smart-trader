@@ -145,3 +145,36 @@ Gap diagnostics also group repeated gaps that begin and end at the same UTC time
 ### Backtest transaction-cost assumptions
 
 EMA backtests and walk-forward evaluations accept `spread_bps` as the **full quoted bid/ask spread** in basis points; the simulator charges half on entry and half on exit. The default is `0` when no spread assumption is supplied, so results without an explicit spread are not spread-adjusted. Existing `fee_bps` and `slippage_bps` remain per-side assumptions. All three inputs are bounded to 0–500 bps. The reported `cost_model` exposes the full spread and per-side half-spread. Supply a conservative, instrument- and broker-specific spread assumption when researching XAUUSD; OHLC backtests still cannot model changing intrabar spreads, market impact, financing, or broker execution. This is research-only and does not enable live orders.
+
+
+## ممیزی تاریخچه و هزینه‌های بک‌تست
+
+- مسیر پژوهشی `POST /v1/research/data-quality` یک آرایه کندل OHLC و تایم‌فریم `1m|5m|15m|30m|1h|4h|1d` می‌گیرد و تعداد کندل‌ها، تکرار، ترتیب زمانی، فاصله‌های نامنظم و کندل‌های ازدست‌رفته را گزارش می‌کند.
+- وضعیت `GAPPED` یعنی بین دو کندل فاصله وجود دارد؛ هیچ کندلی ساخته، درون‌یابی یا بی‌صدا حذف نمی‌شود. تعطیلی آخر هفته یا وقفه سشن نیز خودکار فرض و از گزارش حذف نمی‌شود.
+- بک‌تست پایتون پارامتر `spread_bps` را به‌عنوان کل فاصله خرید تا فروش می‌پذیرد؛ نصف آن در هر سمت اعمال می‌شود. کارمزد و لغزش همچنان هزینه‌های هر سمت هستند. مقدار پیش‌فرض اسپرد صفر است و نتیجه بدون ورود فرض اسپرد، اسپردتعدیل‌شده محسوب نمی‌شود.
+- برای تاریخچه XAUUSD می‌توان منبعی مانند Dukascopy را جداگانه برای پژوهش بررسی کرد؛ ابزار dukascopy-node مستندات کندل‌های Bid و Ask و تاریخچه XAUUSD را ارائه می‌کند. این منبع به فید زنده Worker متصل نشده و داده‌اش نباید جای قیمت اجرایی بروکر را بگیرد. شرایط استفاده Dukascopy محدودیت‌های استفاده غیرتجاری شخصی و بازنشر دارد؛ پیش از هر استفاده باید شرایط جاری منبع بررسی شود.
+- هیچ داده تاریخی شخص ثالثی در این مخزن یا API زنده ذخیره یا بازتوزیع نمی‌شود.
+
+نمونه درخواست ممیزی:
+
+```json
+{
+  "timeframe": "15m",
+  "candles": [
+    {
+      "timestamp": "2026-11-02T10:00:00Z",
+      "open": 3980.1,
+      "high": 3982.0,
+      "low": 3979.4,
+      "close": 3981.2
+    },
+    {
+      "timestamp": "2026-11-02T10:15:00Z",
+      "open": 3981.2,
+      "high": 3983.0,
+      "low": 3980.8,
+      "close": 3982.4
+    }
+  ]
+}
+```
