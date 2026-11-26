@@ -1377,6 +1377,13 @@ export default {
           if(historyKeys.length>=3000) throw new Error("Signal history exceeded the safe 90-day scan bound; performance evaluation is incomplete");
         }
         const records=(await Promise.all(historyKeys.map(item=>env.SIGNAL_HISTORY.get(item.name,"json")))).filter(Boolean);
+        const validRecords=records.filter(isValidArchivedSignal);
+        const directionalRecords=validRecords.filter(record=>["BUY","SELL"].includes(record.signal));
+        const archiveQuality={fetched_records:records.length,valid_records:validRecords.length,
+          invalid_records:records.length-validRecords.length,
+          directional_records:directionalRecords.length,
+          non_directional_records:validRecords.length-directionalRecords.length,
+          note:"Invalid archive entries and valid NO_TRADE records are excluded from directional outcome scoring."};
         const market=await fetchGoldCandles("xau","60m");
         const result=calculateSignalPerformance(records,market.candles);
         const firstCandle=market.candles[0];
@@ -1389,7 +1396,7 @@ export default {
           covers_retention_window:coverageDays>=89};
         return json({status:"OK",symbol:"xau",provider:market.provider,market_last_candle_at:market.last_candle_at,
           candle_data_quality:market.data_quality,history_coverage:historyCoverage,
-          record_count:records.length,history_pages:historyPages,...result});
+          archive_quality:archiveQuality,record_count:records.length,history_pages:historyPages,...result});
       } catch(e) {
         return json({status:"UNAVAILABLE",error:String(e?.message||"Signal performance evaluation unavailable"),
           execution_enabled:false},502);
