@@ -121,4 +121,4 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
         reason=("Weak or sideways market conditions; low-quality setups are filtered."
                 if regime["signal_quality"]!="GOOD" or regime["trend"]=="SIDEWAYS"
                 else "No aligned multi-timeframe confirmation; wait.")
-    return SignalResponse(**base,action=action,status="NO_SETUP",reason=reason)
+    return SignalResponse(**base,action=action,status="VALID" if (up or down) else "NO_SETUP",reason=reason)
