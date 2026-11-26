@@ -78,8 +78,11 @@ jobs:
           candle_status, candle_feed = request("/v1/market/candles?symbol=xau&interval=60m")
           assert candle_status in {200, 502}, "Unexpected OHLC provider HTTP status"
           if candle_status == 200:
-              assert candle_feed.get("status") == "LIVE"
+              assert candle_feed.get("status") in {"LIVE", "PARTIAL"}
               assert isinstance(candle_feed.get("candles"), list) and len(candle_feed["candles"]) >= 60
+              quality = candle_feed.get("data_quality", {})
+              assert quality.get("status") in {"CLEAN", "GAPS_DETECTED"}
+              assert (candle_feed.get("status") == "LIVE") == (quality.get("status") == "CLEAN")
               for candle in candle_feed["candles"]:
                   assert all(math.isfinite(candle.get(k, float("nan"))) and candle[k] > 0
                              for k in ("open","high","low","close"))
