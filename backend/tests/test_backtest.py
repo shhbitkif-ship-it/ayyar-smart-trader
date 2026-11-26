@@ -38,6 +38,15 @@ def test_backtest_uses_next_candle_and_returns_metrics():
     assert result["warning"].startswith("Research only")
 
 
+def test_spread_cost_reduces_result_and_is_reported_per_side():
+    candles = sample_candles()
+    no_spread = run_ema_backtest(candles, fee_bps=0, slippage_bps=0, spread_bps=0)
+    with_spread = run_ema_backtest(candles, fee_bps=0, slippage_bps=0, spread_bps=20)
+    assert with_spread["final_equity"] < no_spread["final_equity"]
+    assert with_spread["cost_model"]["spread_bps_full"] == 20
+    assert with_spread["cost_model"]["spread_bps_per_side"] == 10
+
+
 def test_transaction_costs_reduce_result():
     candles = sample_candles()
     free = run_ema_backtest(candles, fee_bps=0, slippage_bps=0)
