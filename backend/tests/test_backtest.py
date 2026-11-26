@@ -155,3 +155,32 @@ def test_drawdown_timestamp_is_null_when_no_drawdown_occurs():
     assert result["max_drawdown_pct"] >= 0
     if result["max_drawdown_pct"] == 0:
         assert result["max_drawdown_at"] is None
+
+
+def test_backtest_reports_buy_and_hold_benchmark_with_matching_costs():
+    candles = sample_candles()
+    result = run_ema_backtest(candles, starting_capital=5000, fee_bps=10, slippage_bps=5, spread_bps=4)
+    benchmark = result["benchmark"]
+    assert benchmark["name"] == "Buy and hold"
+    assert benchmark["final_equity"] > 0
+    assert benchmark["entry_price"] > candles[0].open
+    assert benchmark["excess_return_pct"] == pytest.approx(
+        result["net_return_pct"] - benchmark["net_return_pct"], abs=0.0001)
+    assert "same per-side cost" in benchmark["assumption"]
+
+
+def test_backtest_reports_trade_expectancy_and_average_outcomes():
+    result = run_ema_backtest(sample_candles())
+    trades = result["trades"]
+    if trades:
+        assert result["expectancy_per_closed_trade"] == pytest.approx(
+            sum(t["pnl"] for t in trades) / len(trades), abs=0.01)
+    assert result["average_winning_trade"] is None or result["average_winning_trade"] > 0
+    assert result["average_losing_trade"] is None or result["average_losing_trade"] < 0
+
+
+def test_buy_and_hold_benchmark_reflects_transaction_costs():
+    candles = sample_candles()
+    free = run_ema_backtest(candles, fee_bps=0, slippage_bps=0)
+    costly = run_ema_backtest(candles, fee_bps=20, slippage_bps=10)
+    assert costly["benchmark"]["final_equity"] < free["benchmark"]["final_equity"]
