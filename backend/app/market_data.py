@@ -141,7 +141,7 @@ def _refresh_snapshot_status(snapshot: dict, now: datetime | None = None) -> dic
         quote_after_snapshot = (
             isinstance(generated, datetime)
             and isinstance(stamp, datetime)
-            and stamp.astimezone(timezone.utc) > generated.astimezone(timezone.utc).replace(microsecond=0)
+            and stamp.astimezone(timezone.utc) > generated.astimezone(timezone.utc)
                 + timedelta(seconds=30)
         )
         if not price_valid or meta.get("unit_valid") is not True:
