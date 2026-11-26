@@ -101,6 +101,9 @@ def evaluate(request: EvaluateRequest, now: datetime | None = None) -> SignalRes
     if not cf or not cs: return SignalResponse(**base,action="NO_TRADE",status="INSUFFICIENT_DATA",reason="At least 50 confirmation candles are required.")
     up=regime["trend"]=="BULLISH" and regime["signal_quality"]=="GOOD" and cf[-1]>cs[-1] and 50<=momentum[-1]<=68
     down=regime["trend"]=="BEARISH" and regime["signal_quality"]=="GOOD" and cf[-1]<cs[-1] and 32<=momentum[-1]<=50
+    # A detected setup is informational only. Order execution remains disabled.
+    analysis["setup_direction"] = "LONG" if up else "SHORT" if down else "NONE"
+    analysis["setup_detected"] = bool(up or down)
     if up or down:
         action="WAIT"
         reason="Trend and higher-timeframe alignment detected. Entry remains disabled pending spread, tick size, contract size, liquidity and risk verification."
