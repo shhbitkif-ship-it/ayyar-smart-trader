@@ -545,7 +545,8 @@ async function fetchXausSpotQuote() {
     if(!stamp||!Number.isFinite(ageFromSource)||ageFromSource<0||ageFromSource>XAUS_MAX_AGE_SECONDS||
        !Number.isFinite(ageFromTimestamp)||ageFromTimestamp< -30||ageFromTimestamp>XAUS_MAX_AGE_SECONDS||
        !Number.isFinite(price)||price<=0||price>1e15||
-       (currency&&currency!=="USD")||(unit&&!["oz","troy_oz"].includes(unit))) return null;
+       (currency&&currency!=="USD")||(unit&&unit!=="oz")||
+       !parseStamp(payload.updated_at)||Math.abs((Date.now()-parseStamp(payload.updated_at).getTime())/1000)>XAUS_MAX_AGE_SECONDS) return null;
     return {id:"xau",price,unit:"USD",updated_utc:stamp.toISOString(),stale:false};
   } catch { return null; }
 }
