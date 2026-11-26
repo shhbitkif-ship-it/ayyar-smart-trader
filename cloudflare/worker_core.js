@@ -1340,12 +1340,22 @@ export default {
     if(url.pathname==="/v1/signals/performance"&&request.method==="GET") {
       if(!env?.SIGNAL_HISTORY) return json({status:"UNAVAILABLE",error:"Signal history storage is not configured",execution_enabled:false},503);
       try {
-        const listed=await env.SIGNAL_HISTORY.list({prefix:"xau:latest:",limit:1000});
-        const records=(await Promise.all(listed.keys.map(item=>env.SIGNAL_HISTORY.get(item.name,"json")))).filter(Boolean);
+        const historyKeys=[];
+        let cursor,historyPages=0;
+        while(true) {
+          const page=await env.SIGNAL_HISTORY.list({prefix:"xau:latest:",limit:1000,...(cursor?{cursor}:{})});
+          historyPages++;
+          historyKeys.push(...(page.keys||[]));
+          if(page.list_complete!==false) break;
+          if(!page.cursor) throw new Error("Signal history pagination cursor is missing; performance evaluation is incomplete");
+          cursor=page.cursor;
+          if(historyKeys.length>=3000) throw new Error("Signal history exceeded the safe 90-day scan bound; performance evaluation is incomplete");
+        }
+        const records=(await Promise.all(historyKeys.map(item=>env.SIGNAL_HISTORY.get(item.name,"json")))).filter(Boolean);
         const market=await fetchGoldCandles("xau","60m");
         const result=calculateSignalPerformance(records,market.candles);
         return json({status:"OK",symbol:"xau",provider:market.provider,market_last_candle_at:market.last_candle_at,
-          candle_data_quality:market.data_quality,record_count:records.length,...result});
+          candle_data_quality:market.data_quality,record_count:records.length,history_pages:historyPages,...result});
       } catch(e) {
         return json({status:"UNAVAILABLE",error:String(e?.message||"Signal performance evaluation unavailable"),
           execution_enabled:false},502);
