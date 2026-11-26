@@ -339,6 +339,33 @@ function classifyMarketRegime(candles) {
 }
 
 
+function diagnoseCandleGaps(gaps) {
+  const windows=new Map();
+  for(const gap of gaps){
+    const from=Date.parse(gap.from),to=Date.parse(gap.to);
+    if(!Number.isFinite(from)||!Number.isFinite(to)) continue;
+    const start=new Date(from).toISOString().slice(11,16);
+    const end=new Date(to).toISOString().slice(11,16);
+    const key=start+"-"+end;
+    if(!windows.has(key)) windows.set(key,{start_time_utc:start,end_time_utc:end,
+      occurrences:0,dates:[]});
+    const item=windows.get(key);
+    item.occurrences++;
+    const date=new Date(from).toISOString().slice(0,10);
+    if(!item.dates.includes(date)) item.dates.push(date);
+  }
+  const recurring=[...windows.values()].filter(item=>item.occurrences>=2);
+  return {classification:"UNCLASSIFIED",
+    recurring_windows_utc:recurring,
+    isolated_gap_count:gaps.filter(gap=>{
+      const from=Date.parse(gap.from),to=Date.parse(gap.to);
+      if(!Number.isFinite(from)||!Number.isFinite(to)) return true;
+      const key=new Date(from).toISOString().slice(11,16)+"-"+new Date(to).toISOString().slice(11,16);
+      return !recurring.some(item=>key===item.start_time_utc+"-"+item.end_time_utc);
+    }).length,
+    note:"Repeated UTC timing is a diagnostic pattern only; it does not prove a market closure or justify filling/ignoring gaps."};
+}
+
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
 
@@ -406,6 +433,7 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     duplicate_count:0,rejected_completed_points:0,gap_count:gaps.length,
     missing_intervals:gaps.reduce((sum,g)=>sum+g.missing_intervals,0),
     largest_gap_intervals:gaps.reduce((max,g)=>Math.max(max,g.missing_intervals),0),
+    gap_diagnostics:diagnoseCandleGaps(gaps),
     note:"Gaps are reported for transparency and may reflect market closures or provider omissions; they are not silently filled."};
   return {
     symbol, provider:"XAUS", provider_symbol:providerSymbol, source_url:"https://xaus.com/api/v1/chart",
@@ -474,7 +502,7 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
     duplicate_count:0,rejected_completed_points:0,gap_count:gaps.length,
     missing_intervals:gaps.reduce((sum,g)=>sum+g.missing_intervals,0),
     largest_gap_intervals:gaps.reduce((max,g)=>Math.max(max,g.missing_intervals),0),
-    gaps:gaps.slice(0,50),
+    gaps:gaps.slice(0,50),gap_diagnostics:diagnoseCandleGaps(gaps),
     note:"BIQUOTE gaps are reported with timestamps, never filled or interpolated. Market closures and provider omissions remain visible to downstream quality gates."};
   return {
     symbol,provider:"BIQUOTE",provider_symbol:"XAUUSD",
