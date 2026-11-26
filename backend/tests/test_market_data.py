@@ -181,3 +181,32 @@ def test_cached_snapshot_expires_at_quote_freshness_limit():
     refreshed = _refresh_snapshot_status(snapshot, now + timedelta(seconds=5))
     assert refreshed["quotes"][0]["status"] == "STALE"
     assert refreshed["status"] == "UNAVAILABLE"
+
+
+def test_snapshot_rejects_quote_newer_than_provider_snapshot():
+    from app.market_data import _refresh_snapshot_status
+    now = datetime.now(timezone.utc)
+    generated = now - timedelta(minutes=2)
+    quote_stamp = now
+    quote = _normalise(
+        {"price": 2300, "unit": "USD", "updated_utc": quote_stamp.isoformat(), "stale": False},
+        "XAUUSD", "Gold", "xau",
+    )
+    snapshot = {"status": "LIVE", "provider_generated_at": generated, "quotes": [quote]}
+    refreshed = _refresh_snapshot_status(snapshot, now)
+    assert refreshed["quotes"][0]["status"] == "STALE"
+    assert "newer than the provider snapshot" in refreshed["quotes"][0]["meta"]["reason"]
+
+
+def test_snapshot_allows_quote_timestamp_within_provider_clock_tolerance():
+    from app.market_data import _refresh_snapshot_status
+    now = datetime.now(timezone.utc)
+    generated = now - timedelta(seconds=10)
+    quote_stamp = generated + timedelta(seconds=20)
+    quote = _normalise(
+        {"price": 2300, "unit": "USD", "updated_utc": quote_stamp.isoformat(), "stale": False},
+        "XAUUSD", "Gold", "xau",
+    )
+    snapshot = {"status": "LIVE", "provider_generated_at": generated, "quotes": [quote]}
+    refreshed = _refresh_snapshot_status(snapshot, now)
+    assert refreshed["quotes"][0]["status"] == "LIVE"
