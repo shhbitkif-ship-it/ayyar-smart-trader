@@ -651,7 +651,7 @@ private fun securePaperPrefs(context:Context)=run {
 private fun paperApi(method:String,path:String,token:String?=null,body:JSONObject?=null):JSONObject {
  val accountCollectionPath="/v1/paper/accounts"
  val safeAccountPath=Regex(
-  "^/v1/paper/accounts/[a-f0-9]{32}(?:/(?:trades(?:/[a-f0-9]{32}/close)?|monitor|notifications|report/daily|report/performance\\\\?period=(?:week|month)|analytics/strategy|integrity))?$"
+  "^/v1/paper/accounts/[a-f0-9]{32}(?:/(?:trades(?:/[a-f0-9]{32}/close)?|monitor|notifications|report/daily|report/performance\\?period=(?:week|month)|analytics/strategy|integrity))?$"
  )
  val isCreateAccount=path==accountCollectionPath && method=="POST"
  require(isCreateAccount || path.matches(safeAccountPath)) { "مسیر درخواست حساب آزمایشی معتبر نیست." }
