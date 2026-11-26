@@ -592,9 +592,12 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     throw new Error("XAUS returned duplicate candle timestamps; data quality check failed");
   const last = candles[candles.length-1];
   if (!last) throw new Error("No completed OHLC candles are available from XAUS");
-  const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
+  // Provider timestamps identify the candle OPEN. Freshness must be measured
+  // from the completed candle CLOSE, matching BIQUOTE's openTime semantics.
+  const lastCloseTime=Date.parse(last.timestamp)+intervalMs;
+  const ageSeconds=(Date.now()-lastCloseTime)/1000;
   const freshnessLimit=Math.max(600,intervalSeconds*2);
-  if (ageSeconds < 0 || ageSeconds > freshnessLimit)
+  if (ageSeconds < -30 || ageSeconds > freshnessLimit)
     throw new Error("Latest completed XAUS OHLC candle is stale");
   const gaps=[];
   for(let i=1;i<candles.length;i++){
@@ -612,7 +615,9 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     interval, interval_seconds:intervalSeconds, status:gaps.length?"PARTIAL":"LIVE",data_quality:dataQuality,
     analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
-    age_seconds:Math.round(ageSeconds), candles,
+    last_candle_close_at:new Date(lastCloseTime).toISOString(),
+    candle_timestamp_semantics:"BAR_OPEN_TIME",age_reference:"COMPLETED_BAR_CLOSE",
+    age_seconds:Math.max(0,Math.round(ageSeconds)), candles,
     note:"Completed OHLC candles for global XAU/USD from XAUS chart API. Data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
   };
 }
@@ -683,6 +688,8 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
     interval,interval_seconds:intervalSeconds,status:gaps.length?"PARTIAL":"LIVE",data_quality:dataQuality,
     analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(),last_candle_at:last.timestamp,
+    last_candle_close_at:new Date(lastCloseTime).toISOString(),
+    candle_timestamp_semantics:"BAR_OPEN_TIME",age_reference:"COMPLETED_BAR_CLOSE",
     age_seconds:Math.max(0,Math.round(ageSeconds)),candles,
     note:"Completed XAU/USD OHLC candles from BIQUOTE public read-only feed. Bars marked open are excluded. Data may contain market-closure or provider gaps; indicative data only, not a broker execution feed."
   };
