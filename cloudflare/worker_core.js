@@ -1277,7 +1277,7 @@ export default {
       try {
         const market=await fetchGoldCandles(symbol,interval);
         const result=runBacktest({
-          candles:market.candles,
+          candles:market.candles,timeframe_minutes:market.interval_seconds/60,
           starting_capital:readNumber("starting_capital",10000),
           fee_bps:readNumber("fee_bps",10),
           slippage_bps:readNumber("slippage_bps",5)
@@ -1303,8 +1303,8 @@ export default {
           const market=await fetchGoldCandles(symbol,interval);
           const results=strategies.map(([fast,slow])=>{
             try {
-              const result=runBacktest({candles:market.candles,fast_period:fast,slow_period:slow,
-                starting_capital:10000,fee_bps:10,slippage_bps:5});
+              const result=runBacktest({candles:market.candles,timeframe_minutes:market.interval_seconds/60,
+                fast_period:fast,slow_period:slow,starting_capital:10000,fee_bps:10,slippage_bps:5});
               return {fast_period:fast,slow_period:slow,status:"OK",net_return_pct:result.net_return_pct,
                 max_drawdown_pct:result.max_drawdown_pct,closed_trades:result.closed_trades,
                 win_rate_pct:result.win_rate_pct,profit_factor:result.profit_factor,
@@ -1332,7 +1332,7 @@ export default {
       const interval=url.searchParams.get("interval")||"60m";
       try {
         const market=await fetchGoldCandles(symbol,interval);
-        const result=runWalkForward({candles:market.candles,
+        const result=runWalkForward({candles:market.candles,timeframe_minutes:market.interval_seconds/60,
           starting_capital:url.searchParams.has("starting_capital")?Number(url.searchParams.get("starting_capital")):10000,
           fee_bps:url.searchParams.has("fee_bps")?Number(url.searchParams.get("fee_bps")):10,
           slippage_bps:url.searchParams.has("slippage_bps")?Number(url.searchParams.get("slippage_bps")):5});
