@@ -5,6 +5,7 @@ from .market_data import market_snapshot
 from .config import DEFAULT_RISK_PER_TRADE, MAX_DAILY_LOSS, MAX_DRAWDOWN
 from .risk import PositionSizeRequest, calculate_position_size
 from .backtest import BacktestRequest, backtest
+from .historical_quality import CandleQualityRequest, inspect_candle_series
 
 app = FastAPI(
     title="Ayyar Smart Trader API",
@@ -54,6 +55,11 @@ def position_size(payload: PositionSizeRequest):
 @app.post("/v1/signals/evaluate", response_model=SignalResponse)
 def evaluate_signal(payload: EvaluateRequest):
     return evaluate(payload)
+
+
+@app.post("/v1/research/data-quality")
+def historical_data_quality(payload: CandleQualityRequest):
+    return inspect_candle_series(payload.candles, payload.timeframe)
 
 
 @app.post("/v1/backtest/ema-crossover")
