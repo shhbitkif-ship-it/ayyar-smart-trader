@@ -141,7 +141,7 @@ def run_ema_backtest(
         "strategy": "EMA20/EMA50 long-only crossover",
         "execution": "Signal confirmed at candle close; orders filled at next candle open",
         "cost_model": {"fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps, "spread_bps_full": spread_bps, "spread_bps_per_side": spread_bps / 2.0},
-        "starting_capital": round(starting_capital, 2),
+        "starting_capital": round(starting_capital, 2),\n        "evaluation_start_index": start_index,\n        "evaluation_start_time": ordered[start_index].timestamp.isoformat(),
         "final_equity": round(final_equity, 2),
         "net_return_pct": round(strategy_return, 4),
         "benchmark": {
@@ -150,7 +150,7 @@ def run_ema_backtest(
             "final_equity": round(benchmark_final, 2),
             "net_return_pct": round(benchmark_return, 4),
             "excess_return_pct": round(strategy_return - benchmark_return, 4),
-            "assumption": "Buy at first candle open and liquidate at final candle close with the same per-side cost assumptions.",
+            "assumption": f"Buy at candle index {start_index} open and liquidate at final candle close with the same per-side cost assumptions.",
         },
         "max_drawdown_pct": round(max_drawdown * 100.0, 4),
         "max_drawdown_at": max_drawdown_at,
