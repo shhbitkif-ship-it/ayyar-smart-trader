@@ -82,3 +82,52 @@ def validate_trade_plan(req: TradePlanRequest) -> dict:
         ),
         "execution_enabled": False,
     }
+
+
+class AtrTradePlanRequest(BaseModel):
+    side: Literal["LONG", "SHORT"]
+    entry: float = Field(gt=0, allow_inf_nan=False)
+    atr_value: float = Field(gt=0, allow_inf_nan=False)
+    stop_atr_multiple: float = Field(default=1.5, gt=0, le=5, allow_inf_nan=False)
+    reward_risk: float = Field(default=2.0, ge=1.5, le=5, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_finite_plan(self):
+        if not all(math.isfinite(v) for v in (
+            self.entry, self.atr_value, self.stop_atr_multiple, self.reward_risk
+        )):
+            raise ValueError("ATR trade plan inputs must be finite.")
+        return self
+
+
+def build_atr_trade_plan(req: AtrTradePlanRequest) -> dict:
+    """Build indicative ATR-based levels; never authorizes execution."""
+    stop_distance = req.atr_value * req.stop_atr_multiple
+    reward_distance = stop_distance * req.reward_risk
+    if not all(math.isfinite(v) and v > 0 for v in (stop_distance, reward_distance)):
+        return {"valid": False, "execution_enabled": False,
+                "reason": "ATR level calculation exceeded safe numeric limits."}
+    if req.side == "LONG":
+        stop_loss = req.entry - stop_distance
+        take_profit = req.entry + reward_distance
+    else:
+        stop_loss = req.entry + stop_distance
+        take_profit = req.entry - reward_distance
+    if stop_loss <= 0 or take_profit <= 0 or not all(
+        math.isfinite(v) for v in (stop_loss, take_profit)
+    ):
+        return {"valid": False, "execution_enabled": False,
+                "reason": "Calculated price levels are not valid positive prices."}
+    return {
+        "valid": True,
+        "side": req.side,
+        "entry": req.entry,
+        "stop_loss": round(stop_loss, 8),
+        "take_profit": round(take_profit, 8),
+        "atr_value": req.atr_value,
+        "stop_distance": round(stop_distance, 8),
+        "reward_distance": round(reward_distance, 8),
+        "risk_reward": req.reward_risk,
+        "basis": "Indicative ATR multiple; broker tick size, spread, liquidity and structure are not applied.",
+        "execution_enabled": False,
+    }
