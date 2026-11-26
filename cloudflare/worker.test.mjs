@@ -1122,7 +1122,12 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
   assert.equal(body.stability.sample_sufficient,body.total_out_of_sample_trades>=20&&body.stability.min_fold_trades>=5);
   assert.ok(Number.isFinite(body.stability.median_fold_return_pct));
   assert.ok(body.stability.fold_return_range_pct>=0);
+  assert.equal(body.regime_diagnostics.lookahead_used,false);
+  assert.ok(Array.isArray(body.regime_diagnostics.buckets));
+  assert.equal(body.regime_diagnostics.buckets.reduce((sum,b)=>sum+b.bars,0),108);
   for(const fold of body.folds){
+    assert.ok(["TRENDING","RANGE","HIGH_VOLATILITY","TRANSITIONAL","UNAVAILABLE"].includes(fold.regime_diagnostics.first_bar_regime));
+    assert.equal(fold.regime_diagnostics.buckets.reduce((sum,b)=>sum+b.bars,0),36);
     assert.ok(Date.parse(fold.test_start)>Date.parse(fold.training_end));
     assert.equal(fold.first_test_fill_at,fold.test_start);
     assert.equal(fold.first_test_fill_included,true);
@@ -1132,6 +1137,30 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
 });
 
 
+
+test("walk-forward regime label for first test fill excludes that candle's future OHLC",async()=>{
+  const candles=Array.from({length:240},(_,i)=>{
+    const close=2500+i*.35+Math.sin(i/4)*3+Math.sin(i/11)*1.5;
+    const previous=i?2500+(i-1)*.35+Math.sin((i-1)/4)*3+Math.sin((i-1)/11)*1.5:close-.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
+      open:previous,high:Math.max(previous,close)+.8,low:Math.min(previous,close)-.8,close};
+  });
+  const call=async rows=>(await worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles:rows,timeframe_minutes:60})
+  }))).json();
+  const baseline=await call(candles);
+  const changed=[...candles];
+  const firstTestIndex=Math.floor(candles.length*.55);
+  const original=changed[firstTestIndex];
+  const extremeClose=original.close*1.08;
+  changed[firstTestIndex]={...original,open:original.open,close:extremeClose,
+    high:Math.max(original.open,extremeClose)+1,low:Math.min(original.open,extremeClose)-1};
+  const modified=await call(changed);
+  assert.equal(baseline.folds[0].regime_diagnostics.first_bar_regime,
+    modified.folds[0].regime_diagnostics.first_bar_regime);
+  assert.equal(baseline.regime_diagnostics.lookahead_used,false);
+});
 
 test("walk-forward transaction costs include estimated exit cost on open positions",async()=>{
   const candles=Array.from({length:300},(_,i)=>{
