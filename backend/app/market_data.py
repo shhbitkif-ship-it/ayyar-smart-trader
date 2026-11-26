@@ -74,6 +74,31 @@ async def _fetch_provider_json() -> dict:
     return await response.json()
 
 
+def _optional_finite_number(value, *, minimum: float | None = None):
+    """Return a safe numeric metadata value, or None for malformed provider data."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    if minimum is not None and value < minimum:
+        return None
+    return value
+
+
+def _optional_source_count(value):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _display_name(value, fallback: str) -> str:
+    if not isinstance(value, dict):
+        return fallback
+    for key in ("fa", "en"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()[:80]
+    return fallback
+
+
 def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dict:
     item = item if isinstance(item, dict) else {}
     price = item.get("price")
@@ -98,20 +123,22 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
     if not unit_valid:
         status = "UNAVAILABLE"
     unit = "USD/oz" if source_unit == "USD" else "تومان" if source_unit == "IRT" else "نامشخص"
-    name_data = item.get("name")
-    if isinstance(name_data, dict):
-        display_name = name_data.get("fa") or name_data.get("en") or name
-    else:
-        display_name = name
+    display_name = _display_name(item.get("name"), name)
+    change_pct = _optional_finite_number(item.get("change_pct"))
+    spread_pct = _optional_finite_number(item.get("spread_pct"), minimum=0)
+    sources = _optional_source_count(item.get("sources"))
+    method = item.get("method")
+    if not isinstance(method, str):
+        method = None
     meta = {
         "provider_id": source_id,
         "source_unit": source_unit,
         "unit_valid": unit_valid,
         "updated_utc": item.get("updated_utc"),
-        "change_pct": item.get("change_pct"),
-        "sources": item.get("sources"),
-        "spread_pct": item.get("spread_pct"),
-        "method": item.get("method"),
+        "change_pct": change_pct,
+        "sources": sources,
+        "spread_pct": spread_pct,
+        "method": method[:80] if method else None,
         "stale": stale_flag,
         "reason": None if valid and unit_valid else "Symbol is missing, price is invalid, or its unit does not match the expected market unit",
     }
