@@ -30,9 +30,12 @@ def _classify_market_regime(e20, e50, e100, e200, closes, momentum, atr_values):
                          "LOW" if volatility_pct < 0.015 else "NORMAL")
     bullish_stack = e20[-1] > e50[-1] > e100[-1] > e200[-1]
     bearish_stack = e20[-1] < e50[-1] < e100[-1] < e200[-1]
-    if bullish_stack and slope_pct > 0.01:
+    # EMA ordering alone can label a narrow oscillating range as a trend.
+    # Require a minimum separation from EMA200 before assigning direction.
+    directional_spread_floor_pct = 0.05
+    if bullish_stack and slope_pct > 0.01 and spread_pct >= directional_spread_floor_pct:
         trend = "BULLISH"
-    elif bearish_stack and slope_pct < -0.01:
+    elif bearish_stack and slope_pct < -0.01 and spread_pct >= directional_spread_floor_pct:
         trend = "BEARISH"
     else:
         trend = "SIDEWAYS"
