@@ -3,7 +3,7 @@ from .engine import evaluate
 from .schemas import EvaluateRequest, SignalResponse
 from .market_data import market_snapshot
 from .config import DEFAULT_RISK_PER_TRADE, MAX_DAILY_LOSS, MAX_DRAWDOWN
-from .risk import PositionSizeRequest, calculate_position_size
+from .risk import PositionSizeRequest, calculate_position_size, TradePlanRequest, validate_trade_plan
 from .backtest import BacktestRequest, WalkForwardRequest, backtest, run_walk_forward_backtest
 from .historical_quality import CandleQualityRequest, inspect_candle_series
 
@@ -50,6 +50,11 @@ def risk_policy():
 @app.post("/v1/risk/position-size")
 def position_size(payload: PositionSizeRequest):
     return calculate_position_size(payload)
+
+
+@app.post("/v1/risk/validate-trade-plan")
+def validate_plan(payload: TradePlanRequest):
+    return validate_trade_plan(payload)
 
 
 @app.post("/v1/signals/evaluate", response_model=SignalResponse)
