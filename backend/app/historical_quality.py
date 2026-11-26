@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import timezone, timedelta
 from typing import Literal, Sequence
 from pydantic import BaseModel, Field
 from .schemas import Candle
@@ -24,6 +24,7 @@ def inspect_candle_series(candles: Sequence[Candle], timeframe: str) -> dict:
     duplicate_count = out_of_order_count = misaligned_count = 0
     gap_count = missing_intervals = largest_gap_intervals = 0
     max_gap_seconds = 0.0
+    gap_windows = []
 
     for candle in candles:
         if candle.timestamp.tzinfo is None or candle.timestamp.utcoffset() is None:
@@ -47,6 +48,21 @@ def inspect_candle_series(candles: Sequence[Candle], timeframe: str) -> dict:
             missing_intervals += intervals - 1
             largest_gap_intervals = max(largest_gap_intervals, intervals - 1)
             max_gap_seconds = max(max_gap_seconds, delta_ms / 1000)
+            day = previous.timestamp.date()
+            end_day = current.timestamp.date()
+            spans_weekend = False
+            while day <= end_day:
+                if day.weekday() >= 5:
+                    spans_weekend = True
+                    break
+                day += timedelta(days=1)
+            if len(gap_windows) < 100:
+                gap_windows.append({
+                    "from_utc": previous.timestamp.astimezone(timezone.utc).isoformat(),
+                    "to_utc": current.timestamp.astimezone(timezone.utc).isoformat(),
+                    "missing_intervals": intervals - 1,
+                    "spans_weekend_calendar_days": spans_weekend,
+                })
 
     invalid = duplicate_count > 0 or out_of_order_count > 0 or misaligned_count > 0
     status = "INVALID" if invalid else "GAPPED" if gap_count else "CLEAN"
@@ -69,6 +85,8 @@ def inspect_candle_series(candles: Sequence[Candle], timeframe: str) -> dict:
         "missing_intervals": missing_intervals,
         "largest_gap_intervals": largest_gap_intervals,
         "max_gap_seconds": max_gap_seconds,
+        "gap_windows": gap_windows,
+        "gap_windows_truncated": gap_count > len(gap_windows),
         "interpolation_applied": False,
         "note": "Gaps are reported, never interpolated or silently ignored. Weekend and session closures are not automatically assumed.",
     }
