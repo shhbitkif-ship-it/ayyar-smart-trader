@@ -527,7 +527,6 @@ function diagnoseCandleGaps(gaps) {
 
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
-const MIN_COMPLETED_CANDLES = 60;
 
 async function fetchGoldCandlesFromXaus(symbol, interval) {
   const providerSymbol = CANDLE_SYMBOLS.get(symbol);
@@ -580,8 +579,6 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
   if (candles.some((c,i)=>i>0&&Date.parse(c.timestamp)===Date.parse(candles[i-1].timestamp)))
     throw new Error("XAUS returned duplicate candle timestamps; data quality check failed");
-  if(candles.length<MIN_COMPLETED_CANDLES)
-    throw new Error("XAUS returned insufficient completed OHLC history; at least 60 candles are required");
   const last = candles[candles.length-1];
   if (!last) throw new Error("No completed OHLC candles are available from XAUS");
   const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
@@ -602,6 +599,7 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   return {
     symbol, provider:"XAUS", provider_symbol:providerSymbol, source_url:"https://xaus.com/api/v1/chart",
     interval, interval_seconds:intervalSeconds, status:"LIVE",data_quality:dataQuality,
+    analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
     age_seconds:Math.round(ageSeconds), candles,
     note:"Completed OHLC candles for global XAU/USD from XAUS chart API. Data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
@@ -649,8 +647,6 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
   candles.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp));
   if(candles.some((bar,i)=>i>0&&Date.parse(bar.timestamp)===Date.parse(candles[i-1].timestamp)))
     throw new Error("BIQUOTE returned duplicate candle timestamps");
-  if(candles.length<MIN_COMPLETED_CANDLES)
-    throw new Error("BIQUOTE returned insufficient completed OHLC history; at least 60 candles are required");
   const last=candles[candles.length-1];
   if(!last) throw new Error("BIQUOTE returned no completed XAUUSD candles");
   const lastCloseTime=Date.parse(last.timestamp)+intervalMs;
@@ -674,6 +670,7 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
     symbol,provider:"BIQUOTE",provider_symbol:"XAUUSD",
     source_url:"https://biquote.io/api/XAUUSD/ohlc",
     interval,interval_seconds:intervalSeconds,status:"LIVE",data_quality:dataQuality,
+    analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(),last_candle_at:last.timestamp,
     age_seconds:Math.max(0,Math.round(ageSeconds)),candles,
     note:"Completed XAU/USD OHLC candles from BIQUOTE public read-only feed. Bars marked open are excluded. Data may contain market-closure or provider gaps; indicative data only, not a broker execution feed."
