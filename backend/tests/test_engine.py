@@ -368,6 +368,33 @@ def test_signal_fingerprint_is_stable_for_repeated_evaluation():
     assert first.analysis["signal_key"] is None or len(first.analysis["signal_key"]) == 64
 
 
+
+def test_signal_fingerprint_changes_when_confirmation_bar_changes():
+    now = datetime.now(timezone.utc)
+    market = _regime_scenario_candles("BULLISH", 220, now - timedelta(minutes=220))
+    confirmation = _regime_scenario_candles("BULLISH", 60, now - timedelta(minutes=297), 5)
+    confirmation[-1] = confirmation[-1].model_copy(
+        update={"timestamp": market[-1].timestamp - timedelta(seconds=30)}
+    )
+    first_request = EvaluateRequest(
+        symbol="XAUUSD", timeframe="1m",
+        candles=market, confirmation_candles=confirmation,
+    )
+    updated_confirmation = list(confirmation)
+    updated_confirmation[-1] = updated_confirmation[-1].model_copy(
+        update={"timestamp": market[-1].timestamp - timedelta(minutes=1)}
+    )
+    second_request = EvaluateRequest(
+        symbol="XAUUSD", timeframe="1m",
+        candles=market, confirmation_candles=updated_confirmation,
+    )
+    first = evaluate(first_request, now)
+    second = evaluate(second_request, now)
+    assert first.analysis["setup_detected"] is True
+    assert second.analysis["setup_detected"] is True
+    assert first.analysis["signal_key"] != second.analysis["signal_key"]
+
+
 def test_no_setup_has_no_signal_fingerprint():
     now = datetime.now(timezone.utc)
     request = EvaluateRequest(
