@@ -116,13 +116,14 @@ def run_ema_backtest(
     peak = float(starting_capital)
     max_drawdown = 0.0
     max_drawdown_at = None
-    for point in drawdown_curve:
-        peak = max(peak, point["equity"])
+    for close_point, adverse_point in zip(equity_curve, drawdown_curve):
+        # Use close-marked equity for the running peak and intrabar low for the trough.
+        peak = max(peak, close_point["equity"])
         if peak > 0:
-            drawdown = (peak - point["equity"]) / peak
+            drawdown = (peak - adverse_point["equity"]) / peak
             if drawdown > max_drawdown:
                 max_drawdown = drawdown
-                max_drawdown_at = point["timestamp"]
+                max_drawdown_at = adverse_point["timestamp"]
     gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
     gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else (None if gross_profit == 0 else "infinity")
