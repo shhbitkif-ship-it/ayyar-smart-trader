@@ -1134,9 +1134,9 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
 
 
 test("walk-forward transaction costs include estimated exit cost on open positions",async()=>{
-  const candles=Array.from({length:240},(_,i)=>{
-    const close=2500+i*.35+Math.sin(i/4)*3+Math.sin(i/11)*1.5;
-    const previous=i?2500+(i-1)*.35+Math.sin((i-1)/4)*3+Math.sin((i-1)/11)*1.5:close-.2;
+  const candles=Array.from({length:300},(_,i)=>{
+    const close=2500+i*.05+Math.sin(i/5)*15+Math.sin(i/13)*5;
+    const previous=i?2500+(i-1)*.05+Math.sin((i-1)/5)*15+Math.sin((i-1)/13)*5:close-.2;
     return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
       open:previous,high:Math.max(previous,close)+.8,low:Math.min(previous,close)-.8,close};
   });
@@ -1146,7 +1146,9 @@ test("walk-forward transaction costs include estimated exit cost on open positio
   }))).json();
   const free=await call({fee_bps:0,slippage_bps:0,spread_bps:0});
   const costly=await call({fee_bps:20,slippage_bps:10,spread_bps:20});
-  assert.ok(costly.compounded_out_of_sample_return_pct<free.compounded_out_of_sample_return_pct);
+  assert.ok(free.total_out_of_sample_trades>0);
+  assert.ok(costly.compounded_out_of_sample_return_pct<free.compounded_out_of_sample_return_pct,
+    JSON.stringify({free:free.compounded_out_of_sample_return_pct,costly:costly.compounded_out_of_sample_return_pct,trades:free.total_out_of_sample_trades}));
   assert.equal(costly.cost_model.spread_bps_per_side,10);
 });
 
