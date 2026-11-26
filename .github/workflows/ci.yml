@@ -141,6 +141,7 @@ jobs:
               "market_status": market["status"],
               "live_quotes": market["live_quotes"],
               "total_quotes": market["total_quotes"],
+              "no_key_provider_probes": probe_results,
               "xau_15m_candles": {
                   "status": candles.get("status"),
                   "provider": candles.get("provider"),
