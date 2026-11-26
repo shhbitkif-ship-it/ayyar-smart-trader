@@ -184,3 +184,31 @@ def test_buy_and_hold_benchmark_reflects_transaction_costs():
     free = run_ema_backtest(candles, fee_bps=0, slippage_bps=0)
     costly = run_ema_backtest(candles, fee_bps=20, slippage_bps=10)
     assert costly["benchmark"]["final_equity"] < free["benchmark"]["final_equity"]
+
+
+def test_cost_sensitivity_reports_low_base_and_stressed_scenarios():
+    from app.backtest import run_cost_sensitivity
+    result = run_cost_sensitivity(sample_candles())
+    scenarios = result["scenarios"]
+    assert [item["name"] for item in scenarios] == ["low_cost", "base_cost", "stressed_cost"]
+    assert result["cost_order_is_monotonic"] is True
+    assert scenarios[0]["final_equity"] >= scenarios[1]["final_equity"] >= scenarios[2]["final_equity"]
+    assert all("max_drawdown_pct" in item and "profit_factor" in item for item in scenarios)
+
+
+def test_cost_sensitivity_rejects_duplicate_or_missing_scenario_names():
+    from app.backtest import run_cost_sensitivity
+    with pytest.raises(ValueError, match="unique"):
+        run_cost_sensitivity(sample_candles(), scenarios=[
+            {"name": "same", "fee_bps": 1, "slippage_bps": 1, "spread_bps": 1},
+            {"name": "same", "fee_bps": 2, "slippage_bps": 2, "spread_bps": 2},
+        ])
+
+
+def test_cost_sensitivity_preserves_strategy_and_candle_input():
+    from app.backtest import run_cost_sensitivity
+    candles = sample_candles()
+    before = [(c.timestamp, c.open, c.high, c.low, c.close) for c in candles]
+    run_cost_sensitivity(candles)
+    after = [(c.timestamp, c.open, c.high, c.low, c.close) for c in candles]
+    assert after == before
