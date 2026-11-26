@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Sequence, Literal
 import math
 from pydantic import BaseModel, Field, model_validator
 from .schemas import Candle
@@ -9,6 +9,7 @@ from .indicators import ema
 
 class BacktestRequest(BaseModel):
     candles: list[Candle] = Field(min_length=60, max_length=5000)
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"] = "15m"
     starting_capital: float = Field(default=10000.0, gt=0)
     fee_bps: float = Field(default=10.0, ge=0, le=500)
     slippage_bps: float = Field(default=5.0, ge=0, le=500)
@@ -32,9 +33,9 @@ def run_ema_backtest(
 ) -> dict:
     """Long-only EMA20/EMA50 close-confirmed strategy, filled at next candle open.
 
-    This is a research simulation, not a live signal. Costs are charged on both
-    entry and exit. Input order is preserved and must already be strictly
-    increasing; silently sorting would conceal a data-quality defect.
+    Research simulation only. Input order and timezone-aware timestamps are
+    strictly validated; endpoint callers must additionally pass a CLEAN
+    timeframe continuity audit before invoking this calculation.
     """
     for name, value in (("starting_capital", starting_capital), ("fee_bps", fee_bps), ("slippage_bps", slippage_bps), ("spread_bps", spread_bps)):
         if not math.isfinite(value):
@@ -74,7 +75,6 @@ def run_ema_backtest(
                 crossed_up = not prev_up and now_up
                 crossed_down = prev_up and not now_up
                 fill = float(ordered[fill_index].open)
-
                 if crossed_down and quantity > 0:
                     exit_price = fill * (1.0 - cost_rate)
                     proceeds = quantity * exit_price
@@ -103,8 +103,7 @@ def run_ema_backtest(
     if quantity > 0:
         liquidation_price = float(ordered[-1].close) * (1.0 - cost_rate)
         final_equity = quantity * liquidation_price
-        if equity_curve:
-            equity_curve[-1]["equity"] = round(final_equity, 2)
+        equity_curve[-1]["equity"] = round(final_equity, 2)
         unrealized = final_equity - quantity * entry_price
     else:
         final_equity = cash
@@ -116,7 +115,6 @@ def run_ema_backtest(
         peak = max(peak, point["equity"])
         if peak > 0:
             max_drawdown = max(max_drawdown, (peak - point["equity"]) / peak)
-
     gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
     gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else (None if gross_profit == 0 else "infinity")
