@@ -84,26 +84,18 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
    containerColor=bg,
    bottomBar={
     NavigationBar(containerColor=panel,contentColor=gold) {
-     NavigationBarItem(selected=selectedTab==0,onClick={selectedTab=0},
-      icon={Text("◈",fontSize=18.sp)},label={Text("بازار")},alwaysShowLabel=true)
-     NavigationBarItem(selected=selectedTab==1,onClick={selectedTab=1},
-      icon={Text("▣",fontSize=18.sp)},label={Text("حساب آزمایشی")},alwaysShowLabel=true)
-     NavigationBarItem(selected=selectedTab==2,onClick={selectedTab=2},
-      icon={Text("⌁",fontSize=18.sp)},label={Text("تحلیل")},alwaysShowLabel=true)
-     NavigationBarItem(selected=selectedTab==3,onClick={selectedTab=3},
-      icon={Text("◉",fontSize=18.sp)},label={Text("مدیریت ریسک")},alwaysShowLabel=true)
+     NavigationBarItem(selected=selectedTab==0,onClick={selectedTab=0},icon={Text("◈",fontSize=18.sp)},label={Text("بازار")},alwaysShowLabel=true)
+     NavigationBarItem(selected=selectedTab==1,onClick={selectedTab=1},icon={Text("▣",fontSize=18.sp)},label={Text("حساب آزمایشی")},alwaysShowLabel=true)
+     NavigationBarItem(selected=selectedTab==2,onClick={selectedTab=2},icon={Text("⌁",fontSize=18.sp)},label={Text("تحلیل")},alwaysShowLabel=true)
+     NavigationBarItem(selected=selectedTab==3,onClick={selectedTab=3},icon={Text("◉",fontSize=18.sp)},label={Text("مدیریت ریسک")},alwaysShowLabel=true)
     }
    }
   ) { innerPadding ->
-   LazyColumn(
-    Modifier.fillMaxSize().padding(innerPadding).padding(horizontal=16.dp,vertical=10.dp),
-    verticalArrangement=Arrangement.spacedBy(12.dp)
-   ) {
+   LazyColumn(Modifier.fillMaxSize().padding(innerPadding).padding(horizontal=16.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
     item {
      Text("عیار هوشمند",color=gold,fontSize=25.sp,fontWeight=FontWeight.Bold)
      Text("Ayyar Smart Trader • نسخه 0.9.7",color=muted,fontSize=11.sp)
-     Text(when(selectedTab){0->"بازار و قیمت‌ها";1->"حساب و معاملات آزمایشی";2->"تحلیل و ارزیابی استراتژی";else->"مدیریت سرمایه و کنترل ریسک"},
-      color=Color.White,fontSize=14.sp,fontWeight=FontWeight.SemiBold)
+     Text(when(selectedTab){0->"بازار و قیمت‌ها";1->"حساب و معاملات آزمایشی";2->"تحلیل و ارزیابی استراتژی";else->"مدیریت سرمایه و کنترل ریسک"},color=Color.White,fontSize=14.sp,fontWeight=FontWeight.SemiBold)
     }
     if(selectedTab==0) {
          item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -327,7 +319,6 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             Text("منبع کندل: XAUS (XAU/USD). فقط اونس جهانی؛ برای طلای ۱۸ عیار و سکه ایران هنوز فید OHLC مستقل و معتبر متصل نشده است. امتیاز همگرایی احتمال موفقیت نیست. اجرای سفارش واقعی غیرفعال است.",color=muted,fontSize=11.sp)
          } } }
          item { Text("منبع و زمان به‌روزرسانی کنار هر قیمت درج شده است. داده‌های شاخصی جایگزین قیمت اجرایی کارگزاری نیستند؛ تا زمان اتصال و آزمون داده کندلی درون‌روزی، سیگنال نوسان‌گیری و اجرای معامله غیرفعال می‌ماند.",color=muted,fontSize=11.sp) }
-       } } }
     }
     if(selectedTab==3) {
          item { Text("مدیریت سرمایه و کنترل ریسک",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
@@ -336,6 +327,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
    }
   }
  }
+}
 }
 
 @Composable private fun HistoryChart(points:List<HistoryPoint>){
