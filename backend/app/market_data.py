@@ -7,7 +7,7 @@ stale flags, source count and spread metadata.
 from __future__ import annotations
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import httpx
 
 SOURCE_URL = "https://nerkhara.com/api/v1/latest.json"
@@ -138,15 +138,29 @@ def _refresh_snapshot_status(snapshot: dict, now: datetime | None = None) -> dic
         age = (now - stamp.astimezone(timezone.utc)).total_seconds() if isinstance(stamp, datetime) else None
         price = quote.get("price")
         price_valid = isinstance(price, (int, float)) and not isinstance(price, bool) and math.isfinite(price) and price > 0
+        quote_after_snapshot = (
+            isinstance(generated, datetime)
+            and isinstance(stamp, datetime)
+            and stamp.astimezone(timezone.utc) > generated.astimezone(timezone.utc).replace(microsecond=0)
+                + timedelta(seconds=30)
+        )
         if not price_valid or meta.get("unit_valid") is not True:
             quote["status"] = "UNAVAILABLE"
-        elif not generated_valid or age is None or not -30 <= age <= MAX_AGE_SECONDS or meta.get("stale") is True:
+        elif (
+            not generated_valid
+            or age is None
+            or not -30 <= age <= MAX_AGE_SECONDS
+            or meta.get("stale") is True
+            or quote_after_snapshot
+        ):
             quote["status"] = "STALE"
         else:
             quote["status"] = "LIVE"
         quote["age_seconds"] = round(age, 1) if age is not None else None
         if not generated_valid and price_valid and meta.get("unit_valid") is True:
             meta["reason"] = "Provider snapshot timestamp is missing, malformed, future-dated, or stale"
+        elif quote_after_snapshot:
+            meta["reason"] = "Quote timestamp is materially newer than the provider snapshot"
         quote["meta"] = meta
         refreshed.append(quote)
     result["quotes"] = refreshed
