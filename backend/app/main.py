@@ -4,7 +4,7 @@ from .schemas import EvaluateRequest, SignalResponse
 from .market_data import market_snapshot
 from .config import DEFAULT_RISK_PER_TRADE, MAX_DAILY_LOSS, MAX_DRAWDOWN
 from .risk import PositionSizeRequest, calculate_position_size
-from .backtest import BacktestRequest, backtest
+from .backtest import BacktestRequest, WalkForwardRequest, backtest, run_walk_forward_backtest
 from .historical_quality import CandleQualityRequest, inspect_candle_series
 
 app = FastAPI(
@@ -84,3 +84,35 @@ def ema_crossover_backtest(payload: BacktestRequest):
         "interpolation_applied": False,
     }
     return result
+
+@app.post("/v1/backtest/walk-forward")
+def walk_forward_backtest(payload: WalkForwardRequest):
+    quality = inspect_candle_series(payload.candles, payload.timeframe)
+    if quality["status"] != "CLEAN":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Walk-forward backtest blocked: historical candle series is not continuous and valid for the selected timeframe.",
+                "data_quality": quality,
+                "interpolation_applied": False,
+            },
+        )
+    result = run_walk_forward_backtest(
+        payload.candles,
+        initial_train_size=payload.initial_train_size,
+        test_size=payload.test_size,
+        starting_capital=payload.starting_capital,
+        fee_bps=payload.fee_bps,
+        slippage_bps=payload.slippage_bps,
+        spread_bps=payload.spread_bps,
+    )
+    result["data_quality"] = {
+        "status": quality["status"],
+        "timeframe": quality["timeframe"],
+        "candle_count": quality["candle_count"],
+        "gap_count": quality["gap_count"],
+        "missing_intervals": quality["missing_intervals"],
+        "interpolation_applied": False,
+    }
+    return result
+
