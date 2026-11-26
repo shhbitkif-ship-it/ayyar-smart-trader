@@ -153,7 +153,10 @@ function runBacktest(payload) {
 function runWalkForward(payload) {
   if(!payload||!Array.isArray(payload.candles)||payload.candles.length<180||payload.candles.length>5000)
     throw new Error("Walk-forward evaluation requires 180 to 5000 OHLC candles");
-  const candles=[...payload.candles].sort((a,b)=>Date.parse(a?.timestamp)-Date.parse(b?.timestamp));
+  const candles=[...payload.candles];
+  const timestamps=candles.map(c=>Date.parse(c?.timestamp));
+  if(timestamps.some((t,i)=>!Number.isFinite(t)||(i>0&&t<=timestamps[i-1])))
+    throw new Error("Walk-forward candle timestamps must be valid, unique, and strictly increasing in input order");
   const continuity=inspectCandleContinuity(candles,payload.timeframe_minutes);
   if(continuity.status!=="CLEAN")
     throw new Error("Walk-forward candle history is "+continuity.status.toLowerCase()+"; missing or irregular intervals are not bridged");
@@ -195,7 +198,20 @@ function runWalkForward(payload) {
       out_of_sample_trades:test.closed_trades,out_of_sample_win_rate_pct:test.win_rate_pct,
       out_of_sample_profit_factor:test.profit_factor});
   }
+  const foldReturns=folds.map(f=>f.out_of_sample_return_pct);
+  const positiveFolds=foldReturns.filter(v=>v>0).length;
+  const negativeFolds=foldReturns.filter(v=>v<0).length;
+  const sortedReturns=[...foldReturns].sort((a,b)=>a-b);
+  const medianReturn=sortedReturns.length%2?sortedReturns[(sortedReturns.length-1)/2]:(sortedReturns[sortedReturns.length/2-1]+sortedReturns[sortedReturns.length/2])/2;
+  const minFoldTrades=Math.min(...folds.map(f=>f.out_of_sample_trades));
+  const sampleSufficient=totalTrades>=20&&minFoldTrades>=5;
+  const stabilityStatus=!sampleSufficient?"INSUFFICIENT_SAMPLE":positiveFolds===folds.length?"CONSISTENT_POSITIVE":negativeFolds===folds.length?"CONSISTENT_NEGATIVE":"MIXED";
   return {method:"expanding-window walk-forward; each fold selects among EMA 9/21, 12/26, 20/50 using past data only",
+    stability:{status:stabilityStatus,sample_sufficient:sampleSufficient,positive_folds:positiveFolds,negative_folds:negativeFolds,
+      positive_fold_ratio_pct:round2(positiveFolds/folds.length*100),median_fold_return_pct:round4(medianReturn),
+      fold_return_range_pct:round4(Math.max(...foldReturns)-Math.min(...foldReturns)),min_fold_trades:minFoldTrades,
+      minimum_total_trades_required:20,minimum_trades_per_fold_required:5,
+      note:"Consistency is descriptive, not statistical proof or a profitability guarantee."},
     timeframe_minutes:continuity.timeframe_minutes,timeframe_inferred:continuity.timeframe_inferred,
     data_quality:{status:continuity.status,gap_count:continuity.gap_count,
       misaligned_interval_count:continuity.misaligned_interval_count},
