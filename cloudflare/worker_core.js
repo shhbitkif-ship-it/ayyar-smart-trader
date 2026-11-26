@@ -362,12 +362,12 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
 }
 
 async function fetchGoldCandlesFromBiquote(symbol, interval) {
-  const providerSymbol=CANDLE_SYMBOLS.get(symbol);
+  const providerSymbol=symbol==="xau"?"XAUUSD":null;
   const intervalSeconds=CANDLE_INTERVALS.get(interval);
   const providerInterval=new Map([["15m","15m"],["30m","30m"],["60m","1h"],["1d","1d"]]).get(interval);
   if(!providerSymbol||!intervalSeconds||!providerInterval)
     throw new Error("Unsupported BIQUOTE symbol or interval");
-  const endpoint="https://biquote.io/api/"+encodeURIComponent(providerSymbol.toUpperCase())+
+  const endpoint="https://biquote.io/api/"+encodeURIComponent(providerSymbol)+
     "/ohlc?interval="+encodeURIComponent(providerInterval)+"&limit=250";
   const response=await fetch(endpoint,{
     headers:{accept:"application/json","user-agent":"AyyarSmartTrader/1.0"},
