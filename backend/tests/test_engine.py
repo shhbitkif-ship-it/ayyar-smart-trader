@@ -108,3 +108,26 @@ def test_daily_history_allows_weekend_gap():
     req = EvaluateRequest(symbol="XAUUSD", timeframe="1d", candles=data)
     result = evaluate(req, now)
     assert result.status != "STALE" or "gap" not in result.reason.lower()
+
+
+def test_out_of_order_market_candles_are_rejected_without_sorting():
+    now = datetime.now(timezone.utc)
+    data = candles(220, 1, now - timedelta(minutes=220))
+    data[100], data[101] = data[101], data[100]
+    req = EvaluateRequest(symbol="XAUUSD", candles=data)
+    result = evaluate(req, now)
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "out of order" in result.reason.lower()
+
+
+def test_out_of_order_confirmation_candles_are_rejected():
+    now = datetime.now(timezone.utc)
+    market = candles(220, 1, now - timedelta(minutes=220))
+    confirmation = candles(60, 1, now - timedelta(minutes=60))
+    confirmation[20], confirmation[21] = confirmation[21], confirmation[20]
+    req = EvaluateRequest(symbol="XAUUSD", candles=market, confirmation_candles=confirmation)
+    result = evaluate(req, now)
+    assert result.action == "NO_TRADE"
+    assert result.status == "STALE"
+    assert "out of order" in result.reason.lower()
