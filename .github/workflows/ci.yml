@@ -129,6 +129,7 @@ jobs:
           assert monitor.get("mode") == "PAPER_ONLY", monitor
 
           probes = {
+              "xaus_intraday_48h": "https://xaus.com/api/v1/intraday?symbol=xau&hours=48",
               "biquote_xauusd_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=200",
               "biquote_xauusd_1h": "https://biquote.io/api/XAUUSD/ohlc?interval=1h&limit=200",
               "biquote_xauusd_1d": "https://biquote.io/api/XAUUSD/ohlc?interval=1d&limit=200"
@@ -142,7 +143,16 @@ jobs:
               try:
                   with urllib.request.urlopen(req, timeout=15) as response:
                       raw = response.read(100000).decode("utf-8", errors="replace")
-                      if name.startswith("biquote"):
+                      if name.startswith("xaus_intraday"):
+                          data = json.loads(raw)
+                          points = data.get("points") or []
+                          probe_results[name] = {
+                              "http": response.status, "data_state": data.get("data_state"),
+                              "coverage_seconds": data.get("coverage_seconds"), "rows": len(points),
+                              "first_point": points[0] if points else None,
+                              "last_point": points[-1] if points else None
+                          }
+                      elif name.startswith("biquote"):
                           data = json.loads(raw)
                           bars = data.get("bars") or []
                           closed = [bar for bar in bars if bar.get("isOpen") is False]
