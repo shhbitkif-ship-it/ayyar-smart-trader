@@ -394,11 +394,11 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
               oosComparison!!.isFailure -> Text("آزمون خارج از نمونه اجرا نشد؛ حداقل ۲۴۰ کندل پیوسته و معتبر لازم است.",color=Color(0xFFFFB86B),fontSize=12.sp)
               else -> {
                 val o=oosComparison!!.getOrThrow()
-                Text("بازه آزمون: \${o.testStart} تا \${o.testEnd} • \${o.candleCount} کندل",color=muted,fontSize=10.sp)
-                Text("EMA: بازده \${String.format(Locale.US,"%+.2f",o.emaReturn)}٪ • افت \${String.format(Locale.US,"%.2f",o.emaDrawdown)}٪ • \${o.emaTrades} معامله • \${o.emaSample}",color=Color.White,fontSize=11.sp)
-                Text("رژیم‌های EMA: \${o.emaRegimes}",color=muted,fontSize=10.sp)
-                Text("ATR: بازده \${String.format(Locale.US,"%+.2f",o.atrReturn)}٪ • افت \${String.format(Locale.US,"%.2f",o.atrDrawdown)}٪ • \${o.atrTrades} معامله • \${o.atrSample}",color=Color.White,fontSize=11.sp)
-                Text("رژیم‌های ATR: \${o.atrRegimes}",color=muted,fontSize=10.sp)
+                Text("بازه آزمون: ${o.testStart} تا ${o.testEnd} • ${o.candleCount} کندل",color=muted,fontSize=10.sp)
+                Text("EMA: بازده ${String.format(Locale.US,"%+.2f",o.emaReturn)}٪ • افت ${String.format(Locale.US,"%.2f",o.emaDrawdown)}٪ • ${o.emaTrades} معامله • ${o.emaSample}",color=Color.White,fontSize=11.sp)
+                Text("رژیم‌های EMA: ${o.emaRegimes}",color=muted,fontSize=10.sp)
+                Text("ATR: بازده ${String.format(Locale.US,"%+.2f",o.atrReturn)}٪ • افت ${String.format(Locale.US,"%.2f",o.atrDrawdown)}٪ • ${o.atrTrades} معامله • ${o.atrSample}",color=Color.White,fontSize=11.sp)
+                Text("رژیم‌های ATR: ${o.atrRegimes}",color=muted,fontSize=10.sp)
                 Text(o.warning,color=muted,fontSize=10.sp)
               }
             }
@@ -689,7 +689,7 @@ private fun fetchLiveOosStrategyComparison(interval:String,fastPeriod:Int,slowPe
       val buckets=model.optJSONObject("regime_diagnostics")?.optJSONArray("buckets")?:return "داده‌ای نیست"
       return (0 until buckets.length()).map { index ->
         val bucket=buckets.getJSONObject(index)
-        "\${bucket.optString("regime")}:\${bucket.optInt("trade_count")} معامله/\${bucket.optInt("bars")} کندل"
+        "${bucket.optString("regime")}:${bucket.optInt("trade_count")} معامله/${bucket.optInt("bars")} کندل"
       }.joinToString("، ").ifBlank{"داده‌ای نیست"}
     }
     val ema=models.getJSONObject("ema_crossover")
