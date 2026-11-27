@@ -263,8 +263,9 @@ def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
     monkeypatch.setattr(market_data, "_cache_at", 0.0)
 
     first = asyncio.run(market_data.market_snapshot())
-    assert first["quotes"][0]["status"] == "LIVE"
-    assert first["quotes"][0]["price"] is not None
+    first_xau = next(q for q in first["quotes"] if q["symbol"] == "XAUUSD")
+    assert first_xau["status"] == "LIVE"
+    assert first_xau["price"] is not None
 
     # Force refresh instead of returning the one-minute in-process cache.
     monkeypatch.setattr(market_data, "_cache_at", 0.0)
