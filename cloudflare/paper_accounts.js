@@ -274,6 +274,10 @@ export class PaperAccount extends DurableObject {
       }
       ledgerChange+=amount;
       ledgerBalance+=amount;
+      if(!Number.isFinite(ledgerChange)||!Number.isFinite(ledgerBalance)) {
+        discrepancies.push({code:"LEDGER_ACCUMULATION_OUT_OF_RANGE",ledger_id:row.id});
+        continue;
+      }
       if(!closeEnough(balanceAfter,ledgerBalance))
         discrepancies.push({code:"LEDGER_BALANCE_AFTER_MISMATCH",ledger_id:row.id,
           expected_balance_after:ledgerBalance,recorded_balance_after:balanceAfter});
@@ -291,6 +295,8 @@ export class PaperAccount extends DurableObject {
       if(trade.status==="OPEN") {
         openTrades++;
         openFees+=fees;
+        if(!Number.isFinite(openFees))
+          discrepancies.push({code:"OPEN_FEE_ACCUMULATION_OUT_OF_RANGE",trade_id:trade.trade_id});
         if(trade.closed_at!==null||trade.exit_price!==null||trade.realized_pnl!==null)
           discrepancies.push({code:"OPEN_TRADE_HAS_CLOSING_FIELDS",trade_id:trade.trade_id});
         const openEvent=ledgerByEvent.get("TRADE_OPENED:"+trade.trade_id);
@@ -309,10 +315,14 @@ export class PaperAccount extends DurableObject {
         }
         const gross=(exit-entry)*quantity*(trade.side==="BUY"?1:-1);
         const expectedRealized=gross-fees;
+        if(!Number.isFinite(gross)||!Number.isFinite(expectedRealized))
+          discrepancies.push({code:"CLOSED_TRADE_CALCULATION_OUT_OF_RANGE",trade_id:trade.trade_id});
         if(!closeEnough(realized,expectedRealized))
           discrepancies.push({code:"REALIZED_PNL_MISMATCH",trade_id:trade.trade_id,
             expected_realized_pnl:expectedRealized,recorded_realized_pnl:realized});
         realizedPnl+=realized;
+        if(!Number.isFinite(realizedPnl))
+          discrepancies.push({code:"REALIZED_PNL_ACCUMULATION_OUT_OF_RANGE",trade_id:trade.trade_id});
         const closeEvent=ledgerByEvent.get("TRADE_CLOSED:"+trade.trade_id);
         const openEvent=ledgerByEvent.get("TRADE_OPENED:"+trade.trade_id);
         const closeMetadata=(()=>{try{return JSON.parse(closeEvent?.metadata_json||"{}");}catch{return {};}})();
