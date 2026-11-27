@@ -604,3 +604,31 @@ test("same signal cannot open a second paper trade with a different idempotency 
   assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
   assert.equal(integrity.execution_enabled,false);
 });
+
+
+test("paper trades reject missing, non-directional, or side-mismatched signal metadata", async () => {
+  const accountId="sqlite-invalid-signal-metadata";
+  const tokenHash="token-hash-invalid-signal-metadata";
+  const stub=namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId,tokenHash,"USD",100000,"2026-11-27T09:00:00.000Z");
+  const base={symbol:"XAUUSD",side:"BUY",quantity:1,entry_price:100,
+    stop_loss:90,take_profit:120,fee_bps:5};
+  const invalid=[
+    {...base,trade_id:"missing-type",signal_id:"fingerprint-missing-type"},
+    {...base,trade_id:"missing-id",signal_type:"BUY"},
+    {...base,trade_id:"no-trade",signal_id:"fingerprint-no-trade",signal_type:"NO_TRADE"},
+    {...base,trade_id:"wrong-side",signal_id:"fingerprint-wrong-side",signal_type:"SELL"}
+  ];
+  for(let i=0;i<invalid.length;i++){
+    await assert.rejects(
+      stub.createTrade(tokenHash,{...invalid[i],idempotency_key:"invalid-signal-"+i},
+        "2026-11-27T09:01:0"+i+".000Z"),
+      /INVALID_SIGNAL_TRADE_METADATA/
+    );
+  }
+  assert.equal((await stub.listTrades(tokenHash)).length,0);
+  assert.equal((await stub.getSummary(tokenHash)).ledger_events,1);
+  const integrity=await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled,false);
+});
