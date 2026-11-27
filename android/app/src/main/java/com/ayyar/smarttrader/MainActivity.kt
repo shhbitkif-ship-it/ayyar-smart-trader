@@ -43,6 +43,7 @@ data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:St
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
 data class SignalUi(val signal:String,val signalId:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String,val regime:String,val regimeReason:String,val qualityStatus:String,val qualityReasons:String,val qualityProgress:String)
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val longestUnderwater:Int,val underwaterSharePct:Double,val ulcerIndexPct:Double,val maxDrawdownRecovered:Boolean,val recoveryCandles:Int?,val recoveryAt:String,val longestLossStreak:Int,val currentLossStreak:Int,val worstLossRunPnl:Double,val averageLoss:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
+data class AtrRiskBacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val longestLossStreak:Int,val riskFraction:Double,val stopMultiple:Double,val rewardRisk:Double,val lastCandle:String,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
@@ -70,6 +71,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var backtestFast by remember { mutableIntStateOf(20) }
  var backtestSlow by remember { mutableIntStateOf(50) }
  var backtestSpread by remember { mutableStateOf("0") }
+ var atrBacktestRefresh by remember { mutableIntStateOf(0) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
  var walkForwardRefresh by remember { mutableIntStateOf(0) }
@@ -81,6 +83,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val signal by produceState<Result<SignalUi>?>(null, refresh) { value = runCatching { withContext(Dispatchers.IO) { fetchLatestSignal() } } }
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
+ val atrRiskBacktest by produceState<Result<AtrRiskBacktestUi>?>(null,atrBacktestRefresh,backtestInterval,backtestSpread) { if(atrBacktestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveAtrRiskBacktest(backtestInterval,backtestSpread.toDoubleOrNull()?:Double.NaN) } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh,backtestSpread) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward(backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
@@ -324,6 +327,28 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             Button(onClick={backtestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(backtestRefresh==0) "اجرای بک‌تست با داده زنده" else "اجرای دوباره بک‌تست")}
          } } }
 
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("مدل مستقل ATR با ریسک ثابت",color=gold,fontWeight=FontWeight.SemiBold,fontSize=15.sp)
+            Text("ورود با تقاطع EMA؛ حد ضرر ۲ برابر ATR(14)، هدف ۱.۵ برابر فاصله حد ضرر و حجم بر اساس حداکثر ریسک ۱٪. معاملات بدون اهرم و با سقف موجودی نقدی شبیه‌سازی می‌شوند.",color=muted,fontSize=11.sp)
+            when {
+              atrBacktestRefresh==0 -> Text("برای اجرای مدل ATR روی داده واقعی همین تایم‌فریم، دکمه را بزن.",color=muted,fontSize=12.sp)
+              atrRiskBacktest==null -> Text("در حال دریافت داده و اجرای مدل ATR…",color=muted)
+              atrRiskBacktest!!.isFailure -> Text("مدل ATR اجرا نشد؛ داده واقعی کافی یا پیوسته در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              else -> {
+                val a=atrRiskBacktest!!.getOrThrow()
+                Text("بازده خالص: ${String.format(Locale.US,"%.2f",a.netReturnPct)}٪",color=if(a.netReturnPct>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=21.sp,fontWeight=FontWeight.Bold)
+                IndicatorRow("سرمایه نهایی",a.finalEquity)
+                IndicatorRow("حداکثر افت سرمایه",a.maxDrawdownPct)
+                IndicatorRow("تعداد معاملات",a.closedTrades.toDouble(),0)
+                IndicatorRow("درصد معاملات موفق",a.winRatePct)
+                Text("Profit Factor: ${a.profitFactor} • طولانی‌ترین زنجیره زیان: ${a.longestLossStreak}",color=muted,fontSize=10.sp)
+                Text("ریسک هر معامله: ${String.format(Locale.US,"%.2f",a.riskFraction*100)}٪ • حد ضرر: ${a.stopMultiple} ATR • هدف: ${a.rewardRisk}R",color=muted,fontSize=10.sp)
+                Text("${a.candleCount} کندل • XAUS • ${a.interval} • آخرین کندل: ${formatLocalTimestamp(a.lastCandle)}",color=muted,fontSize=10.sp)
+                Text(a.warning,color=muted,fontSize=10.sp)
+              }
+            }
+            Button(onClick={atrBacktestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(atrBacktestRefresh==0) "اجرای مدل ATR با داده واقعی" else "اجرای دوباره مدل ATR")}
+         } } }
          }
          if(selectedAnalysisTab==4) {
          item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
@@ -567,6 +592,26 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
      root.optInt("unavailable_count"),root.optString("market_last_candle_at",""),
      root.optString("warning","ارزیابی توصیفی است و تضمین سود نیست."))
  } finally {connection.disconnect()}
+}
+
+private fun fetchLiveAtrRiskBacktest(interval:String,spreadBps:Double):AtrRiskBacktestUi{
+  require(spreadBps.isFinite()&&spreadBps in 0.0..500.0){"اسپرد باید بین ۰ تا ۵۰۰ واحد پایه باشد."}
+  val url=URL(BuildConfig.API_BASE_URL+"/v1/backtest/atr-risk/live?symbol=xau&interval=$interval&risk_fraction=0.01&atr_stop_multiple=2&reward_risk_multiple=1.5&spread_bps=$spreadBps")
+  val connection=url.openConnection() as HttpURLConnection
+  connection.requestMethod="GET";connection.connectTimeout=12000;connection.readTimeout=30000
+  try {
+    val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+    val root=JSONObject(stream.bufferedReader().use{it.readText()})
+    if(connection.responseCode !in 200..299) throw IllegalStateException(root.optString("error","ATR backtest unavailable"))
+    val streak=root.optJSONObject("loss_streak_diagnostics")?:JSONObject()
+    return AtrRiskBacktestUi(root.optString("market_interval",interval),root.optInt("candle_count"),
+      root.optDouble("starting_capital"),root.optDouble("final_equity"),root.optDouble("net_return_pct"),
+      root.optDouble("max_drawdown_pct"),root.optInt("closed_trades"),root.optDouble("win_rate_pct"),
+      root.opt("profit_factor")?.toString()?: "—",streak.optInt("longest_consecutive_losses"),
+      root.optDouble("risk_fraction",0.01),root.optDouble("atr_stop_multiple",2.0),
+      root.optDouble("reward_risk_ratio",1.5),root.optString("market_last_candle_at",""),
+      root.optString("warning","ارزیابی پژوهشی است و تضمین‌کننده عملکرد آینده نیست."))
+  } finally {connection.disconnect()}
 }
 
 private fun fetchLiveBacktest(interval:String,fastPeriod:Int,slowPeriod:Int,spreadBps:Double):BacktestUi{
