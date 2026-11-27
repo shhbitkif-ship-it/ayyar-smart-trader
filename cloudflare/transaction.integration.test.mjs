@@ -620,11 +620,11 @@ test("paper trades reject missing, non-directional, or side-mismatched signal me
     {...base,trade_id:"wrong-side",signal_id:"fingerprint-wrong-side",signal_type:"SELL"}
   ];
   for(let i=0;i<invalid.length;i++){
-    assert.throws(
-      () => stub.createTrade(tokenHash,{...invalid[i],idempotency_key:"invalid-signal-"+i},
-        "2026-11-27T09:01:0"+i+".000Z"),
-      /INVALID_SIGNAL_TRADE_METADATA/
-    );
+    const result=await stub.runCreateTradeWithFault(tokenHash,
+      {...invalid[i],idempotency_key:"invalid-signal-"+i},
+      "2026-11-27T09:01:0"+i+".000Z");
+    assert.equal(result.ok,false);
+    assert.match(result.error,/INVALID_SIGNAL_TRADE_METADATA/);
   }
   assert.equal((await stub.listTrades(tokenHash)).length,0);
   assert.equal((await stub.getSummary(tokenHash)).ledger_events,1);
