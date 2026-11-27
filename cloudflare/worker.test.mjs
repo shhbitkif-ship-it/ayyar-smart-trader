@@ -1009,6 +1009,20 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.ok(body.horizons.every(x=>x.pending===0&&x.unavailable===0));
     assert.equal(body.outcomes[0].outcomes[1].entry_price,candles[11].open);
     assert.equal(body.outcomes[0].outcomes[1].entry_basis,"next_completed_candle_open");
+    assert.equal(body.cost_model.fee_bps_per_side,10);
+    assert.equal(body.cost_model.slippage_bps_per_side,5);
+    assert.equal(body.cost_model.spread_bps_full,0);
+    assert.ok(body.outcomes[0].outcomes[1].gross_return_pct>=body.outcomes[0].outcomes[1].return_pct);
+    const expensiveResponse=await worker.fetch(new Request(
+      "https://unit.test/v1/signals/performance?fee_bps=100&slippage_bps=50&spread_bps=100"),{SIGNAL_HISTORY:kv});
+    const expensiveBody=await expensiveResponse.json();
+    const baseOne=body.horizons.find(x=>x.horizon_candles===1);
+    const expensiveOne=expensiveBody.horizons.find(x=>x.horizon_candles===1);
+    assert.ok(expensiveOne.average_net_return_pct<baseOne.average_net_return_pct);
+    assert.equal(expensiveBody.horizons[0].average_gross_return_pct,baseOne.average_gross_return_pct);
+    const invalidCostResponse=await worker.fetch(new Request(
+      "https://unit.test/v1/signals/performance?fee_bps=501"),{SIGNAL_HISTORY:kv});
+    assert.equal(invalidCostResponse.status,400);
     assert.equal(body.execution_enabled,false);
     assert.equal(body.sample_quality.minimum_context_samples,30);
     assert.equal(body.sample_quality.maximum_scored_samples,1);
