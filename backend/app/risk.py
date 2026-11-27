@@ -118,16 +118,42 @@ def build_atr_trade_plan(req: AtrTradePlanRequest) -> dict:
     ):
         return {"valid": False, "execution_enabled": False,
                 "reason": "Calculated price levels are not valid positive prices."}
+
+    # Validate the levels after display rounding as well: tiny ATR values can
+    # otherwise round a stop/target to zero or collapse it onto the entry.
+    rounded_stop = round(stop_loss, 8)
+    rounded_target = round(take_profit, 8)
+    if req.side == "LONG":
+        geometry_valid = 0 < rounded_stop < req.entry < rounded_target
+    else:
+        geometry_valid = 0 < rounded_target < req.entry < rounded_stop
+    if not geometry_valid:
+        return {
+            "valid": False,
+            "execution_enabled": False,
+            "reason": "Rounded ATR levels collapse or violate the required trade geometry.",
+        }
+
+    actual_risk = abs(req.entry - rounded_stop)
+    actual_reward = abs(rounded_target - req.entry)
+    actual_reward_risk = actual_reward / actual_risk
+    if not math.isfinite(actual_reward_risk) or actual_reward_risk < req.reward_risk:
+        return {
+            "valid": False,
+            "execution_enabled": False,
+            "reason": "Rounded ATR levels do not preserve the requested minimum reward/risk.",
+        }
+
     return {
         "valid": True,
         "side": req.side,
         "entry": req.entry,
-        "stop_loss": round(stop_loss, 8),
-        "take_profit": round(take_profit, 8),
+        "stop_loss": rounded_stop,
+        "take_profit": rounded_target,
         "atr_value": req.atr_value,
-        "stop_distance": round(stop_distance, 8),
-        "reward_distance": round(reward_distance, 8),
-        "risk_reward": req.reward_risk,
+        "stop_distance": round(actual_risk, 8),
+        "reward_distance": round(actual_reward, 8),
+        "risk_reward": round(actual_reward_risk, 4),
         "basis": "Indicative ATR multiple; broker tick size, spread, liquidity and structure are not applied.",
         "execution_enabled": False,
     }
