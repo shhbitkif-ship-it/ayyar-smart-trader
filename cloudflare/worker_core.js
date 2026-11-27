@@ -356,6 +356,57 @@ function runAtrRiskBacktest(payload) {
     warning:"Research only. ATR stop/risk sizing is a separate long-only model; same-candle stop/target collisions assume stop first. No leverage or broker execution. Actual fills, taxes, liquidity and market impact may differ; results do not predict future performance."};
 }
 
+
+function runStrategyComparison(payload) {
+  if(!payload||!Array.isArray(payload.candles)) throw new Error("candles are required for a same-sample strategy comparison");
+  const common={
+    candles:payload.candles,
+    timeframe_minutes:payload.timeframe_minutes,
+    starting_capital:payload.starting_capital??10000,
+    fee_bps:payload.fee_bps??10,
+    slippage_bps:payload.slippage_bps??5,
+    spread_bps:payload.spread_bps??0
+  };
+  const fast=payload.fast_period??20,slow=payload.slow_period??50;
+  const emaResult=runBacktest({...common,fast_period:fast,slow_period:slow});
+  const atrResult=runAtrRiskBacktest({...common,fast_period:fast,slow_period:slow,
+    atr_period:payload.atr_period??14,atr_stop_multiple:payload.atr_stop_multiple??2,
+    reward_risk_multiple:payload.reward_risk_multiple??1.5,risk_fraction:payload.risk_fraction??0.01});
+  const metrics=result=>({
+    starting_capital:result.starting_capital,final_equity:result.final_equity,
+    net_return_pct:result.net_return_pct,max_drawdown_pct:result.max_drawdown_pct,
+    closed_trades:result.closed_trades,win_rate_pct:result.win_rate_pct,
+    profit_factor:result.profit_factor
+  });
+  const emaMetrics=metrics(emaResult),atrMetrics=metrics(atrResult);
+  return {
+    status:"COMPLETED",same_sample:true,candle_count:payload.candles.length,
+    first_candle_at:payload.candles[0]?.timestamp??null,
+    last_candle_at:payload.candles[payload.candles.length-1]?.timestamp??null,
+    timeframe_minutes:payload.timeframe_minutes??null,
+    assumptions:{starting_capital:common.starting_capital,fee_bps_per_side:common.fee_bps,
+      slippage_bps_per_side:common.slippage_bps,spread_bps_full:common.spread_bps,
+      ema_fast_period:fast,ema_slow_period:slow,atr_period:atrResult.atr_period,
+      atr_stop_multiple:atrResult.atr_stop_multiple,reward_risk_ratio:atrResult.reward_risk_ratio,
+      atr_risk_fraction:atrResult.risk_fraction},
+    models:{
+      ema_crossover:{strategy:emaResult.strategy,metrics:emaMetrics,
+        sizing:"Existing EMA baseline sizing; no stop-loss overlay."},
+      atr_fixed_risk:{strategy:atrResult.strategy,metrics:atrMetrics,
+        sizing:atrResult.risk_model.position_sizing,
+        loss_streak_diagnostics:atrResult.loss_streak_diagnostics}
+    },
+    difference_atr_minus_ema:{
+      net_return_pct:round4(atrMetrics.net_return_pct-emaMetrics.net_return_pct),
+      max_drawdown_pct:round4(atrMetrics.max_drawdown_pct-emaMetrics.max_drawdown_pct),
+      final_equity:round2(atrMetrics.final_equity-emaMetrics.final_equity),
+      closed_trades:atrMetrics.closed_trades-emaMetrics.closed_trades
+    },
+    interpretation_note:"Same candles, timeframe, starting capital and transaction-cost assumptions. The two sizing/exit models differ, so compare net return together with drawdown and sample size; no single metric establishes superiority. Results are historical simulations, not forecasts.",
+    execution_enabled:false
+  };
+}
+
 function precomputeWalkForwardRegimes(candles) {
   const closes=candles.map(c=>Number(c.close));
   const fast=ema(closes,20),slow=ema(closes,50);
@@ -2166,6 +2217,32 @@ export default {
       return json({symbol,strategies:strategies.map(([fast,slow])=>({fast_period:fast,slow_period:slow})),
         intervals:markets,starting_capital:10000,cost_model:{fee_bps_per_side:10,slippage_bps_per_side:5},
         warning:"Research comparison only. Different intervals have different sample lengths; metrics are not directly equivalent and do not predict future results. Long-only simulation; no broker execution."});
+    }
+    if(url.pathname==="/v1/backtest/strategy-comparison"&&request.method==="POST") {
+      try { return json(runStrategyComparison(await request.json())); }
+      catch(e) { return json({status:"UNAVAILABLE",error:String(e?.message||"Strategy comparison unavailable"),execution_enabled:false},400); }
+    }
+    if(url.pathname==="/v1/backtest/strategy-comparison/live"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const interval=url.searchParams.get("interval")||"60m";
+      const readNumber=(key,fallback)=>url.searchParams.has(key)?Number(url.searchParams.get(key)):fallback;
+      try {
+        const market=await fetchGoldCandles(symbol,interval);
+        const result=runStrategyComparison({candles:market.candles,
+          timeframe_minutes:market.interval_seconds/60,starting_capital:readNumber("starting_capital",10000),
+          fee_bps:readNumber("fee_bps",10),slippage_bps:readNumber("slippage_bps",5),
+          spread_bps:readNumber("spread_bps",0),fast_period:readNumber("fast_period",20),
+          slow_period:readNumber("slow_period",50),atr_period:readNumber("atr_period",14),
+          atr_stop_multiple:readNumber("atr_stop_multiple",2),
+          reward_risk_multiple:readNumber("reward_risk_multiple",1.5),
+          risk_fraction:readNumber("risk_fraction",0.01)});
+        return json({...result,market_symbol:symbol,market_interval:market.interval,
+          market_data_status:market.status,market_provider:market.provider,
+          market_last_candle_at:market.last_candle_at,data_note:market.note});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",market_symbol:symbol,market_interval:interval,
+          error:String(e?.message||"Live strategy comparison unavailable"),execution_enabled:false},502);
+      }
     }
     if(url.pathname==="/v1/backtest/atr-risk"&&request.method==="POST") {
       try { return json(runAtrRiskBacktest(await request.json())); }
