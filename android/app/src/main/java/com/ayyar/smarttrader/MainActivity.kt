@@ -365,16 +365,16 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
               else -> {
                 val q=strategyComparison!!.getOrThrow()
                 Text("EMA پایه",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
-                Text("بازده خالص: \${String.format(Locale.US,"%+.2f",q.emaReturn)}٪ • افت سرمایه: \${String.format(Locale.US,"%.2f",q.emaDrawdown)}٪",color=if(q.emaReturn>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
-                Text("سرمایه نهایی: \${String.format(Locale.US,"%.2f",q.emaEquity)} • معاملات: \${q.emaTrades} • موفقیت: \${String.format(Locale.US,"%.1f",q.emaWinRate)}٪ • PF: \${q.emaProfitFactor}",color=muted,fontSize=10.sp)
+                Text("بازده خالص: ${String.format(Locale.US,"%+.2f",q.emaReturn)}٪ • افت سرمایه: ${String.format(Locale.US,"%.2f",q.emaDrawdown)}٪",color=if(q.emaReturn>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+                Text("سرمایه نهایی: ${String.format(Locale.US,"%.2f",q.emaEquity)} • معاملات: ${q.emaTrades} • موفقیت: ${String.format(Locale.US,"%.1f",q.emaWinRate)}٪ • PF: ${q.emaProfitFactor}",color=muted,fontSize=10.sp)
                 Divider(color=Color(0xFF303746))
                 Text("ATR با ریسک ثابت ۱٪",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
-                Text("بازده خالص: \${String.format(Locale.US,"%+.2f",q.atrReturn)}٪ • افت سرمایه: \${String.format(Locale.US,"%.2f",q.atrDrawdown)}٪",color=if(q.atrReturn>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
-                Text("سرمایه نهایی: \${String.format(Locale.US,"%.2f",q.atrEquity)} • معاملات: \${q.atrTrades} • موفقیت: \${String.format(Locale.US,"%.1f",q.atrWinRate)}٪ • PF: \${q.atrProfitFactor}",color=muted,fontSize=10.sp)
+                Text("بازده خالص: ${String.format(Locale.US,"%+.2f",q.atrReturn)}٪ • افت سرمایه: ${String.format(Locale.US,"%.2f",q.atrDrawdown)}٪",color=if(q.atrReturn>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+                Text("سرمایه نهایی: ${String.format(Locale.US,"%.2f",q.atrEquity)} • معاملات: ${q.atrTrades} • موفقیت: ${String.format(Locale.US,"%.1f",q.atrWinRate)}٪ • PF: ${q.atrProfitFactor}",color=muted,fontSize=10.sp)
                 Divider(color=Color(0xFF303746))
                 Text("اختلاف ATR منهای EMA",color=gold,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
-                Text("اختلاف بازده: \${String.format(Locale.US,"%+.2f",q.returnDelta)} واحد درصد • اختلاف افت سرمایه: \${String.format(Locale.US,"%+.2f",q.drawdownDelta)} واحد درصد",color=Color.White,fontSize=11.sp)
-                Text("\${q.candleCount} کندل مشترک • XAUS • \${q.interval} • آخرین کندل: \${formatLocalTimestamp(q.lastCandle)}",color=muted,fontSize=10.sp)
+                Text("اختلاف بازده: ${String.format(Locale.US,"%+.2f",q.returnDelta)} واحد درصد • اختلاف افت سرمایه: ${String.format(Locale.US,"%+.2f",q.drawdownDelta)} واحد درصد",color=Color.White,fontSize=11.sp)
+                Text("${q.candleCount} کندل مشترک • XAUS • ${q.interval} • آخرین کندل: ${formatLocalTimestamp(q.lastCandle)}",color=muted,fontSize=10.sp)
                 Text(q.warning,color=muted,fontSize=10.sp)
               }
             }
