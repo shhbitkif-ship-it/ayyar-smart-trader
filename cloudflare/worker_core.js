@@ -1528,7 +1528,8 @@ export default {
         ) && analyses.every(analysis=>![ "STALE","GAPPED","MISALIGNED","UNAVAILABLE" ].includes(analysis.data_status));
         const candidateAligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade&&dataQualityClean;
         const stability=candidateAligned
-          ? await confirmSignalStability(env,symbol,intraday,markets)
+          ? await confirmSignalStability(env,symbol,intraday,markets,
+            typeof env?.__signalClock==="function"?env.__signalClock():Date.now())
           : {confirmed:false,status:"NO_DIRECTIONAL_CANDIDATE",confirmations:0,required_confirmations:2};
         const stabilityPending=candidateAligned&&!stability.confirmed;
         const aligned=candidateAligned&&stability.confirmed;
