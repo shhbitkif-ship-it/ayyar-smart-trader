@@ -44,6 +44,10 @@ data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val ma
 data class SignalUi(val signal:String,val signalId:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String,val regime:String,val regimeReason:String,val qualityStatus:String,val qualityReasons:String,val qualityProgress:String)
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val longestUnderwater:Int,val underwaterSharePct:Double,val ulcerIndexPct:Double,val maxDrawdownRecovered:Boolean,val recoveryCandles:Int?,val recoveryAt:String,val longestLossStreak:Int,val currentLossStreak:Int,val worstLossRunPnl:Double,val averageLoss:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 data class AtrRiskBacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val longestLossStreak:Int,val riskFraction:Double,val stopMultiple:Double,val rewardRisk:Double,val lastCandle:String,val warning:String)
+data class StrategyComparisonUi(val interval:String,val candleCount:Int,val lastCandle:String,val startingCapital:Double,
+ val emaEquity:Double,val emaReturn:Double,val emaDrawdown:Double,val emaTrades:Int,val emaWinRate:Double,val emaProfitFactor:String,
+ val atrEquity:Double,val atrReturn:Double,val atrDrawdown:Double,val atrTrades:Int,val atrWinRate:Double,val atrProfitFactor:String,
+ val returnDelta:Double,val drawdownDelta:Double,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
@@ -72,6 +76,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var backtestSlow by remember { mutableIntStateOf(50) }
  var backtestSpread by remember { mutableStateOf("0") }
  var atrBacktestRefresh by remember { mutableIntStateOf(0) }
+ var strategyComparisonRefresh by remember { mutableIntStateOf(0) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
  var walkForwardRefresh by remember { mutableIntStateOf(0) }
@@ -84,6 +89,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val history by produceState<Result<HistoryUi>?>(null, selectedSymbol, historyRefresh) { value=runCatching { withContext(Dispatchers.IO) { fetchHistory(selectedSymbol) } } }
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
  val atrRiskBacktest by produceState<Result<AtrRiskBacktestUi>?>(null,atrBacktestRefresh,backtestInterval,backtestSpread) { if(atrBacktestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveAtrRiskBacktest(backtestInterval,backtestSpread.toDoubleOrNull()?:Double.NaN) } } }
+ val strategyComparison by produceState<Result<StrategyComparisonUi>?>(null,strategyComparisonRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(strategyComparisonRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveStrategyComparison(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull()?:Double.NaN) } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh,backtestSpread) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward(backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
@@ -349,6 +355,31 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
             }
             Button(onClick={atrBacktestRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text(if(atrBacktestRefresh==0) "اجرای مدل ATR با داده واقعی" else "اجرای دوباره مدل ATR")}
          } } }
+         item { Card(colors=CardDefaults.cardColors(containerColor=panel),shape=RoundedCornerShape(18.dp)){ Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            Text("مقایسه مستقیم EMA و ATR روی نمونه یکسان",color=gold,fontWeight=FontWeight.SemiBold,fontSize=15.sp)
+            Text("هر دو مدل روی دقیقاً همان کندل‌ها، تایم‌فریم، سرمایه ۱۰٬۰۰۰ و هزینه معاملات اجرا می‌شوند. EMA از مدل پایه و ATR از ریسک ثابت ۱٪ استفاده می‌کند.",color=muted,fontSize=11.sp)
+            when {
+              strategyComparisonRefresh==0 -> Text("برای مقایسه منصفانه دو مدل، دکمه اجرا را بزن.",color=muted,fontSize=12.sp)
+              strategyComparison==null -> Text("در حال اجرای دو مدل روی یک مجموعه داده…",color=muted)
+              strategyComparison!!.isFailure -> Text("مقایسه انجام نشد؛ داده واقعی کافی یا پیوسته در دسترس نیست.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              else -> {
+                val q=strategyComparison!!.getOrThrow()
+                Text("EMA پایه",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+                Text("بازده خالص: \${String.format(Locale.US,"%+.2f",q.emaReturn)}٪ • افت سرمایه: \${String.format(Locale.US,"%.2f",q.emaDrawdown)}٪",color=if(q.emaReturn>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+                Text("سرمایه نهایی: \${String.format(Locale.US,"%.2f",q.emaEquity)} • معاملات: \${q.emaTrades} • موفقیت: \${String.format(Locale.US,"%.1f",q.emaWinRate)}٪ • PF: \${q.emaProfitFactor}",color=muted,fontSize=10.sp)
+                Divider(color=Color(0xFF303746))
+                Text("ATR با ریسک ثابت ۱٪",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+                Text("بازده خالص: \${String.format(Locale.US,"%+.2f",q.atrReturn)}٪ • افت سرمایه: \${String.format(Locale.US,"%.2f",q.atrDrawdown)}٪",color=if(q.atrReturn>=0) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=12.sp)
+                Text("سرمایه نهایی: \${String.format(Locale.US,"%.2f",q.atrEquity)} • معاملات: \${q.atrTrades} • موفقیت: \${String.format(Locale.US,"%.1f",q.atrWinRate)}٪ • PF: \${q.atrProfitFactor}",color=muted,fontSize=10.sp)
+                Divider(color=Color(0xFF303746))
+                Text("اختلاف ATR منهای EMA",color=gold,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                Text("اختلاف بازده: \${String.format(Locale.US,"%+.2f",q.returnDelta)} واحد درصد • اختلاف افت سرمایه: \${String.format(Locale.US,"%+.2f",q.drawdownDelta)} واحد درصد",color=Color.White,fontSize=11.sp)
+                Text("\${q.candleCount} کندل مشترک • XAUS • \${q.interval} • آخرین کندل: \${formatLocalTimestamp(q.lastCandle)}",color=muted,fontSize=10.sp)
+                Text(q.warning,color=muted,fontSize=10.sp)
+              }
+            }
+            Button(onClick={strategyComparisonRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("اجرای مقایسه منصفانه EMA و ATR")}
+         } } }
          }
          if(selectedAnalysisTab==4) {
          item { Text("مقایسه استراتژی‌ها و تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.Bold,fontSize=18.sp) }
@@ -592,6 +623,31 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
      root.optInt("unavailable_count"),root.optString("market_last_candle_at",""),
      root.optString("warning","ارزیابی توصیفی است و تضمین سود نیست."))
  } finally {connection.disconnect()}
+}
+
+private fun fetchLiveStrategyComparison(interval:String,fastPeriod:Int,slowPeriod:Int,spreadBps:Double):StrategyComparisonUi{
+  require(spreadBps.isFinite()&&spreadBps in 0.0..500.0){"اسپرد باید بین ۰ تا ۵۰۰ واحد پایه باشد."}
+  require(fastPeriod>=2&&slowPeriod>fastPeriod){"دوره‌های EMA معتبر نیستند."}
+  val url=URL(BuildConfig.API_BASE_URL+"/v1/backtest/strategy-comparison/live?symbol=xau&interval=$interval&starting_capital=10000&fee_bps=10&slippage_bps=5&spread_bps=$spreadBps&fast_period=$fastPeriod&slow_period=$slowPeriod&atr_period=14&atr_stop_multiple=2&reward_risk_multiple=1.5&risk_fraction=0.01")
+  val connection=url.openConnection() as HttpURLConnection
+  connection.requestMethod="GET";connection.connectTimeout=12000;connection.readTimeout=35000
+  try {
+    val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+    val root=JSONObject(stream.bufferedReader().use{it.readText()})
+    if(connection.responseCode !in 200..299) throw IllegalStateException(root.optString("error","Strategy comparison unavailable"))
+    val models=root.getJSONObject("models")
+    val ema=models.getJSONObject("ema_crossover").getJSONObject("metrics")
+    val atr=models.getJSONObject("atr_fixed_risk").getJSONObject("metrics")
+    val delta=root.getJSONObject("difference_atr_minus_ema")
+    return StrategyComparisonUi(root.optString("market_interval",interval),root.optInt("candle_count"),
+      root.optString("market_last_candle_at",""),root.optDouble("starting_capital",10000.0),
+      ema.optDouble("final_equity"),ema.optDouble("net_return_pct"),ema.optDouble("max_drawdown_pct"),
+      ema.optInt("closed_trades"),ema.optDouble("win_rate_pct"),ema.opt("profit_factor")?.toString()?:"—",
+      atr.optDouble("final_equity"),atr.optDouble("net_return_pct"),atr.optDouble("max_drawdown_pct"),
+      atr.optInt("closed_trades"),atr.optDouble("win_rate_pct"),atr.opt("profit_factor")?.toString()?:"—",
+      delta.optDouble("net_return_pct"),delta.optDouble("max_drawdown_pct"),
+      root.optString("interpretation_note","مقایسه پژوهشی است و پیش‌بینی عملکرد آینده نیست."))
+  } finally {connection.disconnect()}
 }
 
 private fun fetchLiveAtrRiskBacktest(interval:String,spreadBps:Double):AtrRiskBacktestUi{
