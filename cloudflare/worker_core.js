@@ -981,7 +981,7 @@ function isValidArchivedSignal(record) {
   return true;
 }
 
-function calculateSignalPerformance(records,candles) {
+function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_bps:5,spread_bps:0}) {
   const horizons=[1,4,24];
   const times=new Map(candles.map((c,i)=>[Date.parse(c.timestamp),i]));
   const stats=Object.fromEntries(horizons.map(h=>[h,{horizon_candles:h,scored:0,pending:0,unavailable:0,
@@ -1029,7 +1029,17 @@ function calculateSignalPerformance(records,candles) {
         continue;
       }
       const direction=record.signal==="BUY"?1:-1;
-      const returnPct=direction*(exit/entry-1)*100;
+      const grossReturnPct=direction*(exit/entry-1)*100;
+      const costRate=(costs.fee_bps+costs.slippage_bps+costs.spread_bps/2)/10000;
+      const adjustedEntry=entry*(1+direction*costRate);
+      const adjustedExit=exit*(1-direction*costRate);
+      if(!Number.isFinite(adjustedEntry)||adjustedEntry<=0||
+         !Number.isFinite(adjustedExit)||adjustedExit<=0) {
+        unavailable++; stats[horizon].unavailable++;
+        row.outcomes[horizon]={status:"INVALID_COST_ADJUSTED_PRICE"};
+        continue;
+      }
+      const returnPct=direction*(adjustedExit/adjustedEntry-1)*100;
       const favorablePct=Math.max(0,direction===1?
         (Math.max(...window.map(c=>c.high))/entry-1)*100:
         (1-Math.min(...window.map(c=>c.low))/entry)*100);
@@ -1040,10 +1050,13 @@ function calculateSignalPerformance(records,candles) {
       metric.scored++;
       if(returnPct>0) metric.wins++; else if(returnPct<0) metric.losses++; else metric.flats++;
       metric._returns=(metric._returns||0)+returnPct;
+      metric._grossReturns=(metric._grossReturns||0)+grossReturnPct;
       metric._favorable=(metric._favorable||0)+favorablePct;
       metric._adverse=(metric._adverse||0)+adversePct;
       row.outcomes[horizon]={status:"SCORED",entry_price:entry,exit_price:exit,
-        return_pct:round4(returnPct),max_favorable_pct:round4(favorablePct),
+        gross_return_pct:round4(grossReturnPct),return_pct:round4(returnPct),
+        cost_adjusted_entry_price:round6(adjustedEntry),cost_adjusted_exit_price:round6(adjustedExit),
+        max_favorable_pct:round4(favorablePct),
         max_adverse_pct:round4(adversePct),entry_basis:"next_completed_candle_open"};
     }
     outcomes.push(row);
@@ -1053,13 +1066,19 @@ function calculateSignalPerformance(records,candles) {
     if(m.scored) {
       m.win_rate_pct=round2(m.wins/m.scored*100);
       m.average_return_pct=round4(m._returns/m.scored);
+      m.average_net_return_pct=m.average_return_pct;
+      m.average_gross_return_pct=round4(m._grossReturns/m.scored);
       m.average_favorable_pct=round4(m._favorable/m.scored);
       m.average_adverse_pct=round4(m._adverse/m.scored);
     }
-    delete m._returns; delete m._favorable; delete m._adverse;
+    delete m._returns; delete m._grossReturns; delete m._favorable; delete m._adverse;
   }
   const maximumScoredSamples=Math.max(0,...Object.values(stats).map(item=>item.scored));
-  return {method:"completed_60m_candles_next_open_entry",horizons:Object.values(stats),
+  return {method:"completed_60m_candles_next_open_entry_cost_adjusted",
+    cost_model:{fee_bps_per_side:costs.fee_bps,slippage_bps_per_side:costs.slippage_bps,
+      spread_bps_full:costs.spread_bps,spread_bps_per_side:costs.spread_bps/2,
+      applied:"adverse cost on entry and exit; BUY pays higher entry/lower exit, SELL pays lower entry/higher exit"},
+    horizons:Object.values(stats),
     outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
     unavailable_count:unavailable,
     unavailable_diagnostics:{outside_candle_range:outsideCandleRange,
@@ -1069,7 +1088,7 @@ function calculateSignalPerformance(records,candles) {
       status:maximumScoredSamples>=30?"AT_OR_ABOVE_CONTEXT_THRESHOLD":"BELOW_CONTEXT_THRESHOLD",
       note:"30 is a practical display threshold only; it does not establish statistical significance or predict future performance."},
     execution_enabled:false,
-    warning:"Historical descriptive evaluation only. Entry is the next completed candle open; no fees, spread, slippage or broker fills are modeled. Small samples are not evidence of future profitability."};
+    warning:"Historical descriptive evaluation only. Net returns deduct the explicitly displayed fee, slippage and half-spread assumptions on both entry and exit; actual broker fills may differ. Small samples are not evidence of future profitability."};
 }
 
 
@@ -1645,8 +1664,14 @@ export default {
           directional_records:directionalRecords.length,
           non_directional_records:validRecords.length-directionalRecords.length,
           note:"Invalid archive entries and valid NO_TRADE records are excluded from directional outcome scoring."};
+        const costs={fee_bps:Number(url.searchParams.get("fee_bps")??10),
+          slippage_bps:Number(url.searchParams.get("slippage_bps")??5),
+          spread_bps:Number(url.searchParams.get("spread_bps")??0)};
+        if(!Object.values(costs).every(Number.isFinite)||costs.fee_bps<0||costs.fee_bps>500||
+           costs.slippage_bps<0||costs.slippage_bps>500||costs.spread_bps<0||costs.spread_bps>500)
+          return json({status:"INVALID_ARGUMENT",error:"fee_bps, slippage_bps and spread_bps must each be between 0 and 500"},400);
         const market=await fetchGoldCandles("xau","60m");
-        const result=calculateSignalPerformance(records,market.candles);
+        const result=calculateSignalPerformance(records,market.candles,costs);
         const firstCandle=market.candles[0];
         const lastCandle=market.candles[market.candles.length-1];
         const coverageDays=firstCandle&&lastCandle
