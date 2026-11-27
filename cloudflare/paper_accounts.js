@@ -410,6 +410,37 @@ export class PaperAccount extends DurableObject {
         signal_id:existing.signal_id,signal_type:existing.signal_type,
         execution_enabled:false};
     }
+
+    // A signal fingerprint is account-scoped and can create at most one paper
+    // trade, even if a client retries with a new request/idempotency key.
+    if(typeof trade.signal_id==="string"&&trade.signal_id.trim()) {
+      const signalTrade=this.ctx.storage.sql.exec(
+        `SELECT trade_id,status,symbol,side,quantity,entry_price,stop_loss,take_profit,
+         fees,fee_bps,opened_at,strategy_id,signal_id,signal_type
+         FROM paper_trades WHERE signal_id=? LIMIT 1`,
+        trade.signal_id
+      ).toArray()[0];
+      if(signalTrade) {
+        const expectedFee=calculatePaperEntryFee(trade.quantity,trade.entry_price,trade.fee_bps);
+        const sameSignal=signalTrade.symbol===trade.symbol&&signalTrade.side===trade.side&&
+          Number(signalTrade.quantity)===Number(trade.quantity)&&
+          Number(signalTrade.entry_price)===Number(trade.entry_price)&&
+          Number(signalTrade.stop_loss)===Number(trade.stop_loss)&&
+          Number(signalTrade.take_profit)===Number(trade.take_profit)&&
+          Number(signalTrade.fees)===expectedFee&&Number(signalTrade.fee_bps)===Number(trade.fee_bps)&&
+          (signalTrade.strategy_id??null)===(trade.strategy_id??null)&&
+          (signalTrade.signal_type??null)===(trade.signal_type??null);
+        if(!sameSignal) throw new Error("SIGNAL_ALREADY_PROCESSED_WITH_DIFFERENT_TRADE");
+        return {trade_id:signalTrade.trade_id,status:signalTrade.status,duplicate:true,
+          symbol:signalTrade.symbol,side:signalTrade.side,quantity:signalTrade.quantity,
+          entry_price:signalTrade.entry_price,stop_loss:signalTrade.stop_loss,
+          take_profit:signalTrade.take_profit,opened_at:signalTrade.opened_at,
+          fees:signalTrade.fees,strategy_id:signalTrade.strategy_id,
+          signal_id:signalTrade.signal_id,signal_type:signalTrade.signal_type,
+          execution_enabled:false};
+      }
+    }
+
     const openSameSymbol=this.ctx.storage.sql.exec(
       "SELECT trade_id,side FROM paper_trades WHERE status='OPEN' AND symbol=? LIMIT 1",
       trade.symbol
