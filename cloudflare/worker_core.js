@@ -1413,7 +1413,9 @@ export default {
           confidence_type:analyses[i].confidence_type,
           last_candle_at:markets[i].last_candle_at,
           data_status:analyses[i].data_status||markets[i].status,
-          data_quality:markets[i].data_quality
+          data_quality:markets[i].data_quality,
+          source_quality:markets[i].source_quality,
+          source_consensus:markets[i].source_consensus
         }]));
         const regimes=markets.map(market=>classifyMarketRegime(market.candles));
         for(let i=0;i<intervals.length;i++) byInterval[intervals[i]].regime=regimes[i];
@@ -1422,8 +1424,11 @@ export default {
         const regimeAllowsTrade=regimes[1].tradeable&&regimes[1].trend===(intraday==="BUY"?"BULLISH":"BEARISH");
         const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
-        const dataQualityClean=markets.every(market=>market.data_quality?.status==="CLEAN")&&
-          analyses.every(analysis=>![ "STALE","GAPPED","MISALIGNED","UNAVAILABLE" ].includes(analysis.data_status));
+        const dataQualityClean=markets.every(market=>
+          market.data_quality?.status==="CLEAN" &&
+          market.source_quality==="CONVERGED" &&
+          market.source_consensus?.status==="CONVERGED"
+        ) && analyses.every(analysis=>![ "STALE","GAPPED","MISALIGNED","UNAVAILABLE" ].includes(analysis.data_status));
         const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade&&dataQualityClean;
         const base=analyses[1];
         const blockedReasons=[];
