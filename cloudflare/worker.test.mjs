@@ -453,6 +453,7 @@ test("ATR risk backtest sizes positions to at most one percent and returns conse
   assert.equal(body.strategy,"EMA crossover with ATR stop and fixed fractional risk");
   assert.equal(body.risk_model.method,"fixed_fractional");
   assert.equal(body.risk_model.risk_fraction,0.01);
+  assert.match(body.drawdown_method,/intrabar low/i);
   assert.equal(body.execution_enabled,undefined);
   assert.ok(body.equity_curve.every(point=>Number.isFinite(point.equity)&&point.equity>0));
   for(const trade of body.trades){
