@@ -1008,7 +1008,12 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
     // The following entry candle and all future data are excluded from the regime label.
     const regimeSnapshot=index>=59?classifyMarketRegime(candles.slice(0,index+1)):
       {status:"INSUFFICIENT_DATA",tradeable:false};
+    const confidence=Number(record.confidence);
+    const confidenceBand=!Number.isFinite(confidence)?"UNAVAILABLE":
+      confidence<40?"LOW_0_39":confidence<60?"MODERATE_40_59":
+      confidence<80?"STRONG_60_79":"VERY_STRONG_80_100";
     const row={signal:record.signal,last_candle_at:record.last_candle_at,
+      confidence_score:confidence,confidence_band:confidenceBand,
       market_regime:regimeSnapshot.status||"UNAVAILABLE",regime_tradeable:regimeSnapshot.tradeable===true,
       outcomes:{}};
     for(const horizon of horizons) {
@@ -1122,6 +1127,36 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
     }
   }
   const regimeBreakdown=[...regimeMap.values()].sort((a,b)=>a.regime.localeCompare(b.regime));
+  // Confidence is the minimum multi-timeframe technical confluence score, not a probability.
+  // Cohorts reveal whether stronger aligned setups have historically behaved differently.
+  const confidenceMap=new Map();
+  for(const row of outcomes) {
+    const band=row.confidence_band||"UNAVAILABLE";
+    if(!confidenceMap.has(band)) confidenceMap.set(band,{confidence_band:band,score_type:"minimum_multi_timeframe_technical_confluence_not_probability",
+      horizons:Object.fromEntries(horizons.map(h=>[h,{horizon_candles:h,scored:0,wins:0,losses:0,flats:0,
+        average_net_return_pct:null,win_rate_pct:null,sample_status:"INSUFFICIENT_SAMPLE",_net:0}]))});
+    const cohort=confidenceMap.get(band);
+    for(const horizon of horizons) {
+      const outcome=row.outcomes[horizon];
+      if(outcome?.status!=="SCORED") continue;
+      const metric=cohort.horizons[horizon];
+      metric.scored++; metric._net+=outcome.return_pct;
+      if(outcome.return_pct>0) metric.wins++;
+      else if(outcome.return_pct<0) metric.losses++;
+      else metric.flats++;
+    }
+  }
+  const confidenceBreakdown=[...confidenceMap.values()].sort((a,b)=>
+    ["LOW_0_39","MODERATE_40_59","STRONG_60_79","VERY_STRONG_80_100","UNAVAILABLE"].indexOf(a.confidence_band)-
+    ["LOW_0_39","MODERATE_40_59","STRONG_60_79","VERY_STRONG_80_100","UNAVAILABLE"].indexOf(b.confidence_band));
+  for(const cohort of confidenceBreakdown) for(const metric of Object.values(cohort.horizons)) {
+    if(metric.scored) {
+      metric.average_net_return_pct=round4(metric._net/metric.scored);
+      metric.win_rate_pct=round2(metric.wins/metric.scored*100);
+    }
+    metric.sample_status=metric.scored>=10?"DESCRIPTIVE_SAMPLE":"INSUFFICIENT_SAMPLE";
+    delete metric._net;
+  }
   for(const cohort of regimeBreakdown) for(const metric of Object.values(cohort.horizons)) {
     if(metric.scored) {
       metric.average_net_return_pct=round4(metric._net/metric.scored);
@@ -1147,6 +1182,8 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
     horizons:Object.values(stats),
     period_breakdown:periodBreakdown,
     regime_breakdown:regimeBreakdown,
+    confidence_breakdown:confidenceBreakdown,
+    confidence_breakdown_note:"Bands use the minimum 15m/60m/daily technical confluence score (0-100), not a probability of success. Results are descriptive only; fewer than 10 scored signals per horizon is marked INSUFFICIENT_SAMPLE.",
     regime_breakdown_note:"Each signal is grouped by the market regime calculated only from completed candles available at that signal close. Signals before 60 candles are INSUFFICIENT_DATA. Regime cohorts are descriptive and not portfolio returns.",
     period_breakdown_note:"UTC calendar-month cohorts of scored signals. Each signal horizon is evaluated independently; overlapping signals are not compounded and these cohorts are not portfolio returns. Fewer than 10 scored signals is marked INSUFFICIENT_SAMPLE.",
     outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
