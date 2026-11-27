@@ -372,7 +372,7 @@ test("live OHLC backtest runs from the verified XAUS feed without manual candle 
     const body=await response.json();
     assert.equal(response.status,200,JSON.stringify(body));
     assert.match(requested,/xaus\.com\/api\/v1\/chart/);
-    assert.equal(body.market_provider,"XAUS");
+    assert.equal(body.market_provider,"XAUS+BIQUOTE");
     assert.equal(body.market_data_status,"LIVE",JSON.stringify(body));
     assert.equal(body.market_interval,"60m");
     assert.equal(body.candle_count,120);
@@ -726,7 +726,7 @@ test("latest signal endpoint evaluates real provider OHLC and never enables exec
     const response=await worker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=60m"));
     const body=await response.json();
     assert.equal(response.status,200);
-    assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.market_data_status,"LIVE",JSON.stringify(body));
     assert.equal(body.market_provider,"XAUS");
     assert.equal(body.market_provider_symbol,"xau");
     assert.equal(body.signal,"BUY");
