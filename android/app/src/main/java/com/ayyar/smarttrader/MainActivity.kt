@@ -42,7 +42,7 @@ data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
 data class SignalUi(val signal:String,val signalId:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String,val regime:String,val regimeReason:String,val qualityStatus:String,val qualityReasons:String,val qualityProgress:String)
-data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val longestUnderwater:Int,val underwaterSharePct:Double,val ulcerIndexPct:Double,val maxDrawdownRecovered:Boolean,val recoveryCandles:Int?,val recoveryAt:String,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
+data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val longestUnderwater:Int,val underwaterSharePct:Double,val ulcerIndexPct:Double,val maxDrawdownRecovered:Boolean,val recoveryCandles:Int?,val recoveryAt:String,val longestLossStreak:Int,val currentLossStreak:Int,val worstLossRunPnl:Double,val averageLoss:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
@@ -310,6 +310,10 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
                 Text("مدت طولانی‌ترین دوره زیر سقف قبلی: ${b.longestUnderwater} کندل • ${String.format(Locale.US,"%.1f",b.underwaterSharePct)}٪ زمان آزمون زیر سقف",color=muted,fontSize=10.sp)
                 Text("Ulcer Index: ${String.format(Locale.US,"%.3f",b.ulcerIndexPct)}٪",color=muted,fontSize=10.sp)
                 Text(if(b.maxDrawdownRecovered) "بازیابی افت بیشینه: ${b.recoveryCandles?:0} کندل • ${formatLocalTimestamp(b.recoveryAt)}" else "افت بیشینه تا پایان آزمون بازیابی نشده است.",color=if(b.maxDrawdownRecovered) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=10.sp)
+                Divider(color=Color(0xFF343B48))
+                Text("زنجیره معاملات زیان‌ده",color=gold,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                Text("طولانی‌ترین زنجیره: ${b.longestLossStreak} معامله • زنجیره فعلی: ${b.currentLossStreak}",color=muted,fontSize=10.sp)
+                Text("میانگین زیان: ${String.format(Locale.US,"%.2f",b.averageLoss)} • بدترین زنجیره: ${String.format(Locale.US,"%.2f",b.worstLossRunPnl)}",color=muted,fontSize=10.sp)
                 IndicatorRow("تعداد معاملات بسته‌شده",b.closedTrades.toDouble(),0)
                 IndicatorRow("درصد معاملات موفق",b.winRatePct)
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("Profit Factor",color=muted,fontSize=12.sp);Text(b.profitFactor,color=Color.White,fontSize=12.sp)}
@@ -585,11 +589,14 @@ private fun fetchLiveBacktest(interval:String,fastPeriod:Int,slowPeriod:Int,spre
    val dd=root.optJSONObject("drawdown_diagnostics")?:JSONObject()
    val recovered=dd.optBoolean("max_drawdown_recovered",false)
    val recoveryCandles=if(dd.isNull("max_drawdown_recovery_candles")) null else dd.optInt("max_drawdown_recovery_candles")
+   val streak=root.optJSONObject("streak_diagnostics")?:JSONObject()
    return BacktestUi(root.optString("interval","60m"),root.optInt("candle_count",root.optJSONObject("data_quality")?.optInt("candle_count")?:0),
      root.optDouble("starting_capital"),root.optDouble("final_equity"),
      root.optDouble("net_return_pct"),root.optDouble("max_drawdown_pct"),
      dd.optInt("longest_underwater_candles"),dd.optDouble("underwater_candle_share_pct"),dd.optDouble("ulcer_index_pct"),
      recovered,recoveryCandles,dd.optString("max_drawdown_recovery_at",""),
+     streak.optInt("longest_consecutive_losses"),streak.optInt("current_consecutive_losses"),
+     streak.optDouble("worst_consecutive_loss_run_pnl"),streak.optDouble("average_loss"),
      root.optInt("closed_trades"),root.optDouble("win_rate_pct"),"در این نسخه محاسبه نشده",
      root.optString("last_candle_at",""),warning.ifBlank{"آزمون پژوهشی؛ نتیجه تضمین‌کننده عملکرد آینده نیست."})
  } finally { connection.disconnect() }
