@@ -11,7 +11,7 @@ test("paper financial math rejects finite inputs whose fee or settlement overflo
   assert.throws(() => calculatePaperEntryFee(Number.MAX_VALUE, 2, 1000),
     /PAPER_FEE_OUT_OF_RANGE/);
   assert.throws(() => calculatePaperSettlement({
-    side:"BUY",quantity:Number.MAX_VALUE,entryPrice:2,exitPrice:3,entryFee:0,exitFee:0
+    side:"BUY",quantity:Number.MAX_VALUE,entryPrice:1,exitPrice:3,entryFee:0,exitFee:0
   }), /PAPER_SETTLEMENT_OUT_OF_RANGE/);
   assert.throws(() => calculatePaperSettlement({
     side:"SELL",quantity:1,entryPrice:1,exitPrice:2,entryFee:Number.MAX_VALUE,exitFee:Number.MAX_VALUE
