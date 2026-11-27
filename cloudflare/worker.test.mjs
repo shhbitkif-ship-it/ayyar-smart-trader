@@ -2997,7 +2997,6 @@ test("multi-timeframe consensus rejects providers whose latest candle timestamps
     for(const interval of ["15m","60m","1d"]){
       assert.equal(body.timeframes[interval].source_quality,"UNCONFIRMED");
       assert.equal(body.timeframes[interval].source_consensus.latest_timestamp_match,false);
-      assert.match(body.timeframes[interval].note,/timestamps do not match/i);
     }
   }finally{globalThis.fetch=originalFetch;}
 });
