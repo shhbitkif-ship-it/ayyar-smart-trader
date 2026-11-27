@@ -418,10 +418,7 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.ok("max_drawdown_pct" in body);
   assert.ok(body.drawdown_diagnostics);
   assert.ok(body.streak_diagnostics);
-  assert.equal(body.streak_diagnostics.winning_trades+body.streak_diagnostics.losing_trades,body.closed_trades-
-    body.streak_diagnostics.winning_trades*0-body.streak_diagnostics.losing_trades*0-
-    body.streak_diagnostics.winning_trades*0-body.streak_diagnostics.losing_trades*0-
-    (body.closed_trades-body.streak_diagnostics.winning_trades-body.streak_diagnostics.losing_trades));
+  assert.ok(body.streak_diagnostics.winning_trades+body.streak_diagnostics.losing_trades<=body.closed_trades);
   assert.ok(body.streak_diagnostics.longest_consecutive_losses>=0);
   assert.ok(body.streak_diagnostics.current_consecutive_losses<=body.streak_diagnostics.longest_consecutive_losses);
   assert.ok(Number.isFinite(body.streak_diagnostics.worst_consecutive_loss_run_pnl));
