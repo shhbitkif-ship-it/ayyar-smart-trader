@@ -417,6 +417,14 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.equal(body.cost_model.slippage_bps_per_side,5);
   assert.ok("max_drawdown_pct" in body);
   assert.ok(body.drawdown_diagnostics);
+  assert.ok(body.streak_diagnostics);
+  assert.equal(body.streak_diagnostics.winning_trades+body.streak_diagnostics.losing_trades,body.closed_trades-
+    body.streak_diagnostics.winning_trades*0-body.streak_diagnostics.losing_trades*0-
+    body.streak_diagnostics.winning_trades*0-body.streak_diagnostics.losing_trades*0-
+    (body.closed_trades-body.streak_diagnostics.winning_trades-body.streak_diagnostics.losing_trades));
+  assert.ok(body.streak_diagnostics.longest_consecutive_losses>=0);
+  assert.ok(body.streak_diagnostics.current_consecutive_losses<=body.streak_diagnostics.longest_consecutive_losses);
+  assert.ok(Number.isFinite(body.streak_diagnostics.worst_consecutive_loss_run_pnl));
   assert.ok(Number.isFinite(body.drawdown_diagnostics.ulcer_index_pct));
   assert.ok(body.drawdown_diagnostics.longest_underwater_candles>=0);
   assert.ok(body.drawdown_diagnostics.underwater_candle_share_pct>=0&&body.drawdown_diagnostics.underwater_candle_share_pct<=100);
