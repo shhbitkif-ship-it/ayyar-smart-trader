@@ -873,6 +873,27 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
      FilterChip(selected=side=="SELL",onClick={side="SELL"},label={Text("فروش")})
     }
     OutlinedTextField(value=quantity,onValueChange={quantity=it},label={Text("حجم")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    OutlinedButton(
+     enabled=!busy&&summary?.optDouble("balance",0.0)?.let{it>0}==true&&entry.toDoubleOrNull()?.let{it>0&&it.isFinite()}==true&&stop.toDoubleOrNull()?.let{it>0&&it.isFinite()}==true&&
+      (if(side=="BUY") (stop.toDoubleOrNull()?:0.0)<(entry.toDoubleOrNull()?:0.0) else (stop.toDoubleOrNull()?:0.0)>(entry.toDoubleOrNull()?:0.0)),
+     onClick={
+      val available=summary?.optDouble("balance",0.0)?:0.0
+      val entryValue=entry.toDoubleOrNull()?:0.0
+      val stopValue=stop.toDoubleOrNull()?:0.0
+      val perUnitRisk=kotlin.math.abs(entryValue-stopValue)+(entryValue+stopValue)*0.0005
+      val riskBudget=available*0.01
+      val riskSized=if(perUnitRisk>0&&perUnitRisk.isFinite()) riskBudget/perUnitRisk else 0.0
+      val balanceSized=available/(entryValue*1.0005)
+      val raw=minOf(riskSized,balanceSized)
+      val sized=kotlin.math.floor(raw*1_000_000.0)/1_000_000.0
+      if(sized>0&&sized.isFinite()){
+       quantity=String.format(Locale.US,"%.6f",sized).trimEnd('0').trimEnd('.')
+       status="حجم بر اساس سقف ریسک ۱٪ و موجودی آزاد محاسبه شد؛ مقدار نهایی را بررسی کن."
+      }else{
+       status="با موجودی و فاصله حد ضرر فعلی، حجم قابل‌قبول محاسبه نشد."
+      }
+     },modifier=Modifier.fillMaxWidth()
+    ){Text("محاسبه خودکار حجم با ریسک ۱٪")}
     OutlinedTextField(value=entry,onValueChange={entry=it},label={Text("قیمت ورود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=stop,onValueChange={stop=it},label={Text("حد ضرر")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=target,onValueChange={target=it},label={Text("حد سود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
