@@ -137,3 +137,19 @@ def test_atr_plan_rejects_non_finite_or_extreme_inputs():
     result = build_atr_trade_plan(req)
     assert result["valid"] is False
     assert result["execution_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "entry,atr_value",
+    [
+        (1e-9, 1e-10),  # rounded stop would become zero
+        (100, 1e-10),   # rounded levels would collapse onto entry
+    ],
+)
+def test_atr_plan_rejects_levels_that_become_invalid_after_rounding(entry, atr_value):
+    from app.risk import AtrTradePlanRequest, build_atr_trade_plan
+    result = build_atr_trade_plan(AtrTradePlanRequest(
+        side="LONG", entry=entry, atr_value=atr_value,
+    ))
+    assert result["valid"] is False
+    assert result["execution_enabled"] is False
