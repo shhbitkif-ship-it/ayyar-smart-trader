@@ -1078,7 +1078,7 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
   const periodMap=new Map();
   for(const row of outcomes) {
     const period=String(row.last_candle_at||"").slice(0,7);
-    if(!/^\\d{4}-\\d{2}$/.test(period)) continue;
+    if(!/^\d{4}-\d{2}$/.test(period)) continue;
     if(!periodMap.has(period)) periodMap.set(period,{period,horizons:Object.fromEntries(
       horizons.map(h=>[h,{horizon_candles:h,scored:0,wins:0,losses:0,flats:0,
         average_net_return_pct:null,average_gross_return_pct:null,win_rate_pct:null,
