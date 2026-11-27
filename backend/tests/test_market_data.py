@@ -236,6 +236,46 @@ def test_malformed_optional_quote_metadata_is_sanitized():
     assert quote["meta"]["method"] is None
 
 
+
+def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+
+    now = datetime.now(timezone.utc)
+    newer = now - timedelta(seconds=5)
+    older = now - timedelta(seconds=30)
+    calls = {"count": 0}
+
+    async def provider():
+        calls["count"] += 1
+        generated = newer if calls["count"] == 1 else older
+        stamp = generated.isoformat()
+        return {
+            "generated_utc": stamp,
+            "items": [{
+                "id": "xau", "price": 2300 + calls["count"],
+                "unit": "USD", "updated_utc": stamp, "stale": False,
+            }],
+        }
+
+    monkeypatch.setattr(market_data, "_fetch_provider_json", provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+
+    first = asyncio.run(market_data.market_snapshot())
+    assert first["quotes"][0]["status"] == "LIVE"
+    assert first["quotes"][0]["price"] is not None
+
+    # Force refresh instead of returning the one-minute in-process cache.
+    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    second = asyncio.run(market_data.market_snapshot())
+    xau = next(q for q in second["quotes"] if q["symbol"] == "XAUUSD")
+    assert second["status"] == "UNAVAILABLE"
+    assert second["error"] == "ProviderSnapshotRollback"
+    assert xau["status"] == "STALE"
+    assert xau["price"] is None
+    assert "moved backwards" in xau["meta"]["reason"]
+
 def test_valid_optional_quote_metadata_is_preserved():
     stamp = datetime.now(timezone.utc).isoformat()
     item = {
