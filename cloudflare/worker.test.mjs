@@ -752,8 +752,18 @@ test("latest signal endpoint fails closed when the provider is unavailable", asy
 });
 
 
-test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", async () => {
+test("multi-timeframe endpoint requires 15m, 60m, daily trend and temporally stable confirmation", async () => {
   const originalFetch=globalThis.fetch;
+  const originalNow=Date.now;
+  let fakeNow=originalNow();
+  Date.now=()=>fakeNow;
+  const store=new Map();
+  const kv={
+    async put(key,value,options){store.set(key,{value:JSON.parse(value),options});},
+    async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
+    async get(key){return store.get(key)?.value??null;}
+  };
+  const env={SIGNAL_HISTORY:kv};
   const candlesByInterval={};
   for (const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]) {
     const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
@@ -779,10 +789,18 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
       {status:200,headers:{"content-type":"application/json"}});
   };
   try {
-    const response=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const firstResponse=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
+    const firstBody=await firstResponse.json();
+    assert.equal(firstResponse.status,200);
+    assert.equal(firstBody.signal,"NO_TRADE");
+    assert.equal(firstBody.signal_stability.status,"AWAITING_CONFIRMATION");
+    assert.equal(firstBody.archive_status,"WAITING_FOR_STABILITY");
+    fakeNow+=21_000;
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.signal_stability.status,"CONFIRMED");
     assert.equal(body.market_provider,"XAUS+BIQUOTE");
     assert.equal(body.timeframes["15m"].signal,"BUY");
     assert.equal(body.timeframes["60m"].signal,"BUY");
@@ -811,7 +829,7 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
     assert.ok(Math.abs((body.take_profit-body.entry)-expectedAtr*3)<0.00001);
     assert.ok(body.stop_loss>0&&body.stop_loss<body.entry);
     assert.ok(body.take_profit>body.entry);
-  } finally { globalThis.fetch=originalFetch; }
+  } finally { globalThis.fetch=originalFetch; Date.now=originalNow; }
 });
 
 test("multi-timeframe signal reports the actual BIQUOTE fallback provider per timeframe", async () => {
