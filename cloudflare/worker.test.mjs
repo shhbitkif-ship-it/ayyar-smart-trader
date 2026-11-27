@@ -416,6 +416,16 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.equal(body.cost_model.fee_bps_per_side,10);
   assert.equal(body.cost_model.slippage_bps_per_side,5);
   assert.ok("max_drawdown_pct" in body);
+  assert.ok(body.drawdown_diagnostics);
+  assert.ok(Number.isFinite(body.drawdown_diagnostics.ulcer_index_pct));
+  assert.ok(body.drawdown_diagnostics.longest_underwater_candles>=0);
+  assert.ok(body.drawdown_diagnostics.underwater_candle_share_pct>=0&&body.drawdown_diagnostics.underwater_candle_share_pct<=100);
+  assert.equal(typeof body.drawdown_diagnostics.max_drawdown_recovered,"boolean");
+  assert.equal(body.drawdown_diagnostics.max_drawdown_recovered,
+    body.drawdown_diagnostics.max_drawdown_recovery_at!==null);
+  if(body.drawdown_diagnostics.max_drawdown_recovered)
+    assert.ok(body.drawdown_diagnostics.max_drawdown_recovery_candles>=0);
+  else assert.equal(body.drawdown_diagnostics.max_drawdown_recovery_candles,null);
   assert.equal(body.equity_curve.length,candles.length,"equity must be marked to market on every candle");
   assert.ok(body.equity_curve.every(point=>Number.isFinite(point.equity) && point.equity>0));
   assert.ok(body.warning.startsWith("Research only"));
