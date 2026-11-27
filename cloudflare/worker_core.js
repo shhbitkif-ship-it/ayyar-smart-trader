@@ -1216,7 +1216,8 @@ export default {
           if(typeof symbol!=="string"||!/^[A-Z0-9._-]{2,32}$/.test(symbol)||
              !["BUY","SELL"].includes(side)||
              ![quantity,entry_price,stop_loss,take_profit,feeBps].every(v=>typeof v==="number"&&Number.isFinite(v))||
-             quantity<=0||entry_price<=0||stop_loss<=0||take_profit<=0||feeBps<0||feeBps>1000||
+             quantity<=0||Number(quantity.toFixed(6))!==quantity||
+             entry_price<=0||stop_loss<=0||take_profit<=0||feeBps<0||feeBps>1000||
              (side==="BUY"&&(stop_loss>=entry_price||take_profit<=entry_price))||
              (side==="SELL"&&(stop_loss<=entry_price||take_profit>=entry_price))||
              (idem!==undefined&&(typeof idem!=="string"||idem.length<8||idem.length>128))||
