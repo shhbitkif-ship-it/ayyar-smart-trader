@@ -273,10 +273,10 @@ function runAtrRiskBacktest(payload) {
     position=null;
   };
   for(let i=1;i<candles.length;i++){
-    const candle=candles[i],signalIndex=i-1;
-    const signalReady=signalIndex>=1&&signalIndex<slow.length&&Number.isFinite(atrs[signalIndex])&&atrs[signalIndex]>0;
-    const previousUp=signalReady&&fastAligned[signalIndex-1]>slow[signalIndex-1];
-    const currentUp=signalReady&&fastAligned[signalIndex]>slow[signalIndex];
+    const candle=candles[i],signalIndex=i-1,alignedIndex=i-slowPeriod;
+    const signalReady=alignedIndex>=1&&alignedIndex<slow.length&&Number.isFinite(atrs[signalIndex])&&atrs[signalIndex]>0;
+    const previousUp=signalReady&&fastAligned[alignedIndex-1]>slow[alignedIndex-1];
+    const currentUp=signalReady&&fastAligned[alignedIndex]>slow[alignedIndex];
     const bullish=signalReady&&!previousUp&&currentUp;
     const bearish=signalReady&&previousUp&&!currentUp;
     if(position){
