@@ -105,6 +105,8 @@ def test_unique_provider_ids_are_preserved():
 def test_snapshot_status_distinguishes_partial_from_full_availability(monkeypatch):
     import asyncio
     import app.market_data as market_data
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     async def fake_provider():
         now = datetime.now(timezone.utc).isoformat()
