@@ -2858,16 +2858,16 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
    confidence:85,entry:4100,stop_loss:4080,take_profit:4140,archive_key:key,...overrides}};
  };
  const current=makeRecord(now-60_000);
- const store=new Map([[current.key.key,current.key.record]]);
+ const store=new Map([[current.key,current.record]]);
  const kv={get:async key=>store.get(key)||null,
   list:async({prefix,limit})=>({keys:[...store.keys()].filter(k=>k.startsWith(prefix)).sort().slice(0,limit).map(name=>({name}))})};
  const env={SIGNAL_HISTORY:kv};
- const valid=await validateArchivedSignalForTrade(env,current.key.key,"XAUUSD","BUY",now);
+ const valid=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","BUY",now);
  assert.equal(valid.valid,true);
  assert.equal(valid.signal_id,current.key.key);
- const wrongSide=await validateArchivedSignalForTrade(env,current.key.key,"XAUUSD","SELL",now);
+ const wrongSide=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","SELL",now);
  assert.equal(wrongSide.error,"SIGNAL_SIDE_MISMATCH");
- const wrongSymbol=await validateArchivedSignalForTrade(env,current.key.key,"BTCUSD","BUY",now);
+ const wrongSymbol=await validateArchivedSignalForTrade(env,current.key,"BTCUSD","BUY",now);
  assert.equal(wrongSymbol.error,"SIGNAL_SYMBOL_MISMATCH");
  const expired=makeRecord(now-62*60_000);
  store.set(expired.key,expired.record);
@@ -2875,8 +2875,8 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
  assert.equal(expiredResult.error,"SIGNAL_EXPIRED");
  const newer=makeRecord(now-10_000);
  store.set(newer.key,newer.record);
- const superseded=await validateArchivedSignalForTrade(env,current.key.key,"XAUUSD","BUY",now);
+ const superseded=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","BUY",now);
  assert.equal(superseded.error,"SIGNAL_SUPERSEDED");
- const unavailable=await validateArchivedSignalForTrade({},current.key.key,"XAUUSD","BUY",now);
+ const unavailable=await validateArchivedSignalForTrade({},current.key,"XAUUSD","BUY",now);
  assert.equal(unavailable.error,"SIGNAL_HISTORY_UNAVAILABLE");
 });
