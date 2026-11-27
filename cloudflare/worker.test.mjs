@@ -912,8 +912,11 @@ test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps
   }finally{globalThis.fetch=originalFetch;}
 });
 
-test("multi-timeframe signal is archived once per completed 60m candle and history is retrievable", async () => {
+test("multi-timeframe signal is archived once per completed 60m candle after stable confirmation", async () => {
   const originalFetch=globalThis.fetch;
+  const originalNow=Date.now;
+  let fakeNow=originalNow();
+  Date.now=()=>fakeNow;
   const store=new Map();
   const kv={
     async put(key,value,options){store.set(key,{value:JSON.parse(value),options});},
@@ -941,11 +944,17 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
   };
   try{
     const env={SIGNAL_HISTORY:kv};
+    const first=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
+    const firstBody=await first.json();
+    assert.equal(firstBody.signal,"NO_TRADE");
+    assert.equal(firstBody.archive_status,"WAITING_FOR_STABILITY");
+    fakeNow+=21_000;
     const signal=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
     const signalBody=await signal.json();
     assert.equal(signalBody.market_data_status,"LIVE",JSON.stringify(signalBody));
-    assert.equal(store.size,1);
-    const saved=[...store.values()][0];
+    assert.equal(signalBody.signal_stability.status,"CONFIRMED");
+    assert.equal(store.size,2);
+    const saved=[...store.entries()].find(([key])=>key.startsWith("xau:latest:"))[1];
     assert.equal(saved.value.signal,signalBody.signal);
     assert.equal(saved.options.expirationTtl,90*24*60*60);
     const history=await worker.fetch(new Request("https://unit.test/v1/signals/history?limit=20"),env);
@@ -954,7 +963,7 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
     assert.equal(historyBody.count,1);
     assert.equal(historyBody.records[0].archive_source,"validated completed OHLC multi-timeframe evaluation");
     assert.equal(historyBody.execution_enabled,false);
-  }finally{globalThis.fetch=originalFetch;}
+  }finally{globalThis.fetch=originalFetch;Date.now=originalNow;}
 });
 
 test("signal performance uses next candle open, completed horizons and refuses candle gaps", async () => {
