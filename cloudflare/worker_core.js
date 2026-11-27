@@ -162,8 +162,32 @@ function runBacktest(payload) {
     note:"Drawdown is marked to market on every candle after estimated transaction costs. Recovery means equity returns to the prior peak; an unrecovered drawdown is reported as null duration."
   };
   const wins=trades.filter(t=>t.pnl>0).length;
-  const profit=trades.filter(t=>t.pnl>0).reduce((a,t)=>a+t.pnl,0);
-  const loss=Math.abs(trades.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
+  const winningTrades=trades.filter(t=>t.pnl>0),losingTrades=trades.filter(t=>t.pnl<0);
+  const profit=winningTrades.reduce((a,t)=>a+t.pnl,0);
+  const loss=Math.abs(losingTrades.reduce((a,t)=>a+t.pnl,0));
+  let currentLossStreak=0,longestLossStreak=0,currentWinStreak=0,longestWinStreak=0;
+  let currentLossRunPnl=0,worstConsecutiveLossPnl=0;
+  for(const trade of trades){
+    if(trade.pnl<0){
+      currentLossStreak++;longestLossStreak=Math.max(longestLossStreak,currentLossStreak);
+      currentWinStreak=0;currentLossRunPnl+=trade.pnl;
+      worstConsecutiveLossPnl=Math.min(worstConsecutiveLossPnl,currentLossRunPnl);
+    } else if(trade.pnl>0){
+      currentWinStreak++;longestWinStreak=Math.max(longestWinStreak,currentWinStreak);
+      currentLossStreak=0;currentLossRunPnl=0;
+    } else {
+      currentLossStreak=0;currentWinStreak=0;currentLossRunPnl=0;
+    }
+  }
+  const streakDiagnostics={
+    losing_trades:losingTrades.length,winning_trades:winningTrades.length,
+    longest_consecutive_losses:longestLossStreak,current_consecutive_losses:currentLossStreak,
+    longest_consecutive_wins:longestWinStreak,current_consecutive_wins:currentWinStreak,
+    average_loss:losingTrades.length?round2(-loss/losingTrades.length):0,
+    worst_single_trade_pnl:trades.length?round2(Math.min(...trades.map(t=>t.pnl))):0,
+    worst_consecutive_loss_run_pnl:round2(worstConsecutiveLossPnl),
+    note:"Streaks use closed trades in chronological order. Zero-PnL trades reset both streaks. These are historical diagnostics, not a forecast of the next losing streak."
+  };
   return {strategy:`EMA${fastPeriod}/EMA${slowPeriod} long-only crossover`,fast_period:fastPeriod,slow_period:slowPeriod,
     execution:"Signal confirmed at candle close; orders filled at next candle open",
     evaluation_start_index:evaluationStart,evaluation_start_at:candles[evaluationStart].iso,
@@ -177,6 +201,7 @@ function runBacktest(payload) {
     max_drawdown_pct:round4(maxDrawdown*100),drawdown_diagnostics:drawdownDiagnostics,closed_trades:trades.length,
     win_rate_pct:trades.length?round2(wins/trades.length*100):0,
     profit_factor:loss>0?round4(profit/loss):profit>0?"infinity":null,
+    streak_diagnostics:streakDiagnostics,
     open_position:quantity>0,
     unrealized_pnl:round2(quantity>0?finalEquity-quantity*entryPrice:0),
     trades,equity_curve:equityCurve,
