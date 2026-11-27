@@ -1928,6 +1928,16 @@ test("paper API maps aggregate risk guard rejection to HTTP 409",async()=>{
 
 test("strategy attribution requires explicit metadata and returns advisory-only risk guidance",async()=>{
   const env=paperAccountEnv();
+  const candleTime=Date.now()-60_000;
+  const signalId="xau:latest:"+String(9999999999999-candleTime).padStart(13,"0");
+  const archivedSignal={signal:"BUY",symbol:"xau",market_data_status:"LIVE",
+    execution_enabled:false,archive_source:"validated completed OHLC multi-timeframe evaluation",
+    last_candle_at:new Date(candleTime).toISOString(),recorded_at:new Date().toISOString(),
+    confidence:85,entry:2000,stop_loss:1990,take_profit:2020,archive_key:signalId};
+  const signalRecords=new Map([[signalId,archivedSignal]]);
+  env.SIGNAL_HISTORY={get:async key=>signalRecords.get(key)||null,
+    list:async({prefix,limit})=>({keys:[...signalRecords.keys()].filter(key=>key.startsWith(prefix))
+      .sort().slice(0,limit).map(name=>({name}))})};
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
     method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.88"},
     body:JSON.stringify({starting_capital:10000,currency:"USD"})
@@ -1937,12 +1947,12 @@ test("strategy attribution requires explicit metadata and returns advisory-only 
   const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
     method:"POST",headers,body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.01,
       entry_price:2000,stop_loss:1990,take_profit:2020,strategy_id:"EMA20_50",
-      signal_id:"sig-20261125-001",signal_type:"BUY",idempotency_key:"strategy-test-001"})
+      signal_id:signalId,signal_type:"BUY",idempotency_key:"strategy-test-001"})
   }),env);
   assert.equal(opened.status,201);
   const trade=await opened.json();
   assert.equal(trade.strategy_id,"EMA20_50");
-  assert.equal(trade.signal_id,"sig-20261125-001");
+  assert.equal(trade.signal_id,signalId);
   await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+
     "/trades/"+trade.trade_id+"/close",{method:"POST",headers,body:JSON.stringify({exit_price:2010})}),env);
   const response=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+
