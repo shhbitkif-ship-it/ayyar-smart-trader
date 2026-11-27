@@ -551,6 +551,34 @@ test("EMA versus ATR out-of-sample comparison excludes training P&L and reports 
   assert.equal(invalid.status,400);
 });
 
+test("OOS regime label for the first test fill excludes that candle's future OHLC",async()=>{
+  const candles=Array.from({length:300},(_,i)=>{
+    const trend=i<100?-.8:i<190?1.1:-.25;
+    const close=3200+i*trend+Math.sin(i/4)*9;
+    return {timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+5,low:close-5,close};
+  });
+  const call=async rows=>(await worker.fetch(new Request("https://unit.test/v1/backtest/strategy-comparison/oos",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles:rows,timeframe_minutes:1440})
+  }))).json();
+  const baseline=await call(candles);
+  const split=Math.floor(candles.length*.70);
+  const changed=[...candles];
+  const first=changed[split];
+  const extreme=first.close*1.12;
+  changed[split]={...first,close:extreme,high:Math.max(first.open,extreme)+5,low:Math.min(first.open,extreme)-5};
+  const modified=await call(changed);
+  assert.equal(baseline.evaluation,"CHRONOLOGICAL_HOLDOUT");
+  assert.equal(modified.evaluation,"CHRONOLOGICAL_HOLDOUT");
+  for(const key of ["ema_crossover","atr_fixed_risk"]){
+    assert.equal(baseline.models[key].regime_diagnostics.first_bar_regime,
+      modified.models[key].regime_diagnostics.first_bar_regime);
+  }
+  assert.equal(baseline.execution_enabled,false);
+  assert.equal(modified.execution_enabled,false);
+});
+
 test("ATR risk backtest rejects risk above one percent and irregular history", async () => {
   const candles=Array.from({length:100},(_,i)=>{
     const close=3000+Math.sin(i/5)*20+i*0.2;
