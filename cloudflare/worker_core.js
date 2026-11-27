@@ -267,7 +267,7 @@ function runAtrRiskBacktest(payload) {
     trades.push({entry_time:position.entry_time,exit_time:candles[index].iso,
       entry_price:round6(position.entry_price),exit_price:round6(exitPrice),
       stop_price:round6(position.stop),target_price:round6(position.target),
-      quantity:round8(position.quantity),pnl:round2(pnl),
+      quantity:Number(position.quantity.toFixed(8)),pnl:round2(pnl),
       return_pct:round4(pnl/(position.quantity*position.entry_price)*100),
       initial_risk_amount:round2(position.risk_amount),exit_reason:reason});
     position=null;
