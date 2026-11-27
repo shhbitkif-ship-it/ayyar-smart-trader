@@ -373,7 +373,7 @@ test("live OHLC backtest runs from the verified XAUS feed without manual candle 
     assert.equal(response.status,200,JSON.stringify(body));
     assert.match(requested,/xaus\.com\/api\/v1\/chart/);
     assert.equal(body.market_provider,"XAUS");
-    assert.equal(body.market_data_status,"LIVE");
+    assert.equal(body.market_data_status,"LIVE",JSON.stringify(body));
     assert.equal(body.market_interval,"60m");
     assert.equal(body.candle_count,120);
     assert.ok("net_return_pct" in body && "max_drawdown_pct" in body);
@@ -852,7 +852,7 @@ test("multi-timeframe signal reports the actual BIQUOTE fallback provider per ti
     assert.equal(response.status,200,JSON.stringify(body));
     assert.equal(body.market_provider,"BIQUOTE+XAUS");
     assert.equal(body.market_sources.find(x=>x.interval==="15m").provider,"BIQUOTE");
-    assert.match(body.market_sources.find(x=>x.interval==="15m").fallback_reason,/XAUS OHLC provider data state is stale/i);
+    assert.match(body.market_sources.find(x=>x.interval==="15m").fallback_reason||"",/XAUS OHLC provider data state is stale/i,JSON.stringify(body.market_sources));
     assert.equal(body.market_sources.find(x=>x.interval==="60m").provider,"XAUS");
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
@@ -921,7 +921,7 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
     const env={SIGNAL_HISTORY:kv};
     const signal=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
     const signalBody=await signal.json();
-    assert.equal(signalBody.market_data_status,"LIVE");
+    assert.equal(signalBody.market_data_status,"LIVE",JSON.stringify(signalBody));
     assert.equal(store.size,1);
     const saved=[...store.values()][0];
     assert.equal(saved.value.signal,signalBody.signal);
@@ -1146,7 +1146,7 @@ test("Telegram signal alert is sent once for a new confirmed direction and not d
     const request=()=>new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau");
     const first=await worker.fetch(request(),env);
     const firstBody=await first.json();
-    assert.equal(firstBody.signal,"BUY");
+    assert.equal(firstBody.signal,"BUY",JSON.stringify(firstBody));
     assert.equal(firstBody.alert_status,"SENT");
     assert.equal(sent.length,1);
     const second=await worker.fetch(request(),env);
