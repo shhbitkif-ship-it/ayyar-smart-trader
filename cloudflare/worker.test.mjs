@@ -508,6 +508,49 @@ test("EMA and ATR strategies compare on identical candles, capital and costs", a
   assert.match(body.interpretation_note,/same candles/i);
 });
 
+test("EMA versus ATR out-of-sample comparison excludes training P&L and reports regime diagnostics", async () => {
+  const candles=[];
+  for(let i=0;i<300;i++){
+    const trend=i<100?-0.8:i<190?1.1:-0.25;
+    const close=3200+i*trend+Math.sin(i/4)*9;
+    candles.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+5,low:close-5,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/strategy-comparison/oos",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,timeframe_minutes:1440,starting_capital:10000,
+      fee_bps:10,slippage_bps:5,spread_bps:2,fast_period:20,slow_period:50,
+      atr_period:14,atr_stop_multiple:2,reward_risk_multiple:1.5,risk_fraction:0.01})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.evaluation,"CHRONOLOGICAL_HOLDOUT");
+  assert.equal(body.same_out_of_sample_window,true);
+  assert.equal(body.training_candles,210);
+  assert.equal(body.test_candles,90);
+  assert.equal(body.assumptions.parameters_fixed_before_test,true);
+  assert.equal(body.out_of_sample_start,candles[210].timestamp);
+  for(const key of ["ema_crossover","atr_fixed_risk"]){
+    const model=body.models[key];
+    const m=model.metrics;
+    assert.equal(m.starting_capital,10000);
+    assert.ok(Number.isFinite(m.final_equity)&&m.final_equity>0);
+    assert.ok(Number.isFinite(m.net_return_pct));
+    assert.ok(Number.isFinite(m.max_drawdown_pct));
+    assert.ok(["DESCRIPTIVE_SAMPLE","INSUFFICIENT_SAMPLE"].includes(m.sample_status));
+    assert.ok(Array.isArray(model.regime_diagnostics.buckets));
+    assert.equal(model.regime_diagnostics.test_bars,90);
+  }
+  assert.equal(body.execution_enabled,false);
+  assert.match(body.methodology_note,/first 70% is indicator warm-up only/i);
+  const unsorted=[...candles].reverse();
+  const invalid=await worker.fetch(new Request("https://unit.test/v1/backtest/strategy-comparison/oos",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles:unsorted,timeframe_minutes:1440})
+  }));
+  assert.equal(invalid.status,400);
+});
+
 test("ATR risk backtest rejects risk above one percent and irregular history", async () => {
   const candles=Array.from({length:100},(_,i)=>{
     const close=3000+Math.sin(i/5)*20+i*0.2;
