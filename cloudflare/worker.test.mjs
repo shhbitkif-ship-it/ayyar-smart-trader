@@ -772,7 +772,7 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
     const parsed=new URL(String(url));
     const interval=parsed.searchParams.get("interval");
     if(parsed.hostname==="biquote.io")
-      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval==="1h"?"60m":interval]||[],interval==="1h"?"60m":interval)),
         {status:200,headers:{"content-type":"application/json"}});
     requestedRanges.push({interval,range:parsed.searchParams.get("range")});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
@@ -841,7 +841,7 @@ test("multi-timeframe signal reports the actual BIQUOTE fallback provider per ti
     }
     if(url.hostname==="biquote.io"){
       const interval=url.searchParams.get("interval")==="1h"?"60m":url.searchParams.get("interval");
-      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval==="1h"?"60m":interval]||[],interval==="1h"?"60m":interval)),
         {status:200,headers:{"content-type":"application/json"}});
     }
     throw new Error("Unexpected provider URL "+url.href);
@@ -875,7 +875,7 @@ test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps
     const parsed=new URL(String(url));
     const interval=parsed.searchParams.get("interval");
     if(parsed.hostname==="biquote.io")
-      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval==="1h"?"60m":interval]||[],interval==="1h"?"60m":interval)),
         {status:200,headers:{"content-type":"application/json"}});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
       {status:200,headers:{"content-type":"application/json"}});
@@ -1137,7 +1137,7 @@ test("Telegram signal alert is sent once for a new confirmed direction and not d
     const parsed=new URL(target);
     const interval=parsed.searchParams.get("interval");
     if(parsed.hostname==="biquote.io")
-      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval==="1h"?"60m":interval]||[],interval==="1h"?"60m":interval)),
         {status:200,headers:{"content-type":"application/json"}});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),{status:200,headers:{"content-type":"application/json"}});
   };
