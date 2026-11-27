@@ -1027,6 +1027,13 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(body.sample_quality.minimum_context_samples,30);
     assert.equal(body.sample_quality.maximum_scored_samples,1);
     assert.equal(body.sample_quality.status,"BELOW_CONTEXT_THRESHOLD");
+    assert.equal(body.period_breakdown.length,1);
+    assert.equal(body.period_breakdown[0].period,signalTime.slice(0,7));
+    assert.equal(body.period_breakdown[0].horizons[1].scored,1);
+    assert.equal(body.period_breakdown[0].horizons[1].sample_status,"INSUFFICIENT_SAMPLE");
+    assert.equal(body.period_breakdown[0].horizons[1].average_net_return_pct,
+      body.horizons.find(x=>x.horizon_candles===1).average_net_return_pct);
+    assert.match(body.period_breakdown_note,/not portfolio returns/);
     assert.equal(body.unavailable_diagnostics.outside_candle_range,0);
     assert.equal(body.unavailable_diagnostics.missing_candle_within_range,0);
     assert.match(body.warning,/not evidence of future profitability/);
