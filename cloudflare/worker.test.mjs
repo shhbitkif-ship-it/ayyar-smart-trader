@@ -481,7 +481,7 @@ test("ATR risk backtest rejects risk above one percent and irregular history", a
   const tooMuch=await call({candles,risk_fraction:0.0101});
   assert.equal(tooMuch.status,400);
   const gap=candles.map(x=>({...x}));
-  gap[50].timestamp=new Date(Date.parse(gap[49].timestamp)+2*86400000).toISOString();
+  for(let i=50;i<gap.length;i++) gap[i].timestamp=new Date(Date.parse(gap[i].timestamp)+86400000).toISOString();
   const irregular=await call({candles:gap});
   assert.equal(irregular.status,400);
   assert.match((await irregular.json()).error,/gapped/i);
