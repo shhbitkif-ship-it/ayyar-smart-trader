@@ -1984,7 +1984,12 @@ test("strategy attribution requires explicit metadata and returns advisory-only 
   const archivedSignal={signal:"BUY",symbol:"xau",market_data_status:"LIVE",
     execution_enabled:false,archive_source:"validated completed OHLC multi-timeframe evaluation",
     last_candle_at:new Date(candleTime).toISOString(),recorded_at:new Date().toISOString(),
-    confidence:85,entry:2000,stop_loss:1990,take_profit:2020,archive_key:signalId};
+    confidence:85,entry:2000,stop_loss:1990,take_profit:2020,archive_key:signalId,
+    signal_quality:{status:"PASSED"},
+    signal_stability:{status:"CONFIRMED",confirmed:true,confirmations:2,required_confirmations:2},
+    market_sources:["15m","60m","1d"].map(interval=>({interval,source_quality:"CONVERGED",
+      data_quality:{status:"CLEAN"},source_consensus:{status:"CONVERGED",
+       latest_timestamp_match:true,overlap_candles:3,max_ohlc_spread_pct:0.2}}))};
   const signalRecords=new Map([[signalId,archivedSignal]]);
   env.SIGNAL_HISTORY={get:async key=>signalRecords.get(key)||null,
     list:async({prefix,limit})=>({keys:[...signalRecords.keys()].filter(key=>key.startsWith(prefix))
@@ -2951,12 +2956,12 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
  const legacy=makeRecord(now-30_000,{signal_stability:undefined});
  store.set(legacy.key,legacy.record);
  const legacyResult=await validateArchivedSignalForTrade(env,legacy.key,"XAUUSD","BUY",now);
- assert.equal(legacyResult.error,"SIGNAL_NOT_FOUND_OR_INVALID");
+ assert.equal(legacyResult.error,"SIGNAL_NOT_VERIFIED");
  const weakConsensus=makeRecord(now-25_000,{market_sources:current.record.market_sources.map((source,i)=>
    i===0?{...source,source_consensus:{...source.source_consensus,max_ohlc_spread_pct:0.8}}:source)});
  store.set(weakConsensus.key,weakConsensus.record);
  const weakResult=await validateArchivedSignalForTrade(env,weakConsensus.key,"XAUUSD","BUY",now);
- assert.equal(weakResult.error,"SIGNAL_NOT_FOUND_OR_INVALID");
+ assert.equal(weakResult.error,"SIGNAL_NOT_VERIFIED");
  const wrongSide=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","SELL",now);
  assert.equal(wrongSide.error,"SIGNAL_SIDE_MISMATCH");
  const wrongSymbol=await validateArchivedSignalForTrade(env,current.key,"BTCUSD","BUY",now);
