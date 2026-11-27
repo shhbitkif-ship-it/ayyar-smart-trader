@@ -14,6 +14,7 @@ SOURCE_URL = "https://nerkhara.com/api/v1/latest.json"
 CACHE_SECONDS = 60
 MAX_AGE_SECONDS = 660
 MAX_SINGLE_SNAPSHOT_MOVE_PCT = 5.0
+MAX_PROVIDER_SOURCE_SPREAD_PCT = 1.0
 PRICE_JUMP_CONFIRMATION_TOLERANCE_PCT = 1.0
 _accepted_prices: dict[str, float] = {}
 _pending_price_jumps: dict[str, float] = {}
@@ -134,8 +135,18 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
     method = item.get("method")
     if not isinstance(method, str):
         method = None
+    source_quality = (
+        "DIVERGENT" if spread_pct is not None and spread_pct > MAX_PROVIDER_SOURCE_SPREAD_PCT
+        else "CONVERGED" if sources is not None and sources >= 2 and spread_pct is not None and spread_pct <= 0.5
+        else "MIXED" if sources is not None and sources >= 2 and spread_pct is not None
+        else "SINGLE_SOURCE" if sources == 1
+        else "UNKNOWN"
+    )
+    if spread_pct is not None and spread_pct > MAX_PROVIDER_SOURCE_SPREAD_PCT:
+        status = "UNAVAILABLE"
     meta = {
         "provider_id": source_id,
+        "source_quality": source_quality,
         "source_unit": source_unit,
         "unit_valid": unit_valid,
         "updated_utc": item.get("updated_utc"),
@@ -144,7 +155,7 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
         "spread_pct": spread_pct,
         "method": method[:80] if method else None,
         "stale": stale_flag,
-        "reason": None if valid and unit_valid else "Symbol is missing, price is invalid, or its unit does not match the expected market unit",
+        "reason": ("Provider source spread exceeds the 1.0% review threshold" if spread_pct is not None and spread_pct > MAX_PROVIDER_SOURCE_SPREAD_PCT else None if valid and unit_valid else "Symbol is missing, price is invalid, or its unit does not match the expected market unit"),
     }
     return {
         # Expose a numeric quote only when timestamp and unit are verified LIVE.
