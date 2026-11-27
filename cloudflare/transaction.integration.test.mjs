@@ -471,6 +471,53 @@ test("stress: 30 concurrent create and close retries settle exactly once", async
   assert.equal(integrity.execution_enabled,false);
 });
 
+
+test("automatic paper exit uses stop loss when stop and target are both touched in one candle", async () => {
+  const {stub,tokenHash,tradeId}=await makeAccount();
+  const result=await stub.monitorTrades(tokenHash,"XAUUSD",{
+    timestamp:"2026-11-25T08:02:00.000Z",
+    open:100,high:125,low:85,close:115
+  },5,"2026-11-25T08:03:00.000Z");
+  assert.equal(result.closed,1);
+  assert.equal(result.results[0].status,"CLOSED");
+  assert.equal(result.results[0].exit_reason,"STOP_LOSS");
+  assert.equal(result.results[0].exit_price,90);
+  const trades=await stub.listTrades(tokenHash);
+  assert.equal(trades.find(x=>x.trade_id===tradeId).status,"CLOSED");
+  assert.equal((await stub.listNotifications(tokenHash)).length,1);
+  const integrity=await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled,false);
+});
+
+test("automatic paper stop exit uses the candle open when price gaps beyond the stop", async () => {
+  const {stub,tokenHash,tradeId}=await makeAccount();
+  const result=await stub.monitorTrades(tokenHash,"XAUUSD",{
+    timestamp:"2026-11-25T08:02:00.000Z",
+    open:85,high:95,low:80,close:90
+  },5,"2026-11-25T08:03:00.000Z");
+  assert.equal(result.closed,1);
+  assert.equal(result.results[0].exit_reason,"STOP_LOSS");
+  assert.equal(result.results[0].exit_price,85);
+  const trade=(await stub.listTrades(tokenHash)).find(x=>x.trade_id===tradeId);
+  assert.equal(trade.status,"CLOSED");
+  assert.equal(trade.exit_price,85);
+  const integrity=await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+});
+
+test("automatic paper exit ignores candles that started before the trade opened", async () => {
+  const {stub,tokenHash}=await makeAccount();
+  const result=await stub.monitorTrades(tokenHash,"XAUUSD",{
+    timestamp:"2026-11-25T08:00:00.000Z",
+    open:100,high:125,low:85,close:115
+  },5,"2026-11-25T08:03:00.000Z");
+  assert.equal(result.closed,0);
+  assert.equal(result.results[0].status,"UNCHANGED");
+  assert.equal((await stub.listTrades(tokenHash))[0].status,"OPEN");
+  assert.equal((await stub.getIntegrityReport(tokenHash)).integrity_status,"CLEAN");
+});
+
 test("concurrent paper trade retries are idempotent and conflicting payloads are rejected", async () => {
   const accountId = "sqlite-concurrent-idempotency";
   const tokenHash = "token-hash-concurrent-idempotency";
