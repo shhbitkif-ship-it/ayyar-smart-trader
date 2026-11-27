@@ -471,6 +471,43 @@ test("ATR risk backtest sizes positions to at most one percent and returns conse
   assert.ok(body.warning.startsWith("Research only"));
 });
 
+test("EMA and ATR strategies compare on identical candles, capital and costs", async () => {
+  const candles=[];
+  for(let i=0;i<180;i++){
+    const close=i<70?3100-i*2:i<115?2960+(i-70)*5:3185-(i-115)*4;
+    candles.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+4,low:close-4,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/strategy-comparison",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,timeframe_minutes:1440,starting_capital:10000,
+      fee_bps:12,slippage_bps:7,spread_bps:4,fast_period:20,slow_period:50,
+      atr_period:14,atr_stop_multiple:2,reward_risk_multiple:1.5,risk_fraction:0.01})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.status,"COMPLETED");
+  assert.equal(body.same_sample,true);
+  assert.equal(body.candle_count,candles.length);
+  assert.equal(body.assumptions.starting_capital,10000);
+  assert.equal(body.assumptions.fee_bps_per_side,12);
+  assert.equal(body.assumptions.slippage_bps_per_side,7);
+  assert.equal(body.assumptions.spread_bps_full,4);
+  assert.equal(body.assumptions.atr_risk_fraction,0.01);
+  for(const key of ["ema_crossover","atr_fixed_risk"]){
+    const m=body.models[key].metrics;
+    assert.equal(m.starting_capital,10000);
+    assert.ok(Number.isFinite(m.final_equity)&&m.final_equity>0);
+    assert.ok(Number.isFinite(m.net_return_pct));
+    assert.ok(Number.isFinite(m.max_drawdown_pct));
+    assert.ok(m.closed_trades>=0);
+  }
+  assert.ok(Number.isFinite(body.difference_atr_minus_ema.net_return_pct));
+  assert.ok(Number.isFinite(body.difference_atr_minus_ema.max_drawdown_pct));
+  assert.equal(body.execution_enabled,false);
+  assert.match(body.interpretation_note,/same candles/i);
+});
+
 test("ATR risk backtest rejects risk above one percent and irregular history", async () => {
   const candles=Array.from({length:100},(_,i)=>{
     const close=3000+Math.sin(i/5)*20+i*0.2;
