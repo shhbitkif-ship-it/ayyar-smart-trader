@@ -238,11 +238,11 @@ def test_malformed_optional_quote_metadata_is_sanitized():
 
 
 def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
-    monkeypatch.setattr(market_data, "_accepted_prices", {})
-    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     import asyncio
     import app.market_data as market_data
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     now = datetime.now(timezone.utc)
     newer = now - timedelta(seconds=5)
@@ -282,11 +282,11 @@ def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
 
 
 def test_single_snapshot_price_jump_is_quarantined(monkeypatch):
-    monkeypatch.setattr(market_data, "_accepted_prices", {})
-    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     import asyncio
     import app.market_data as market_data
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     base = datetime.now(timezone.utc) - timedelta(seconds=10)
     calls = {"count": 0}
@@ -331,11 +331,11 @@ def test_single_snapshot_price_jump_is_quarantined(monkeypatch):
 
 
 def test_price_change_below_review_threshold_remains_live(monkeypatch):
-    monkeypatch.setattr(market_data, "_accepted_prices", {})
-    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     import asyncio
     import app.market_data as market_data
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
 
     base = datetime.now(timezone.utc) - timedelta(seconds=10)
     calls = {"count": 0}
