@@ -716,7 +716,7 @@ async function archiveSignal(env,symbol,result) {
   const reverseTime=String(9999999999999-candleTime).padStart(13,"0");
   const key=symbol+":latest:"+reverseTime;
   const existing=await env.SIGNAL_HISTORY.get(key,"json");
-  if(existing) return {saved:true,alert_status:existing.alert_status||"ALREADY_ARCHIVED"};
+  if(existing) return {saved:true,key,alert_status:existing.alert_status||"ALREADY_ARCHIVED"};
   const previousKeys=await env.SIGNAL_HISTORY.list({prefix:symbol+":latest:",limit:1});
   const previous=previousKeys.keys?.[0]
     ? await env.SIGNAL_HISTORY.get(previousKeys.keys[0].name,"json") : null;
@@ -742,7 +742,36 @@ async function archiveSignal(env,symbol,result) {
     archive_key:key,archive_source:"validated completed OHLC multi-timeframe evaluation",
     alert_status:alertStatus,execution_enabled:false};
   await env.SIGNAL_HISTORY.put(key,JSON.stringify(record),{expirationTtl:90*24*60*60});
-  return {saved:true,alert_status:alertStatus};
+  return {saved:true,key,alert_status:alertStatus};
+}
+
+
+export async function validateArchivedSignalForTrade(env,signalId,symbol,side,now=Date.now()) {
+  const invalid=(error)=>({valid:false,error});
+  if(!env?.SIGNAL_HISTORY) return invalid("SIGNAL_HISTORY_UNAVAILABLE");
+  if(typeof signalId!=="string"||!/^xau:latest:\\d{13}$/.test(signalId))
+    return invalid("INVALID_SIGNAL_REFERENCE");
+  let record;
+  try { record=await env.SIGNAL_HISTORY.get(signalId,"json"); }
+  catch { return invalid("SIGNAL_HISTORY_UNAVAILABLE"); }
+  if(!isValidArchivedSignal(record)||record.archive_key!==signalId)
+    return invalid("SIGNAL_NOT_FOUND_OR_INVALID");
+  const recordedAt=Date.parse(record.recorded_at);
+  const candleAt=Date.parse(record.last_candle_at);
+  if(!Number.isFinite(now)||!Number.isFinite(recordedAt)||!Number.isFinite(candleAt)||
+     recordedAt>now+30000||now-recordedAt>60*60*1000||
+     candleAt>now+30000||now-candleAt>2*60*60*1000)
+    return invalid("SIGNAL_EXPIRED");
+  if(record.signal!==side) return invalid("SIGNAL_SIDE_MISMATCH");
+  const tradeSymbol=String(symbol||"").toUpperCase();
+  if(record.symbol.toLowerCase()!=="xau"||!["XAU","XAUUSD","GOLD"].includes(tradeSymbol))
+    return invalid("SIGNAL_SYMBOL_MISMATCH");
+  try {
+    const latest=await env.SIGNAL_HISTORY.list({prefix:record.symbol+":latest:",limit:1});
+    if(latest.keys?.[0]?.name!==signalId) return invalid("SIGNAL_SUPERSEDED");
+  } catch { return invalid("SIGNAL_HISTORY_UNAVAILABLE"); }
+  return {valid:true,signal_id:signalId,signal:record.signal,recorded_at:record.recorded_at,
+    expires_at:new Date(recordedAt+60*60*1000).toISOString()};
 }
 
 function isValidArchivedSignal(record) {
@@ -1197,6 +1226,10 @@ export default {
              ((signalId===null)!==(signalType===null))||
              (signalType!==null&&signalType!==side))
             return json({error:"Invalid trade: use positive numeric values, directional stop/target and a valid optional idempotency_key"},400);
+          if(signalId!==null) {
+            const validation=await validateArchivedSignalForTrade(env,signalId,symbol,side,Date.now());
+            if(!validation.valid) return json({error:validation.error,execution_enabled:false},409);
+          }
           const result=await account.createTrade(tokenHash,{trade_id:randomHex(16),symbol,side,quantity,entry_price,stop_loss,take_profit,fee_bps:feeBps,idempotency_key:idem??null,
             strategy_id:strategyId,signal_id:signalId,signal_type:signalType},new Date().toISOString());
           if(result===null) return json({error:"Account not found or access denied"},404);
@@ -1368,6 +1401,7 @@ export default {
           const archive=await archiveSignal(env,symbol,result);
           result.archive_status=archive.saved?"SAVED":"SKIPPED";
           result.alert_status=archive.alert_status;
+          if(archive.saved&&archive.key) result.signal_id=archive.key;
         } catch { result.archive_status="UNAVAILABLE";result.alert_status="UNAVAILABLE"; }
         return json(result);
       } catch(e) {
