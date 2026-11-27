@@ -2863,7 +2863,7 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
   list:async({prefix,limit})=>({keys:[...store.keys()].filter(k=>k.startsWith(prefix)).sort().slice(0,limit).map(name=>({name}))})};
  const env={SIGNAL_HISTORY:kv};
  const valid=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","BUY",now);
- assert.equal(valid.valid,true);
+ assert.equal(valid.valid,true,JSON.stringify(valid));
  assert.equal(valid.signal_id,current.key);
  const wrongSide=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","SELL",now);
  assert.equal(wrongSide.error,"SIGNAL_SIDE_MISMATCH");
