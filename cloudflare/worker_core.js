@@ -126,8 +126,41 @@ function runBacktest(payload) {
   const finalEquity=quantity===0?cash:quantity*candles[candles.length-1].close*(1-cost);
   if(!Number.isFinite(finalEquity)||finalEquity<=0)
     throw new Error("Final backtest equity is outside the supported numeric range");
-  let peak=starting,maxDrawdown=0;
-  for(const point of equityCurve){peak=Math.max(peak,point.equity);if(peak>0)maxDrawdown=Math.max(maxDrawdown,(peak-point.equity)/peak);}
+  let peak=starting,maxDrawdown=0,maxDrawdownPeakIndex=0,maxDrawdownTroughIndex=0;
+  let peakIndex=0,underwaterRun=0,longestUnderwater=0,ulcerSquares=0;
+  const drawdownSeries=[];
+  for(let i=0;i<equityCurve.length;i++){
+    const point=equityCurve[i];
+    if(point.equity>=peak){peak=point.equity;peakIndex=i;underwaterRun=0;}
+    else {
+      const drawdown=(peak-point.equity)/peak;
+      underwaterRun++;longestUnderwater=Math.max(longestUnderwater,underwaterRun);
+      if(drawdown>maxDrawdown){
+        maxDrawdown=drawdown;maxDrawdownPeakIndex=peakIndex;maxDrawdownTroughIndex=i;
+      }
+    }
+    const currentDrawdown=peak>0?Math.max(0,(peak-point.equity)/peak):0;
+    drawdownSeries.push(currentDrawdown);
+    ulcerSquares+=currentDrawdown*currentDrawdown;
+  }
+  let recoveryIndex=null;
+  const drawdownPeakEquity=equityCurve[maxDrawdownPeakIndex]?.equity??starting;
+  if(maxDrawdown>0){
+    for(let i=maxDrawdownTroughIndex+1;i<equityCurve.length;i++){
+      if(equityCurve[i].equity>=drawdownPeakEquity){recoveryIndex=i;break;}
+    }
+  } else recoveryIndex=maxDrawdownPeakIndex;
+  const drawdownDiagnostics={
+    max_drawdown_peak_at:equityCurve[maxDrawdownPeakIndex]?.timestamp??null,
+    max_drawdown_trough_at:equityCurve[maxDrawdownTroughIndex]?.timestamp??null,
+    max_drawdown_recovered:recoveryIndex!==null,
+    max_drawdown_recovery_at:recoveryIndex===null?null:equityCurve[recoveryIndex]?.timestamp??null,
+    max_drawdown_recovery_candles:recoveryIndex===null?null:recoveryIndex-maxDrawdownTroughIndex,
+    longest_underwater_candles:longestUnderwater,
+    underwater_candle_share_pct:round2(drawdownSeries.filter(v=>v>0).length/drawdownSeries.length*100),
+    ulcer_index_pct:round4(Math.sqrt(ulcerSquares/drawdownSeries.length)*100),
+    note:"Drawdown is marked to market on every candle after estimated transaction costs. Recovery means equity returns to the prior peak; an unrecovered drawdown is reported as null duration."
+  };
   const wins=trades.filter(t=>t.pnl>0).length;
   const profit=trades.filter(t=>t.pnl>0).reduce((a,t)=>a+t.pnl,0);
   const loss=Math.abs(trades.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
@@ -141,7 +174,7 @@ function runBacktest(payload) {
       largest_gap_intervals:continuity.largest_gap_intervals},
     starting_capital:round2(starting),final_equity:round2(finalEquity),
     net_return_pct:round4((finalEquity/starting-1)*100),
-    max_drawdown_pct:round4(maxDrawdown*100),closed_trades:trades.length,
+    max_drawdown_pct:round4(maxDrawdown*100),drawdown_diagnostics:drawdownDiagnostics,closed_trades:trades.length,
     win_rate_pct:trades.length?round2(wins/trades.length*100):0,
     profit_factor:loss>0?round4(profit/loss):profit>0?"infinity":null,
     open_position:quantity>0,
