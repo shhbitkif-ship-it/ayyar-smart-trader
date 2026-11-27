@@ -956,6 +956,28 @@ function isValidArchivedSignal(record) {
     if(![record.entry,record.stop_loss,record.take_profit].every(v=>typeof v==="number"&&Number.isFinite(v)&&v>0)) return false;
     if(record.signal==="BUY" && !(record.stop_loss<record.entry&&record.take_profit>record.entry)) return false;
     if(record.signal==="SELL" && !(record.stop_loss>record.entry&&record.take_profit<record.entry)) return false;
+
+    // Only signals produced by the current dual-provider, temporally-confirmed
+    // pipeline may be used to prefill a paper trade. Legacy archives fail closed.
+    if(record.signal_quality?.status!=="PASSED") return false;
+    if(record.signal_stability?.status!=="CONFIRMED"||
+       record.signal_stability?.confirmed!==true||
+       Number(record.signal_stability?.confirmations)<2||
+       Number(record.signal_stability?.required_confirmations)!==2) return false;
+    const sources=record.market_sources;
+    if(!Array.isArray(sources)||sources.length!==3) return false;
+    const requiredIntervals=["15m","60m","1d"];
+    for(const interval of requiredIntervals) {
+      const source=sources.find(item=>item?.interval===interval);
+      const consensus=source?.source_consensus;
+      if(!source||source.source_quality!=="CONVERGED"||
+         consensus?.status!=="CONVERGED"||
+         consensus?.latest_timestamp_match!==true||
+         !Number.isFinite(consensus?.overlap_candles)||consensus.overlap_candles<3||
+         !Number.isFinite(consensus?.max_ohlc_spread_pct)||
+         consensus.max_ohlc_spread_pct>CANDLE_SOURCE_MAX_SPREAD_PCT||
+         source.data_quality?.status!=="CLEAN") return false;
+    }
   }
   return true;
 }
