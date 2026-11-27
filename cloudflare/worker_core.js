@@ -1073,12 +1073,47 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
     }
     delete m._returns; delete m._grossReturns; delete m._favorable; delete m._adverse;
   }
+  // Calendar-month cohorts expose regime changes without pretending overlapping
+  // signal horizons form a tradable portfolio equity curve.
+  const periodMap=new Map();
+  for(const row of outcomes) {
+    const period=String(row.last_candle_at||"").slice(0,7);
+    if(!/^\\d{4}-\\d{2}$/.test(period)) continue;
+    if(!periodMap.has(period)) periodMap.set(period,{period,horizons:Object.fromEntries(
+      horizons.map(h=>[h,{horizon_candles:h,scored:0,wins:0,losses:0,flats:0,
+        average_net_return_pct:null,average_gross_return_pct:null,win_rate_pct:null,
+        sample_status:"INSUFFICIENT_SAMPLE",_net:0,_gross:0}]))});
+    const cohort=periodMap.get(period);
+    for(const horizon of horizons) {
+      const outcome=row.outcomes[horizon];
+      if(outcome?.status!=="SCORED") continue;
+      const metric=cohort.horizons[horizon];
+      metric.scored++;
+      metric._net+=outcome.return_pct;
+      metric._gross+=outcome.gross_return_pct;
+      if(outcome.return_pct>0) metric.wins++;
+      else if(outcome.return_pct<0) metric.losses++;
+      else metric.flats++;
+    }
+  }
+  const periodBreakdown=[...periodMap.values()].sort((a,b)=>a.period.localeCompare(b.period));
+  for(const cohort of periodBreakdown) for(const metric of Object.values(cohort.horizons)) {
+    if(metric.scored) {
+      metric.average_net_return_pct=round4(metric._net/metric.scored);
+      metric.average_gross_return_pct=round4(metric._gross/metric.scored);
+      metric.win_rate_pct=round2(metric.wins/metric.scored*100);
+    }
+    metric.sample_status=metric.scored>=10?"DESCRIPTIVE_SAMPLE":"INSUFFICIENT_SAMPLE";
+    delete metric._net; delete metric._gross;
+  }
   const maximumScoredSamples=Math.max(0,...Object.values(stats).map(item=>item.scored));
   return {method:"completed_60m_candles_next_open_entry_cost_adjusted",
     cost_model:{fee_bps_per_side:costs.fee_bps,slippage_bps_per_side:costs.slippage_bps,
       spread_bps_full:costs.spread_bps,spread_bps_per_side:costs.spread_bps/2,
       applied:"adverse cost on entry and exit; BUY pays higher entry/lower exit, SELL pays lower entry/higher exit"},
     horizons:Object.values(stats),
+    period_breakdown:periodBreakdown,
+    period_breakdown_note:"UTC calendar-month cohorts of scored signals. Each signal horizon is evaluated independently; overlapping signals are not compounded and these cohorts are not portfolio returns. Fewer than 10 scored signals is marked INSUFFICIENT_SAMPLE.",
     outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
     unavailable_count:unavailable,
     unavailable_diagnostics:{outside_candle_range:outsideCandleRange,
