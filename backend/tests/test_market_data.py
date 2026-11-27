@@ -260,7 +260,7 @@ def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
 
     monkeypatch.setattr(market_data, "_fetch_provider_json", provider)
     monkeypatch.setattr(market_data, "_cache", None)
-    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
 
     first = asyncio.run(market_data.market_snapshot())
     first_xau = next(q for q in first["quotes"] if q["symbol"] == "XAUUSD")
@@ -268,7 +268,7 @@ def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
     assert first_xau["price"] is not None
 
     # Force refresh instead of returning the one-minute in-process cache.
-    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
     second = asyncio.run(market_data.market_snapshot())
     xau = next(q for q in second["quotes"] if q["symbol"] == "XAUUSD")
     assert second["status"] == "UNAVAILABLE"
@@ -300,13 +300,13 @@ def test_single_snapshot_price_jump_is_quarantined(monkeypatch):
 
     monkeypatch.setattr(market_data, "_fetch_provider_json", provider)
     monkeypatch.setattr(market_data, "_cache", None)
-    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
 
     first = asyncio.run(market_data.market_snapshot())
     first_xau = next(q for q in first["quotes"] if q["symbol"] == "XAUUSD")
     assert first_xau["status"] == "LIVE"
 
-    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
     second = asyncio.run(market_data.market_snapshot())
     xau = next(q for q in second["quotes"] if q["symbol"] == "XAUUSD")
     assert xau["status"] == "STALE"
@@ -338,10 +338,10 @@ def test_price_change_below_review_threshold_remains_live(monkeypatch):
 
     monkeypatch.setattr(market_data, "_fetch_provider_json", provider)
     monkeypatch.setattr(market_data, "_cache", None)
-    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
 
     asyncio.run(market_data.market_snapshot())
-    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
     second = asyncio.run(market_data.market_snapshot())
     xau = next(q for q in second["quotes"] if q["symbol"] == "XAUUSD")
     assert xau["status"] == "LIVE"
