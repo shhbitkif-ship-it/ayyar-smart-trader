@@ -277,6 +277,76 @@ def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
     assert xau["price"] is None
     assert "moved backwards" in xau["meta"]["reason"]
 
+
+def test_single_snapshot_price_jump_is_quarantined(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+
+    base = datetime.now(timezone.utc) - timedelta(seconds=10)
+    calls = {"count": 0}
+
+    async def provider():
+        calls["count"] += 1
+        generated = base + timedelta(seconds=calls["count"] * 2)
+        price = 2300 if calls["count"] == 1 else 2500
+        stamp = generated.isoformat()
+        return {
+            "generated_utc": stamp,
+            "items": [{
+                "id": "xau", "price": price, "unit": "USD",
+                "updated_utc": stamp, "stale": False,
+            }],
+        }
+
+    monkeypatch.setattr(market_data, "_fetch_provider_json", provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+
+    first = asyncio.run(market_data.market_snapshot())
+    first_xau = next(q for q in first["quotes"] if q["symbol"] == "XAUUSD")
+    assert first_xau["status"] == "LIVE"
+
+    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    second = asyncio.run(market_data.market_snapshot())
+    xau = next(q for q in second["quotes"] if q["symbol"] == "XAUUSD")
+    assert xau["status"] == "STALE"
+    assert xau["price"] is None
+    assert xau["meta"]["price_jump_pct"] == 8.7
+    assert "exceeds" in xau["meta"]["reason"]
+
+
+def test_price_change_below_review_threshold_remains_live(monkeypatch):
+    import asyncio
+    import app.market_data as market_data
+
+    base = datetime.now(timezone.utc) - timedelta(seconds=10)
+    calls = {"count": 0}
+
+    async def provider():
+        calls["count"] += 1
+        generated = base + timedelta(seconds=calls["count"] * 2)
+        price = 2300 if calls["count"] == 1 else 2400
+        # A 4.35% move is below the 5% quarantine threshold.
+        stamp = generated.isoformat()
+        return {
+            "generated_utc": stamp,
+            "items": [{
+                "id": "xau", "price": price, "unit": "USD",
+                "updated_utc": stamp, "stale": False,
+            }],
+        }
+
+    monkeypatch.setattr(market_data, "_fetch_provider_json", provider)
+    monkeypatch.setattr(market_data, "_cache", None)
+    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+
+    asyncio.run(market_data.market_snapshot())
+    monkeypatch.setattr(market_data, "_cache_at", 0.0)
+    second = asyncio.run(market_data.market_snapshot())
+    xau = next(q for q in second["quotes"] if q["symbol"] == "XAUUSD")
+    assert xau["status"] == "LIVE"
+    assert xau["price"] == 2400
+
 def test_valid_optional_quote_metadata_is_preserved():
     stamp = datetime.now(timezone.utc).isoformat()
     item = {
