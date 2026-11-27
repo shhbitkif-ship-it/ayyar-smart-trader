@@ -365,6 +365,43 @@ def test_price_change_below_review_threshold_remains_live(monkeypatch):
     assert xau["status"] == "LIVE"
     assert xau["price"] == 2400
 
+
+def test_provider_source_disagreement_quarantines_quote():
+    stamp = datetime.now(timezone.utc).isoformat()
+    item = {
+        "price": 2300, "unit": "USD", "updated_utc": stamp,
+        "stale": False, "sources": 4, "spread_pct": 1.4,
+    }
+    q = _normalise(item, "XAUUSD", "Gold", "xau")
+    assert q["status"] == "UNAVAILABLE"
+    assert q["price"] is None
+    assert q["meta"]["source_quality"] == "DIVERGENT"
+    assert "spread" in q["meta"]["reason"].lower()
+
+
+def test_provider_source_consensus_is_exposed_without_overstating_quality():
+    stamp = datetime.now(timezone.utc).isoformat()
+    item = {
+        "price": 2300, "unit": "USD", "updated_utc": stamp,
+        "stale": False, "sources": 3, "spread_pct": 0.2,
+    }
+    q = _normalise(item, "XAUUSD", "Gold", "xau")
+    assert q["status"] == "LIVE"
+    assert q["meta"]["source_quality"] == "CONVERGED"
+    assert q["meta"]["sources"] == 3
+    assert q["meta"]["spread_pct"] == 0.2
+
+
+def test_single_provider_source_is_labelled_as_unconfirmed():
+    stamp = datetime.now(timezone.utc).isoformat()
+    item = {
+        "price": 2300, "unit": "USD", "updated_utc": stamp,
+        "stale": False, "sources": 1,
+    }
+    q = _normalise(item, "XAUUSD", "Gold", "xau")
+    assert q["status"] == "LIVE"
+    assert q["meta"]["source_quality"] == "SINGLE_SOURCE"
+
 def test_valid_optional_quote_metadata_is_preserved():
     stamp = datetime.now(timezone.utc).isoformat()
     item = {
