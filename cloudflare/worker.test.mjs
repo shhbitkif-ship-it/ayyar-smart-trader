@@ -589,6 +589,12 @@ function xausChartFixture(candles) {
       o:c.open,h:c.high,l:c.low,c:c.close,v:null}))};
 }
 
+function biquoteFixture(candles, interval) {
+  const providerInterval=interval==="60m"?"1h":interval;
+  return {symbol:"XAUUSD",interval:providerInterval,
+    bars:candles.map(c=>({openTime:c.timestamp,open:c.open,high:c.high,low:c.low,close:c.close,isOpen:false}))};
+}
+
 test("OHLC endpoint rejects missing XAUS freshness metadata", async () => {
   const intervalMs=3600000,lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
   const candles=Array.from({length:80},(_,i)=>{const close=2600+i*.1;return {timestamp:new Date(lastClosed-(79-i)*intervalMs).toISOString(),open:close,high:close+1,low:close-1,close};});
@@ -765,6 +771,9 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
   globalThis.fetch=async url=>{
     const parsed=new URL(String(url));
     const interval=parsed.searchParams.get("interval");
+    if(parsed.hostname==="biquote.io")
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+        {status:200,headers:{"content-type":"application/json"}});
     requestedRanges.push({interval,range:parsed.searchParams.get("range")});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
       {status:200,headers:{"content-type":"application/json"}});
@@ -831,9 +840,8 @@ test("multi-timeframe signal reports the actual BIQUOTE fallback provider per ti
         {status:200,headers:{"content-type":"application/json"}});
     }
     if(url.hostname==="biquote.io"){
-      const bars=candlesByInterval["15m"].map(c=>({openTime:c.timestamp,open:c.open,
-        high:c.high,low:c.low,close:c.close,isOpen:false}));
-      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+      const interval=url.searchParams.get("interval")==="1h"?"60m":url.searchParams.get("interval");
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
         {status:200,headers:{"content-type":"application/json"}});
     }
     throw new Error("Unexpected provider URL "+url.href);
@@ -864,7 +872,11 @@ test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps
     });
   }
   globalThis.fetch=async url=>{
-    const interval=new URL(String(url)).searchParams.get("interval");
+    const parsed=new URL(String(url));
+    const interval=parsed.searchParams.get("interval");
+    if(parsed.hostname==="biquote.io")
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+        {status:200,headers:{"content-type":"application/json"}});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
       {status:200,headers:{"content-type":"application/json"}});
   };
@@ -876,8 +888,8 @@ test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps
     assert.equal(body.market_data_status,"DEGRADED");
     assert.equal(body.timeframes["15m"].data_status,"GAPPED");
     assert.equal(body.signal_quality.status,"BLOCKED");
-    assert.equal(body.signal_quality.checks.find(x=>x.id==="all_timeframe_data_quality").passed,false);
-    assert.ok(body.signal_quality.blocked_reasons.some(x=>/candle gaps/i.test(x)));
+    assert.equal(body.signal_quality.checks.find(x=>x.id==="all_timeframe_data_quality_and_source_consensus").passed,false);
+    assert.ok(body.signal_quality.blocked_reasons.some(x=>/candle gaps|source consensus/i.test(x)));
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
 });
@@ -1122,7 +1134,11 @@ test("Telegram signal alert is sent once for a new confirmed direction and not d
       sent.push(target);
       return new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200,headers:{"content-type":"application/json"}});
     }
-    const interval=new URL(target).searchParams.get("interval");
+    const parsed=new URL(target);
+    const interval=parsed.searchParams.get("interval");
+    if(parsed.hostname==="biquote.io")
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval]||[],interval)),
+        {status:200,headers:{"content-type":"application/json"}});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),{status:200,headers:{"content-type":"application/json"}});
   };
   try{
