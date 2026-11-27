@@ -208,6 +208,145 @@ function runBacktest(payload) {
     warning:"Research only. Requires reliable OHLC candles; excludes taxes, funding, market impact, gaps beyond next-open fills, and broker constraints. Not a trading recommendation."};
 }
 
+
+function runAtrRiskBacktest(payload) {
+  const fastPeriod=Number(payload?.fast_period??20),slowPeriod=Number(payload?.slow_period??50);
+  const atrPeriod=Number(payload?.atr_period??14),stopMultiple=Number(payload?.atr_stop_multiple??2);
+  const rewardMultiple=Number(payload?.reward_risk_multiple??1.5);
+  const riskFraction=Number(payload?.risk_fraction??0.01);
+  if(!Number.isInteger(fastPeriod)||!Number.isInteger(slowPeriod)||fastPeriod<2||slowPeriod<=fastPeriod||slowPeriod>200)
+    throw new Error("fast_period and slow_period must satisfy 2 <= fast_period < slow_period <= 200");
+  if(!Number.isInteger(atrPeriod)||atrPeriod<2||atrPeriod>100)
+    throw new Error("atr_period must be an integer from 2 to 100");
+  if(!Number.isFinite(stopMultiple)||stopMultiple<0.5||stopMultiple>10||
+     !Number.isFinite(rewardMultiple)||rewardMultiple<0.5||rewardMultiple>10||
+     !Number.isFinite(riskFraction)||riskFraction<=0||riskFraction>0.01)
+    throw new Error("ATR multiples must be 0.5-10 and risk_fraction must be greater than 0 and no greater than 0.01");
+  if(!payload||!Array.isArray(payload.candles)||payload.candles.length<Math.max(60,slowPeriod+atrPeriod+2)||payload.candles.length>5000)
+    throw new Error("candles must contain sufficient OHLC history for EMA and ATR evaluation (60 to 5000 records)");
+  const candles=payload.candles.map(c=>{
+    const row={timestamp:Date.parse(c?.timestamp),open:Number(c?.open),high:Number(c?.high),low:Number(c?.low),close:Number(c?.close)};
+    if(!Number.isFinite(row.timestamp)||![row.open,row.high,row.low,row.close].every(Number.isFinite)||
+       row.open<=0||row.high<=0||row.low<=0||row.close<=0||
+       Math.max(row.open,row.high,row.low,row.close)>1e15||
+       row.high<Math.max(row.open,row.close,row.low)||row.low>Math.min(row.open,row.close,row.high))
+      throw new Error("Each candle must contain a valid timestamp and consistent positive OHLC values");
+    return {...row,iso:new Date(row.timestamp).toISOString()};
+  });
+  if(candles.some((v,i)=>i>0&&v.timestamp<=candles[i-1].timestamp))
+    throw new Error("Candle timestamps must be valid, unique, and strictly increasing in input order");
+  const continuity=inspectCandleContinuity(candles,payload.timeframe_minutes);
+  if(continuity.status!=="CLEAN") throw new Error("ATR backtest candle history is "+continuity.status.toLowerCase()+"; missing intervals are not bridged");
+  const starting=Number(payload.starting_capital??10000),fee=Number(payload.fee_bps??10);
+  const slippage=Number(payload.slippage_bps??5),spread=Number(payload.spread_bps??0);
+  if(!Number.isFinite(starting)||starting<=0||!Number.isFinite(fee)||fee<0||fee>500||
+     !Number.isFinite(slippage)||slippage<0||slippage>500||!Number.isFinite(spread)||spread<0||spread>500)
+    throw new Error("Invalid starting capital or transaction costs; fee/slippage/spread must be between 0 and 500 bps");
+  const cost=(fee+slippage+spread/2)/10000;
+  const closes=candles.map(x=>x.close),fast=ema(closes,fastPeriod),slow=ema(closes,slowPeriod);
+  const fastAligned=fast.slice(slowPeriod-fastPeriod);
+  const trueRanges=candles.map((c,i)=>i===0?c.high-c.low:
+    Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
+  const atrs=new Array(candles.length).fill(null);
+  if(candles.length>atrPeriod){
+    let atr=trueRanges.slice(1,atrPeriod+1).reduce((a,b)=>a+b,0)/atrPeriod;
+    atrs[atrPeriod]=atr;
+    for(let i=atrPeriod+1;i<candles.length;i++){
+      atr=(atr*(atrPeriod-1)+trueRanges[i])/atrPeriod;
+      atrs[i]=atr;
+    }
+  }
+  let cash=starting,position=null;
+  const trades=[],equityCurve=[{timestamp:candles[0].iso,equity:round2(starting)}];
+  const closePosition=(index,rawExit,reason)=>{
+    const exitPrice=rawExit*(1-cost),proceeds=position.quantity*exitPrice;
+    const pnl=proceeds-position.quantity*position.entry_price;
+    if(!Number.isFinite(exitPrice)||exitPrice<=0||!Number.isFinite(proceeds)||!Number.isFinite(pnl))
+      throw new Error("ATR backtest settlement is outside the supported numeric range");
+    cash+=proceeds;
+    trades.push({entry_time:position.entry_time,exit_time:candles[index].iso,
+      entry_price:round6(position.entry_price),exit_price:round6(exitPrice),
+      stop_price:round6(position.stop),target_price:round6(position.target),
+      quantity:round8(position.quantity),pnl:round2(pnl),
+      return_pct:round4(pnl/(position.quantity*position.entry_price)*100),
+      initial_risk_amount:round2(position.risk_amount),exit_reason:reason});
+    position=null;
+  };
+  for(let i=1;i<candles.length;i++){
+    const candle=candles[i],signalIndex=i-1;
+    const signalReady=signalIndex>=1&&signalIndex<slow.length&&Number.isFinite(atrs[signalIndex])&&atrs[signalIndex]>0;
+    const previousUp=signalReady&&fastAligned[signalIndex-1]>slow[signalIndex-1];
+    const currentUp=signalReady&&fastAligned[signalIndex]>slow[signalIndex];
+    const bullish=signalReady&&!previousUp&&currentUp;
+    const bearish=signalReady&&previousUp&&!currentUp;
+    if(position){
+      const stopHit=candle.low<=position.stop,targetHit=candle.high>=position.target;
+      if(stopHit&&targetHit){
+        // Conservative assumption when intrabar ordering is unknowable.
+        const rawExit=candle.open<=position.stop?candle.open:position.stop;
+        closePosition(i,rawExit,"STOP_LOSS_BOTH_LEVELS_TOUCHED");
+      } else if(stopHit){
+        closePosition(i,candle.open<=position.stop?candle.open:position.stop,
+          candle.open<=position.stop?"STOP_LOSS_GAP":"STOP_LOSS");
+      } else if(targetHit){
+        closePosition(i,candle.open>=position.target?candle.open:position.target,
+          candle.open>=position.target?"TAKE_PROFIT_GAP":"TAKE_PROFIT");
+      } else if(bearish){
+        closePosition(i,candle.open,"EMA_BEARISH_CROSS");
+      }
+    }
+    if(!position&&bullish){
+      const entryPrice=candle.open*(1+cost),atr=atrs[signalIndex];
+      const stop=entryPrice-atr*stopMultiple,target=entryPrice+atr*stopMultiple*rewardMultiple;
+      const riskPerUnit=entryPrice-stop*(1-cost);
+      const riskBudget=cash*riskFraction;
+      const riskQuantity=riskBudget/riskPerUnit;
+      const cashQuantity=cash/entryPrice;
+      const quantity=Math.min(riskQuantity,cashQuantity);
+      if([entryPrice,stop,target,riskPerUnit,riskBudget,quantity].every(Number.isFinite)&&
+         entryPrice>0&&stop>0&&target>entryPrice&&riskPerUnit>0&&quantity>0){
+        const invested=quantity*entryPrice;
+        if(Number.isFinite(invested)&&invested<=cash*(1+1e-10)){
+          cash=Math.max(0,cash-invested);
+          position={entry_price:entryPrice,entry_time:candle.iso,quantity,stop,target,
+            risk_amount:quantity*riskPerUnit};
+        }
+      }
+    }
+    const equity=cash+(position?position.quantity*candle.close*(1-cost):0);
+    if(!Number.isFinite(equity)||equity<=0) throw new Error("ATR backtest equity is outside the supported numeric range");
+    equityCurve.push({timestamp:candle.iso,equity:round2(equity)});
+  }
+  const lastIndex=candles.length-1;
+  if(position) closePosition(lastIndex,candles[lastIndex].close,"END_OF_TEST");
+  const finalEquity=cash;
+  let peak=starting,maxDrawdown=0;
+  for(const point of equityCurve){peak=Math.max(peak,point.equity);if(peak>0)maxDrawdown=Math.max(maxDrawdown,(peak-point.equity)/peak);}
+  const wins=trades.filter(t=>t.pnl>0),losses=trades.filter(t=>t.pnl<0);
+  const grossProfit=wins.reduce((s,t)=>s+t.pnl,0),grossLoss=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
+  let lossStreak=0,longestLossStreak=0,lossRun=0,worstLossRun=0;
+  for(const trade of trades){
+    if(trade.pnl<0){lossStreak++;longestLossStreak=Math.max(longestLossStreak,lossStreak);lossRun+=trade.pnl;worstLossRun=Math.min(worstLossRun,lossRun);}
+    else {lossStreak=0;lossRun=0;}
+  }
+  return {strategy:"EMA crossover with ATR stop and fixed fractional risk",
+    fast_period:fastPeriod,slow_period:slowPeriod,atr_period:atrPeriod,
+    atr_stop_multiple:stopMultiple,reward_risk_ratio:rewardMultiple,risk_fraction:riskFraction,
+    starting_capital:round2(starting),final_equity:round2(finalEquity),
+    net_return_pct:round4((finalEquity/starting-1)*100),max_drawdown_pct:round4(maxDrawdown*100),
+    closed_trades:trades.length,win_rate_pct:trades.length?round2(wins.length/trades.length*100):0,
+    profit_factor:grossLoss>0?round4(grossProfit/grossLoss):grossProfit>0?"infinity":null,
+    loss_streak_diagnostics:{longest_consecutive_losses:longestLossStreak,current_consecutive_losses:lossStreak,
+      worst_consecutive_loss_run_pnl:round2(worstLossRun)},
+    risk_model:{method:"fixed_fractional",risk_fraction:riskFraction,
+      max_risk_per_trade_pct:round2(riskFraction*100),position_sizing:"risk budget divided by entry-to-stop loss including estimated exit costs, capped by available cash; no leverage",
+      stop:"entry price minus ATR times stop multiple",target:"entry price plus ATR stop distance times reward/risk ratio"},
+    cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage,spread_bps_full:spread,
+      estimated_cost_bps_per_side:round2(fee+slippage+spread/2)},
+    trades,equity_curve,open_position:false,
+    warning:"Research only. ATR stop/risk sizing is a separate long-only model; same-candle stop/target collisions assume stop first. No leverage or broker execution. Actual fills, taxes, liquidity and market impact may differ; results do not predict future performance."};
+}
+
 function precomputeWalkForwardRegimes(candles) {
   const closes=candles.map(c=>Number(c.close));
   const fast=ema(closes,20),slow=ema(closes,50);
@@ -2018,6 +2157,29 @@ export default {
       return json({symbol,strategies:strategies.map(([fast,slow])=>({fast_period:fast,slow_period:slow})),
         intervals:markets,starting_capital:10000,cost_model:{fee_bps_per_side:10,slippage_bps_per_side:5},
         warning:"Research comparison only. Different intervals have different sample lengths; metrics are not directly equivalent and do not predict future results. Long-only simulation; no broker execution."});
+    }
+    if(url.pathname==="/v1/backtest/atr-risk"&&request.method==="POST") {
+      try { return json(runAtrRiskBacktest(await request.json())); }
+      catch(e) { return json({error:String(e?.message||"Invalid ATR risk backtest request"),execution_enabled:false},400); }
+    }
+    if(url.pathname==="/v1/backtest/atr-risk/live"&&request.method==="GET") {
+      const symbol=url.searchParams.get("symbol")||"xau";
+      const interval=url.searchParams.get("interval")||"60m";
+      const readNumber=(key,fallback)=>url.searchParams.has(key)?Number(url.searchParams.get(key)):fallback;
+      try {
+        const market=await fetchGoldCandles(symbol,interval);
+        const result=runAtrRiskBacktest({candles:market.candles,timeframe_minutes:market.interval_seconds/60,
+          starting_capital:readNumber("starting_capital",10000),fee_bps:readNumber("fee_bps",10),
+          slippage_bps:readNumber("slippage_bps",5),spread_bps:readNumber("spread_bps",0),
+          risk_fraction:readNumber("risk_fraction",0.01),
+          atr_stop_multiple:readNumber("atr_stop_multiple",2),reward_risk_multiple:readNumber("reward_risk_multiple",1.5)});
+        return json({...result,market_symbol:symbol,market_provider:market.provider,
+          market_interval:market.interval,market_data_status:market.status,
+          market_last_candle_at:market.last_candle_at,candle_count:market.candles.length,data_note:market.note});
+      } catch(e) {
+        return json({status:"UNAVAILABLE",market_symbol:symbol,market_interval:interval,
+          error:String(e?.message||"ATR risk backtest unavailable"),execution_enabled:false},502);
+      }
     }
     if(url.pathname==="/v1/backtest/walk-forward"&&request.method==="POST") {
       try { return json(runWalkForward(await request.json())); }
