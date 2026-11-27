@@ -783,7 +783,7 @@ test("multi-timeframe endpoint requires 15m, 60m and daily trend alignment", asy
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
-    assert.equal(body.market_provider,"XAUS");
+    assert.equal(body.market_provider,"XAUS+BIQUOTE");
     assert.equal(body.timeframes["15m"].signal,"BUY");
     assert.equal(body.timeframes["60m"].signal,"BUY");
     assert.equal(body.timeframes["1d"].trend,"BULLISH");
