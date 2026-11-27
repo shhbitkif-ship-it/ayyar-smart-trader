@@ -258,6 +258,7 @@ function runAtrRiskBacktest(payload) {
   }
   let cash=starting,position=null;
   const trades=[],equityCurve=[{timestamp:candles[0].iso,equity:round2(starting)}];
+  const drawdownCurve=[{timestamp:candles[0].iso,equity:starting}];
   const closePosition=(index,rawExit,reason)=>{
     const exitPrice=rawExit*(1-cost),proceeds=position.quantity*exitPrice;
     const pnl=proceeds-position.quantity*position.entry_price;
@@ -316,12 +317,19 @@ function runAtrRiskBacktest(payload) {
     const equity=cash+(position?position.quantity*candle.close*(1-cost):0);
     if(!Number.isFinite(equity)||equity<=0) throw new Error("ATR backtest equity is outside the supported numeric range");
     equityCurve.push({timestamp:candle.iso,equity:round2(equity)});
+    const adverseEquity=cash+(position?position.quantity*candle.low*(1-cost):0);
+    if(!Number.isFinite(adverseEquity)||adverseEquity<=0) throw new Error("ATR backtest adverse equity is outside the supported numeric range");
+    drawdownCurve.push({timestamp:candle.iso,equity:adverseEquity});
   }
   const lastIndex=candles.length-1;
   if(position) closePosition(lastIndex,candles[lastIndex].close,"END_OF_TEST");
   const finalEquity=cash;
   let peak=starting,maxDrawdown=0;
-  for(const point of equityCurve){peak=Math.max(peak,point.equity);if(peak>0)maxDrawdown=Math.max(maxDrawdown,(peak-point.equity)/peak);}
+  for(let i=0;i<equityCurve.length;i++){
+    peak=Math.max(peak,equityCurve[i].equity);
+    const adverse=drawdownCurve[i]?.equity??equityCurve[i].equity;
+    if(peak>0) maxDrawdown=Math.max(maxDrawdown,(peak-adverse)/peak);
+  }
   const wins=trades.filter(t=>t.pnl>0),losses=trades.filter(t=>t.pnl<0);
   const grossProfit=wins.reduce((s,t)=>s+t.pnl,0),grossLoss=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
   let lossStreak=0,longestLossStreak=0,lossRun=0,worstLossRun=0;
