@@ -726,7 +726,8 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
       providers: available.map(item => item.provider),
       required_providers: ["XAUS", "BIQUOTE"],
       overlap_candles: 0,
-      max_close_spread_pct: null,
+      max_ohlc_spread_pct: null,
+      latest_timestamp_match: false,
       errors
     }
   };
@@ -735,36 +736,69 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
       analysis_ready: false,
       note: "A second independent OHLC provider is unavailable; this feed is diagnostic only and cannot authorize a signal."};
   }
+
   const [xaus, biquote] = results.map(result => result.value);
+  const xausLatest = xaus.candles[xaus.candles.length - 1];
+  const biquoteLatest = biquote.candles[biquote.candles.length - 1];
+  const latestTimestampMatch = Boolean(xausLatest && biquoteLatest &&
+    xausLatest.timestamp === biquoteLatest.timestamp);
   const byTime = new Map(biquote.candles.map(candle => [candle.timestamp, candle]));
   const overlap = xaus.candles.filter(candle => byTime.has(candle.timestamp));
-  if (overlap.length < CANDLE_SOURCE_MIN_OVERLAP) {
-    return {...base, source_quality: "UNCONFIRMED", status: "UNCONFIRMED",
-      source_consensus: {...base.source_consensus, overlap_candles: overlap.length},
-      analysis_ready: false,
-      note: "Providers do not share enough completed candle timestamps to verify consensus."};
+  const recentOverlap = overlap.slice(-CANDLE_SOURCE_MIN_OVERLAP);
+  const enoughOverlap = overlap.length >= CANDLE_SOURCE_MIN_OVERLAP &&
+    recentOverlap.length === CANDLE_SOURCE_MIN_OVERLAP &&
+    recentOverlap[recentOverlap.length - 1]?.timestamp === xausLatest?.timestamp;
+
+  const failConsensus = (reason, status = "UNCONFIRMED") => ({
+    ...base,
+    source_quality: status,
+    status: "UNAVAILABLE",
+    analysis_ready: false,
+    source_consensus: {
+      ...base.source_consensus,
+      status,
+      overlap_candles: overlap.length,
+      latest_timestamp_match: latestTimestampMatch
+    },
+    note: reason
+  });
+
+  if (!latestTimestampMatch) {
+    return failConsensus("Provider latest completed candle timestamps do not match; cross-source time alignment failed.");
   }
-  const spreads = overlap.map(candle => {
+  if (!enoughOverlap) {
+    return failConsensus("Providers do not share at least three recent completed candle timestamps including the latest candle.");
+  }
+  if (xaus.data_quality?.status !== "CLEAN" || biquote.data_quality?.status !== "CLEAN") {
+    return failConsensus("At least one provider reports candle gaps or non-clean OHLC data.", "DIVERGENT");
+  }
+
+  const spreads = recentOverlap.flatMap(candle => {
     const other = byTime.get(candle.timestamp);
-    return Math.abs(candle.close / other.close - 1) * 100;
+    return ["open", "high", "low", "close"].map(field =>
+      Math.abs(candle[field] / other[field] - 1) * 100);
   });
   const maxSpread = Math.max(...spreads);
   const converged = Number.isFinite(maxSpread) && maxSpread <= CANDLE_SOURCE_MAX_SPREAD_PCT;
   return {
     ...base,
     source_quality: converged ? "CONVERGED" : "DIVERGENT",
-    status: converged && primary.data_quality?.status === "CLEAN" ? "LIVE" : "UNAVAILABLE",
-    analysis_ready: converged && primary.data_quality?.status === "CLEAN" && primary.candles.length >= 60,
+    status: converged && xaus.analysis_ready && biquote.analysis_ready ? "LIVE" : "UNAVAILABLE",
+    analysis_ready: converged && xaus.analysis_ready === true && biquote.analysis_ready === true,
     source_consensus: {
       ...base.source_consensus,
       status: converged ? "CONVERGED" : "DIVERGENT",
       overlap_candles: overlap.length,
-      max_close_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      compared_recent_candles: recentOverlap.length,
+      compared_ohlc_values: spreads.length,
+      max_ohlc_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      latest_timestamp_match: latestTimestampMatch,
+      latest_common_candle_at: xausLatest.timestamp,
       tolerance_pct: CANDLE_SOURCE_MAX_SPREAD_PCT
     },
     note: converged
-      ? "XAUS and BIQUOTE agree on overlapping completed XAU/USD candle closes within the configured tolerance. Indicative data only, not a broker execution feed."
-      : "Cross-provider candle disagreement exceeds the configured tolerance; signal generation is blocked."
+      ? "XAUS and BIQUOTE agree on the latest three completed candles' OHLC values and timestamps within tolerance. Indicative data only, not a broker execution feed."
+      : "Cross-provider OHLC disagreement exceeds the configured tolerance; signal generation is blocked."
   };
 }
 
