@@ -2906,3 +2906,41 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
  const unavailable=await validateArchivedSignalForTrade({},current.key,"XAUUSD","BUY",now);
  assert.equal(unavailable.error,"SIGNAL_HISTORY_UNAVAILABLE");
 });
+
+
+test("multi-timeframe signal is blocked when only one OHLC provider is available", async () => {
+  const isolatedWorker=(await import("./worker_core.js?multi-provider-single-source-block-test")).default;
+  const intervals={"15m":900,"60m":3600,"1d":86400};
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response("provider unavailable",{status:503});
+    if(value.includes("xaus.com/api/v1/chart")){
+      const interval=new URL(value).searchParams.get("interval");
+      const seconds=intervals[interval];
+      const lastClosed=Math.floor(Date.now()/(seconds*1000))*(seconds*1000)-seconds*1000;
+      const candles=Array.from({length:80},(_,i)=>{
+        const close=2600+i*0.15;
+        return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
+          open:close-0.05,high:close+0.2,low:close-0.2,close};
+      });
+      return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,
+        headers:{"content-type":"application/json"}});
+    }
+    throw new Error("Unexpected provider URL: "+value);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.signal_quality.status,"BLOCKED");
+    assert.equal(body.signal_quality.checks.find(x=>x.id==="all_timeframe_data_quality_and_source_consensus").passed,false);
+    for(const interval of ["15m","60m","1d"]){
+      assert.equal(body.timeframes[interval].source_quality,"SINGLE_SOURCE");
+      assert.equal(body.timeframes[interval].source_consensus.status,"UNCONFIRMED");
+    }
+    assert.equal(body.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
