@@ -1004,7 +1004,13 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
       for(const horizon of horizons) stats[horizon].unavailable++;
       continue;
     }
-    const row={signal:record.signal,last_candle_at:record.last_candle_at,outcomes:{}};
+    // Classify only from candles completed at the archived signal timestamp.
+    // The following entry candle and all future data are excluded from the regime label.
+    const regimeSnapshot=index>=59?classifyMarketRegime(candles.slice(0,index+1)):
+      {status:"INSUFFICIENT_DATA",tradeable:false};
+    const row={signal:record.signal,last_candle_at:record.last_candle_at,
+      market_regime:regimeSnapshot.status||"UNAVAILABLE",regime_tradeable:regimeSnapshot.tradeable===true,
+      outcomes:{}};
     for(const horizon of horizons) {
       const end=index+horizon;
       if(end>=candles.length) {
@@ -1097,6 +1103,33 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
     }
   }
   const periodBreakdown=[...periodMap.values()].sort((a,b)=>a.period.localeCompare(b.period));
+  // Regime cohorts use the regime known at signal close, never future candles.
+  const regimeMap=new Map();
+  for(const row of outcomes) {
+    const regime=row.market_regime||"UNAVAILABLE";
+    if(!regimeMap.has(regime)) regimeMap.set(regime,{regime,tradeable:row.regime_tradeable===true,
+      horizons:Object.fromEntries(horizons.map(h=>[h,{horizon_candles:h,scored:0,wins:0,losses:0,flats:0,
+        average_net_return_pct:null,win_rate_pct:null,sample_status:"INSUFFICIENT_SAMPLE",_net:0}]))});
+    const cohort=regimeMap.get(regime);
+    for(const horizon of horizons) {
+      const outcome=row.outcomes[horizon];
+      if(outcome?.status!=="SCORED") continue;
+      const metric=cohort.horizons[horizon];
+      metric.scored++; metric._net+=outcome.return_pct;
+      if(outcome.return_pct>0) metric.wins++;
+      else if(outcome.return_pct<0) metric.losses++;
+      else metric.flats++;
+    }
+  }
+  const regimeBreakdown=[...regimeMap.values()].sort((a,b)=>a.regime.localeCompare(b.regime));
+  for(const cohort of regimeBreakdown) for(const metric of Object.values(cohort.horizons)) {
+    if(metric.scored) {
+      metric.average_net_return_pct=round4(metric._net/metric.scored);
+      metric.win_rate_pct=round2(metric.wins/metric.scored*100);
+    }
+    metric.sample_status=metric.scored>=10?"DESCRIPTIVE_SAMPLE":"INSUFFICIENT_SAMPLE";
+    delete metric._net;
+  }
   for(const cohort of periodBreakdown) for(const metric of Object.values(cohort.horizons)) {
     if(metric.scored) {
       metric.average_net_return_pct=round4(metric._net/metric.scored);
@@ -1113,6 +1146,8 @@ function calculateSignalPerformance(records,candles,costs={fee_bps:10,slippage_b
       applied:"adverse cost on entry and exit; BUY pays higher entry/lower exit, SELL pays lower entry/higher exit"},
     horizons:Object.values(stats),
     period_breakdown:periodBreakdown,
+    regime_breakdown:regimeBreakdown,
+    regime_breakdown_note:"Each signal is grouped by the market regime calculated only from completed candles available at that signal close. Signals before 60 candles are INSUFFICIENT_DATA. Regime cohorts are descriptive and not portfolio returns.",
     period_breakdown_note:"UTC calendar-month cohorts of scored signals. Each signal horizon is evaluated independently; overlapping signals are not compounded and these cohorts are not portfolio returns. Fewer than 10 scored signals is marked INSUFFICIENT_SAMPLE.",
     outcomes:outcomes.slice(0,50),directional_signals:ordered.length,pending_count:pending,
     unavailable_count:unavailable,
