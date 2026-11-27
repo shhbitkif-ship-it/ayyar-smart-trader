@@ -342,6 +342,7 @@ function runAtrRiskBacktest(payload) {
     atr_stop_multiple:stopMultiple,reward_risk_ratio:rewardMultiple,risk_fraction:riskFraction,
     starting_capital:round2(starting),final_equity:round2(finalEquity),
     net_return_pct:round4((finalEquity/starting-1)*100),max_drawdown_pct:round4(maxDrawdown*100),
+    drawdown_method:"Running peak of close-marked equity versus intrabar low for open long positions, including estimated exit costs.",
     closed_trades:trades.length,win_rate_pct:trades.length?round2(wins.length/trades.length*100):0,
     profit_factor:grossLoss>0?round4(grossProfit/grossLoss):grossProfit>0?"infinity":null,
     loss_streak_diagnostics:{longest_consecutive_losses:longestLossStreak,current_consecutive_losses:lossStreak,
