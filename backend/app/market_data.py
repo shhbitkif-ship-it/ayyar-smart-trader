@@ -14,6 +14,9 @@ SOURCE_URL = "https://nerkhara.com/api/v1/latest.json"
 CACHE_SECONDS = 60
 MAX_AGE_SECONDS = 660
 MAX_SINGLE_SNAPSHOT_MOVE_PCT = 5.0
+PRICE_JUMP_CONFIRMATION_TOLERANCE_PCT = 1.0
+_accepted_prices: dict[str, float] = {}
+_pending_price_jumps: dict[str, float] = {}
 
 
 def _index_rows(rows: list) -> dict:
@@ -152,43 +155,65 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
     }
 
 
-def _quarantine_price_jumps(snapshot: dict, previous: dict | None) -> dict:
-    """Hide implausible one-snapshot price jumps until independently confirmed."""
-    if not isinstance(previous, dict):
-        return snapshot
-    old_quotes = {
-        quote.get("symbol"): quote
-        for quote in previous.get("quotes", [])
-        if isinstance(quote, dict) and quote.get("status") == "LIVE"
-    }
+def _quarantine_price_jumps(snapshot: dict, previous: dict | None = None) -> dict:
+    """Quarantine a large one-snapshot move; accept it only after a second confirmation."""
     result = dict(snapshot)
     refreshed = []
     for original in result.get("quotes", []):
         quote = dict(original)
-        prior = old_quotes.get(quote.get("symbol"))
+        symbol = quote.get("symbol")
         price = quote.get("price")
-        prior_price = prior.get("price") if isinstance(prior, dict) else None
-        valid_pair = (
-            quote.get("status") == "LIVE"
+        valid = (
+            isinstance(symbol, str)
+            and quote.get("status") == "LIVE"
             and isinstance(price, (int, float)) and not isinstance(price, bool)
             and math.isfinite(price) and price > 0
-            and isinstance(prior_price, (int, float)) and not isinstance(prior_price, bool)
-            and math.isfinite(prior_price) and prior_price > 0
         )
-        if valid_pair:
-            move_pct = abs((price / prior_price - 1) * 100)
-            if move_pct > MAX_SINGLE_SNAPSHOT_MOVE_PCT:
+        if not valid:
+            refreshed.append(quote)
+            continue
+
+        prior_price = _accepted_prices.get(symbol)
+        if prior_price is None:
+            _accepted_prices[symbol] = float(price)
+            _pending_price_jumps.pop(symbol, None)
+            refreshed.append(quote)
+            continue
+
+        move_pct = abs((price / prior_price - 1) * 100)
+        if move_pct > MAX_SINGLE_SNAPSHOT_MOVE_PCT:
+            pending_price = _pending_price_jumps.get(symbol)
+            confirmed = (
+                isinstance(pending_price, (int, float))
+                and pending_price > 0
+                and abs((price / pending_price - 1) * 100) <= PRICE_JUMP_CONFIRMATION_TOLERANCE_PCT
+            )
+            if confirmed:
+                _accepted_prices[symbol] = float(price)
+                _pending_price_jumps.pop(symbol, None)
+                meta = dict(quote.get("meta") or {})
+                meta["price_jump_pct"] = round(move_pct, 2)
+                meta["price_jump_confirmed"] = True
+                quote["meta"] = meta
+            else:
+                _pending_price_jumps[symbol] = float(price)
                 quote["price"] = None
                 quote["status"] = "STALE"
                 quote["meta"] = {
                     **(quote.get("meta") or {}),
                     "reason": (
                         f"Price jump of {move_pct:.2f}% exceeds the "
-                        f"{MAX_SINGLE_SNAPSHOT_MOVE_PCT:.1f}% single-snapshot review threshold"
+                        f"{MAX_SINGLE_SNAPSHOT_MOVE_PCT:.1f}% review threshold; "
+                        "waiting for a confirming provider snapshot"
                     ),
                     "price_jump_pct": round(move_pct, 2),
+                    "price_jump_confirmed": False,
                 }
+        else:
+            _accepted_prices[symbol] = float(price)
+            _pending_price_jumps.pop(symbol, None)
         refreshed.append(quote)
+
     result["quotes"] = refreshed
     live = sum(1 for quote in refreshed if quote.get("status") == "LIVE")
     result["status"] = "LIVE" if refreshed and live == len(refreshed) else "PARTIAL" if live else "UNAVAILABLE"
