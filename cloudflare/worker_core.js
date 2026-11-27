@@ -343,7 +343,7 @@ function runAtrRiskBacktest(payload) {
       stop:"entry price minus ATR times stop multiple",target:"entry price plus ATR stop distance times reward/risk ratio"},
     cost_model:{fee_bps_per_side:fee,slippage_bps_per_side:slippage,spread_bps_full:spread,
       estimated_cost_bps_per_side:round2(fee+slippage+spread/2)},
-    trades,equity_curve,open_position:false,
+    trades,equity_curve:equityCurve,open_position:false,
     warning:"Research only. ATR stop/risk sizing is a separate long-only model; same-candle stop/target collisions assume stop first. No leverage or broker execution. Actual fills, taxes, liquidity and market impact may differ; results do not predict future performance."};
 }
 
