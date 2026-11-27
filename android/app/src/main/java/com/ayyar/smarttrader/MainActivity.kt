@@ -41,7 +41,7 @@ data class QuoteUi(val symbol:String,val name:String,val price:String,val unit:S
 data class HistoryPoint(val date:String,val value:Double)
 data class HistoryUi(val symbol:String,val points:List<HistoryPoint>,val note:String)
 data class IndicatorUi(val ema20:Double,val ema50:Double,val rsi14:Double,val macd:Double,val signal:Double,val histogram:Double)
-data class SignalUi(val signal:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String,val regime:String,val regimeReason:String,val qualityStatus:String,val qualityReasons:String,val qualityProgress:String)
+data class SignalUi(val signal:String,val signalId:String,val confidence:Int,val trend:String,val entry:String,val stop:String,val target:String,val lastCandle:String,val status:String,val reason:String,val timeframes:String,val regime:String,val regimeReason:String,val qualityStatus:String,val qualityReasons:String,val qualityProgress:String)
 data class BacktestUi(val interval:String,val candleCount:Int,val startingCapital:Double,val finalEquity:Double,val netReturnPct:Double,val maxDrawdownPct:Double,val closedTrades:Int,val winRatePct:Double,val profitFactor:String,val lastCandle:String,val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
@@ -148,7 +148,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
     }
     if(selectedTab==1) {
          item { PaperMonitorHealthCard(paperMonitor) }
-         item { PaperAccountCard() }
+         item { PaperAccountCard(signal?.getOrNull()) }
     }
     if(selectedTab==2) {
          item {
@@ -517,7 +517,7 @@ private fun fetchLatestSignal():SignalUi{
    val blockedText=(0 until blocked.length()).joinToString(" • "){blocked.optString(it)}
    val progress=if(quality!=null) "${quality.optInt("passed_checks")}/${quality.optInt("required_checks")} کنترل کیفیت" else "کنترل کیفیت نامشخص"
    val timeframeDetails=listOf("15m" to short,"60m" to hourly,"1D" to daily).joinToString("  •  "){ "${it.first}: ${it.second}" }
-   return SignalUi(root.optString("signal","NO_TRADE"),root.optInt("confidence",0),
+   return SignalUi(root.optString("signal","NO_TRADE"),root.optString("signal_id",""),root.optInt("confidence",0),
      root.optString("trend","UNKNOWN"),number("entry"),number("stop_loss"),number("take_profit"),
      root.optString("last_candle_at",""),
      root.optString("market_data_status",root.optString("data_status","UNKNOWN")),
@@ -749,7 +749,7 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
  }
 }
 
-@Composable private fun PaperAccountCard(){
+@Composable private fun PaperAccountCard(currentSignal:SignalUi?){
  val context=LocalContext.current
  val prefs=remember{runCatching{securePaperPrefs(context)}.getOrNull()}
  var accountId by remember{mutableStateOf(prefs?.getString("account_id","")?:"")}
@@ -855,6 +855,18 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
     Text("این دکمه آخرین کندل کامل ۱۵ دقیقه‌ای XAU/USD را بررسی می‌کند؛ پایش خودکار سرور هر ۵ دقیقه فعال است؛ بستن معامله بر اساس کندل کامل ۱۵ دقیقه‌ای ممکن است تا بسته‌شدن کندل تأخیر داشته باشد.",color=muted,fontSize=10.sp)
     Divider(color=Color(0xFF303746))
     Text("ثبت موقعیت فرضی",color=gold,fontWeight=FontWeight.SemiBold)
+    val usableSignal=currentSignal?.takeIf{it.signalId.isNotBlank()&&it.status=="LIVE"&&it.qualityStatus=="PASSED"&&it.signal in listOf("BUY","SELL")&&it.entry.toDoubleOrNull()?.let{v->v>0}==true&&it.stop.toDoubleOrNull()?.let{v->v>0}==true&&it.target.toDoubleOrNull()?.let{v->v>0}==true}
+    if(usableSignal!=null){
+     Text("سیگنال معتبر فعلی • ${if(usableSignal.signal=="BUY")"خرید" else "فروش"} • شناسه آماده اتصال",color=Color(0xFF8FD6A8),fontSize=11.sp,fontWeight=FontWeight.SemiBold)
+     OutlinedButton(enabled=!busy,onClick={
+      symbol="XAUUSD";side=usableSignal.signal
+      entry=usableSignal.entry;stop=usableSignal.stop;target=usableSignal.target
+      strategyId="MTF_XAU";signalId=usableSignal.signalId
+      status="پارامترهای سیگنال فعلی در فرم آزمایشی قرار گرفت؛ پیش از ثبت، حجم و قیمت‌ها را بررسی کن."
+     },modifier=Modifier.fillMaxWidth()){Text("استفاده از سیگنال فعلی")}
+    }else{
+     Text("سیگنال زنده و تأییدشده برای اتصال به فرم موجود نیست؛ ثبت دستی همچنان ممکن است.",color=muted,fontSize=10.sp)
+    }
     OutlinedTextField(value=symbol,onValueChange={symbol=it.uppercase(Locale.US)},label={Text("نماد (مثلاً XAUUSD)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
      FilterChip(selected=side=="BUY",onClick={side="BUY"},label={Text("خرید")})
