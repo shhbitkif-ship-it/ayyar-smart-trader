@@ -1040,6 +1040,11 @@ test("signal performance uses next candle open, completed horizons and refuses c
     assert.equal(body.regime_breakdown[0].horizons[1].scored,1);
     assert.equal(body.regime_breakdown[0].horizons[1].sample_status,"INSUFFICIENT_SAMPLE");
     assert.match(body.regime_breakdown_note,/only from completed candles/);
+    assert.equal(body.confidence_breakdown.length,1);
+    assert.equal(body.confidence_breakdown[0].confidence_band,"VERY_STRONG_80_100");
+    assert.equal(body.confidence_breakdown[0].horizons[1].scored,1);
+    assert.equal(body.confidence_breakdown[0].horizons[1].sample_status,"INSUFFICIENT_SAMPLE");
+    assert.match(body.confidence_breakdown_note,/not a probability/);
     assert.equal(body.unavailable_diagnostics.outside_candle_range,0);
     assert.equal(body.unavailable_diagnostics.missing_candle_within_range,0);
     assert.match(body.warning,/not evidence of future profitability/);
