@@ -52,7 +52,8 @@ data class PaperMonitorStatusUi(val status:String,val provider:String,val interv
 data class SignalPerformanceHorizon(val horizon:Int,val scored:Int,val wins:Int,val losses:Int,val flats:Int,val winRate:Double?,val averageReturn:Double?,val averageFavorable:Double?,val averageAdverse:Double?)
 data class SignalPerformancePeriodHorizon(val horizon:Int,val scored:Int,val averageNetReturn:Double?,val winRate:Double?,val sampleStatus:String)
 data class SignalPerformancePeriod(val period:String,val horizons:List<SignalPerformancePeriodHorizon>)
-data class SignalPerformanceUi(val horizons:List<SignalPerformanceHorizon>,val periods:List<SignalPerformancePeriod>,val directionalSignals:Int,val pending:Int,val unavailable:Int,val lastCandle:String,val warning:String)
+data class SignalPerformanceRegime(val regime:String,val tradeable:Boolean,val horizons:List<SignalPerformancePeriodHorizon>)
+data class SignalPerformanceUi(val horizons:List<SignalPerformanceHorizon>,val periods:List<SignalPerformancePeriod>,val regimes:List<SignalPerformanceRegime>,val directionalSignals:Int,val pending:Int,val unavailable:Int,val lastCandle:String,val warning:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -225,6 +226,25 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
                   p.periods.forEach { month ->
                     Text(month.period,color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
                     month.horizons.forEach { h ->
+                      val net=h.averageNetReturn?.let { String.format(Locale.US,"%+.3f%%",it) } ?: "—"
+                      Text("${h.horizon} کندل • ${h.scored} نمونه • بازده خالص: $net • ${if(h.sampleStatus=="DESCRIPTIVE_SAMPLE") "نمونه توصیفی" else "نمونه ناکافی"}",color=muted,fontSize=10.sp)
+                    }
+                  }
+                }
+                if(p.regimes.isNotEmpty()) {
+                  Divider(color=Color(0xFF343B48))
+                  Text("عملکرد در وضعیت‌های مختلف بازار",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+                  p.regimes.forEach { regime ->
+                    val regimeName=when(regime.regime) {
+                      "TRENDING" -> "رونددار"
+                      "RANGE" -> "خنثی / نوسان محدود"
+                      "HIGH_VOLATILITY" -> "نوسان بسیار بالا"
+                      "TRANSITIONAL" -> "گذار / نامطمئن"
+                      "INSUFFICIENT_DATA" -> "داده ناکافی"
+                      else -> regime.regime
+                    }
+                    Text("$regimeName • ${if(regime.tradeable) "مجاز از نظر فیلتر رژیم" else "غیرمجاز / تشخیصی"}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                    regime.horizons.forEach { h ->
                       val net=h.averageNetReturn?.let { String.format(Locale.US,"%+.3f%%",it) } ?: "—"
                       Text("${h.horizon} کندل • ${h.scored} نمونه • بازده خالص: $net • ${if(h.sampleStatus=="DESCRIPTIVE_SAMPLE") "نمونه توصیفی" else "نمونه ناکافی"}",color=muted,fontSize=10.sp)
                     }
@@ -492,7 +512,19 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
      }
      SignalPerformancePeriod(period.optString("period"),periodHorizons)
    }
-   return SignalPerformanceUi(horizons,periods,root.optInt("directional_signals"),root.optInt("pending_count"),
+   val regimeArray=root.optJSONArray("regime_breakdown")?:JSONArray()
+   val regimes=(0 until regimeArray.length()).map { i ->
+     val regime=regimeArray.getJSONObject(i)
+     val metrics=regime.optJSONObject("horizons")?:JSONObject()
+     val regimeHorizons=listOf(1,4,24).mapNotNull { horizon ->
+       val metric=metrics.optJSONObject(horizon.toString())?:return@mapNotNull null
+       val net=if(metric.isNull("average_net_return_pct")) null else metric.optDouble("average_net_return_pct")
+       val win=if(metric.isNull("win_rate_pct")) null else metric.optDouble("win_rate_pct")
+       SignalPerformancePeriodHorizon(horizon,metric.optInt("scored"),net,win,metric.optString("sample_status","INSUFFICIENT_SAMPLE"))
+     }
+     SignalPerformanceRegime(regime.optString("regime"),regime.optBoolean("tradeable"),regimeHorizons)
+   }
+   return SignalPerformanceUi(horizons,periods,regimes,root.optInt("directional_signals"),root.optInt("pending_count"),
      root.optInt("unavailable_count"),root.optString("market_last_candle_at",""),
      root.optString("warning","ارزیابی توصیفی است و تضمین سود نیست."))
  } finally {connection.disconnect()}
