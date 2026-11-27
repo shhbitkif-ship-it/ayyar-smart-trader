@@ -569,3 +569,38 @@ for (const fault of ["after-close-ledger", "after-close-notification"]) {
     assert.equal(finalIntegrity.execution_enabled, false);
   });
 }
+
+
+test("same signal cannot open a second paper trade with a different idempotency key", async () => {
+  const accountId="sqlite-signal-idempotency";
+  const tokenHash="token-hash-signal-idempotency";
+  const stub=namespace.get(namespace.idFromName(accountId));
+  await stub.createAccount(accountId,tokenHash,"USD",100000,"2026-11-25T09:00:00.000Z");
+  const firstTrade={
+    trade_id:"signal-trade-first",symbol:"XAUUSD",side:"BUY",quantity:1,
+    entry_price:100,stop_loss:90,take_profit:120,fee_bps:5,
+    idempotency_key:"signal-idem-first",strategy_id:"ema-atr",
+    signal_id:"sha256:signal-fingerprint-001",signal_type:"BUY"
+  };
+  const [first,second]=await Promise.all([
+    stub.createTrade(tokenHash,firstTrade,"2026-11-25T09:01:00.000Z"),
+    stub.createTrade(tokenHash,{...firstTrade,trade_id:"signal-trade-second",
+      idempotency_key:"signal-idem-second"},"2026-11-25T09:01:02.000Z")
+  ]);
+  assert.equal([first,second].filter(x=>x.duplicate===false).length,1);
+  assert.equal([first,second].filter(x=>x.duplicate===true).length,1);
+  assert.equal(first.trade_id,second.trade_id);
+  assert.equal((await stub.listTrades(tokenHash)).length,1);
+  assert.equal((await stub.getSummary(tokenHash)).ledger_events,2);
+
+  const conflict=await stub.runCreateTradeWithFault(tokenHash,{
+    ...firstTrade,trade_id:"signal-trade-conflict",idempotency_key:"signal-idem-conflict",
+    entry_price:101
+  },"2026-11-25T09:02:00.000Z");
+  assert.equal(conflict.ok,false);
+  assert.match(conflict.error,/SIGNAL_ALREADY_PROCESSED_WITH_DIFFERENT_TRADE/);
+  assert.equal((await stub.listTrades(tokenHash)).length,1);
+  const integrity=await stub.getIntegrityReport(tokenHash);
+  assert.equal(integrity.integrity_status,"CLEAN",JSON.stringify(integrity.discrepancies));
+  assert.equal(integrity.execution_enabled,false);
+});
