@@ -42,6 +42,15 @@ def test_candle_rejects_non_finite_market_values(field, bad_value):
         Candle(**values)
 
 
+@pytest.mark.parametrize("field", ["open", "high", "low", "close", "volume"])
+@pytest.mark.parametrize("bad_value", [True, False, "100"])
+def test_candle_rejects_boolean_and_string_market_values(field, bad_value):
+    values = dict(timestamp=datetime.now(timezone.utc), open=100, high=101, low=99, close=100, volume=10)
+    values[field] = bad_value
+    with pytest.raises(ValidationError):
+        Candle(**values)
+
+
 def test_duplicate_market_candle_timestamps_are_rejected():
     now = datetime.now(timezone.utc)
     data = candles(220, 1, now - timedelta(minutes=220))
