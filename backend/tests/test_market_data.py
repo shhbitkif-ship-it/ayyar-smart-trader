@@ -238,6 +238,9 @@ def test_malformed_optional_quote_metadata_is_sanitized():
 
 
 def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
+
     import asyncio
     import app.market_data as market_data
 
@@ -279,6 +282,9 @@ def test_provider_snapshot_timestamp_rollback_fails_closed(monkeypatch):
 
 
 def test_single_snapshot_price_jump_is_quarantined(monkeypatch):
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
+
     import asyncio
     import app.market_data as market_data
 
@@ -312,10 +318,22 @@ def test_single_snapshot_price_jump_is_quarantined(monkeypatch):
     assert xau["status"] == "STALE"
     assert xau["price"] is None
     assert xau["meta"]["price_jump_pct"] == 8.7
-    assert "exceeds" in xau["meta"]["reason"]
+    assert xau["meta"]["price_jump_confirmed"] is False
+    assert "confirming provider snapshot" in xau["meta"]["reason"]
+
+    # A second consistent provider reading confirms the move and restores LIVE.
+    monkeypatch.setattr(market_data, "_cache_at", -1e9)
+    third = asyncio.run(market_data.market_snapshot())
+    confirmed = next(q for q in third["quotes"] if q["symbol"] == "XAUUSD")
+    assert confirmed["status"] == "LIVE"
+    assert confirmed["price"] == 2500
+    assert confirmed["meta"]["price_jump_confirmed"] is True
 
 
 def test_price_change_below_review_threshold_remains_live(monkeypatch):
+    monkeypatch.setattr(market_data, "_accepted_prices", {})
+    monkeypatch.setattr(market_data, "_pending_price_jumps", {})
+
     import asyncio
     import app.market_data as market_data
 
