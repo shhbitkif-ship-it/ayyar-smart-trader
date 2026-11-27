@@ -223,6 +223,29 @@ async def market_snapshot() -> dict:
             "attribution": "NerkhAra — https://nerkhara.com",
         }
         result = _refresh_snapshot_status(result)
+
+        # Never replace a newer accepted provider snapshot with an older one.
+        # A provider clock/data rollback must fail closed rather than revive old quotes.
+        previous_generated = _cache.get("provider_generated_at") if isinstance(_cache, dict) else None
+        incoming_generated = result.get("provider_generated_at")
+        if (
+            isinstance(previous_generated, datetime)
+            and isinstance(incoming_generated, datetime)
+            and incoming_generated.astimezone(timezone.utc) < previous_generated.astimezone(timezone.utc)
+        ):
+            result = {
+                "status": "UNAVAILABLE",
+                "as_of": datetime.now(timezone.utc),
+                "provider_generated_at": incoming_generated,
+                "quotes": [
+                    {**quote, "price": None, "status": "STALE",
+                     "meta": {**(quote.get("meta") or {}), "reason": "Provider snapshot timestamp moved backwards"}}
+                    for quote in result.get("quotes", [])
+                ],
+                "notice": "Provider snapshot moved backwards in time. Quotes are withheld until the source recovers.",
+                "error": "ProviderSnapshotRollback",
+                "attribution": "NerkhAra — https://nerkhara.com",
+            }
     except Exception as exc:
         result = {
             "status": "UNAVAILABLE",
