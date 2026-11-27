@@ -4,6 +4,25 @@ import { Miniflare } from "miniflare";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { calculatePaperEntryFee, calculatePaperSettlement, calculateLegacyPaperBalance } from "./ledger_math.mjs";
+
+
+test("paper financial math rejects finite inputs whose fee or settlement overflows", () => {
+  assert.throws(() => calculatePaperEntryFee(Number.MAX_VALUE, 2, 1000),
+    /PAPER_FEE_OUT_OF_RANGE/);
+  assert.throws(() => calculatePaperSettlement({
+    side:"BUY",quantity:Number.MAX_VALUE,entryPrice:2,exitPrice:3,entryFee:0,exitFee:0
+  }), /PAPER_SETTLEMENT_OUT_OF_RANGE/);
+  assert.throws(() => calculatePaperSettlement({
+    side:"SELL",quantity:1,entryPrice:1,exitPrice:2,entryFee:Number.MAX_VALUE,exitFee:Number.MAX_VALUE
+  }), /PAPER_SETTLEMENT_OUT_OF_RANGE/);
+});
+
+test("legacy paper balance rejects a finite-input overflow instead of returning a corrupt balance", () => {
+  assert.throws(() => calculateLegacyPaperBalance({
+    startingCapital:Number.MAX_VALUE,realizedPnl:Number.MAX_VALUE,openFees:0
+  }), /LEGACY_PAPER_BALANCE_OUT_OF_RANGE/);
+});
 
 let mf;
 let namespace;
