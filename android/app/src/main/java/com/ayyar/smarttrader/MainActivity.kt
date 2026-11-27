@@ -48,6 +48,10 @@ data class StrategyComparisonUi(val interval:String,val candleCount:Int,val last
  val emaEquity:Double,val emaReturn:Double,val emaDrawdown:Double,val emaTrades:Int,val emaWinRate:Double,val emaProfitFactor:String,
  val atrEquity:Double,val atrReturn:Double,val atrDrawdown:Double,val atrTrades:Int,val atrWinRate:Double,val atrProfitFactor:String,
  val returnDelta:Double,val drawdownDelta:Double,val warning:String)
+data class OosComparisonUi(val interval:String,val candleCount:Int,val testStart:String,val testEnd:String,
+ val emaReturn:Double,val emaDrawdown:Double,val emaTrades:Int,val emaSample:String,val emaRegimes:String,
+ val atrReturn:Double,val atrDrawdown:Double,val atrTrades:Int,val atrSample:String,val atrRegimes:String,
+ val warning:String)
 data class SignalHistoryRow(val signal:String,val trend:String,val confidence:Int,val recordedAt:String,val lastCandle:String,val entry:String,val stop:String,val target:String)
 data class CompareRow(val interval:String,val fast:Int,val slow:Int,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double,val status:String)
 data class WalkForwardFold(val fold:Int,val strategy:String,val testStart:String,val testEnd:String,val returnPct:Double,val drawdownPct:Double,val trades:Int,val winRate:Double)
@@ -77,6 +81,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  var backtestSpread by remember { mutableStateOf("0") }
  var atrBacktestRefresh by remember { mutableIntStateOf(0) }
  var strategyComparisonRefresh by remember { mutableIntStateOf(0) }
+ var oosComparisonRefresh by remember { mutableIntStateOf(0) }
  var archiveRefresh by remember { mutableIntStateOf(0) }
  var compareRefresh by remember { mutableIntStateOf(0) }
  var walkForwardRefresh by remember { mutableIntStateOf(0) }
@@ -90,6 +95,7 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
  val backtest by produceState<Result<BacktestUi>?>(null, backtestRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(backtestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveBacktest(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
  val atrRiskBacktest by produceState<Result<AtrRiskBacktestUi>?>(null,atrBacktestRefresh,backtestInterval,backtestSpread) { if(atrBacktestRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveAtrRiskBacktest(backtestInterval,backtestSpread.toDoubleOrNull()?:Double.NaN) } } }
  val strategyComparison by produceState<Result<StrategyComparisonUi>?>(null,strategyComparisonRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(strategyComparisonRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveStrategyComparison(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull()?:Double.NaN) } } }
+ val oosComparison by produceState<Result<OosComparisonUi>?>(null,oosComparisonRefresh,backtestInterval,backtestFast,backtestSlow,backtestSpread) { if(oosComparisonRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchLiveOosStrategyComparison(backtestInterval,backtestFast,backtestSlow,backtestSpread.toDoubleOrNull()?:Double.NaN) } } }
  val archivedSignals by produceState<Result<List<SignalHistoryRow>>?>(null, archiveRefresh) { if(archiveRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchSignalHistory() } } }
  val comparison by produceState<Result<List<CompareRow>>?>(null, compareRefresh) { if(compareRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchBacktestComparison() } } }
  val walkForward by produceState<Result<WalkForwardUi>?>(null, walkForwardRefresh,backtestSpread) { if(walkForwardRefresh>0) value=runCatching { withContext(Dispatchers.IO) { fetchWalkForward(backtestSpread.toDoubleOrNull() ?: Double.NaN) } } }
@@ -379,6 +385,24 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
               }
             }
             Button(onClick={strategyComparisonRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("اجرای مقایسه منصفانه EMA و ATR")}
+            Divider(color=Color(0xFF303746))
+            Text("آزمون خارج از نمونه (۷۰٪ آموزش / ۳۰٪ آزمون)",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+            Text("پارامترها پیش از ورود به بخش آزمون ثابت می‌مانند؛ داده‌های آموزش فقط برای گرم‌کردن اندیکاتورها هستند و سود و زیان آن‌ها وارد نتیجه نمی‌شود.",color=muted,fontSize=11.sp)
+            when {
+              oosComparisonRefresh==0 -> Text("برای سنجش پایداری روی بخش دیده‌نشده داده‌ها، دکمه را بزن.",color=muted,fontSize=12.sp)
+              oosComparison==null -> Text("در حال اجرای آزمون خارج از نمونه…",color=muted)
+              oosComparison!!.isFailure -> Text("آزمون خارج از نمونه اجرا نشد؛ حداقل ۲۴۰ کندل پیوسته و معتبر لازم است.",color=Color(0xFFFFB86B),fontSize=12.sp)
+              else -> {
+                val o=oosComparison!!.getOrThrow()
+                Text("بازه آزمون: \${o.testStart} تا \${o.testEnd} • \${o.candleCount} کندل",color=muted,fontSize=10.sp)
+                Text("EMA: بازده \${String.format(Locale.US,"%+.2f",o.emaReturn)}٪ • افت \${String.format(Locale.US,"%.2f",o.emaDrawdown)}٪ • \${o.emaTrades} معامله • \${o.emaSample}",color=Color.White,fontSize=11.sp)
+                Text("رژیم‌های EMA: \${o.emaRegimes}",color=muted,fontSize=10.sp)
+                Text("ATR: بازده \${String.format(Locale.US,"%+.2f",o.atrReturn)}٪ • افت \${String.format(Locale.US,"%.2f",o.atrDrawdown)}٪ • \${o.atrTrades} معامله • \${o.atrSample}",color=Color.White,fontSize=11.sp)
+                Text("رژیم‌های ATR: \${o.atrRegimes}",color=muted,fontSize=10.sp)
+                Text(o.warning,color=muted,fontSize=10.sp)
+              }
+            }
+            Button(onClick={oosComparisonRefresh++},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=gold,contentColor=bg)){Text("اجرای آزمون خارج از نمونه EMA و ATR")}
          } } }
          }
          if(selectedAnalysisTab==4) {
@@ -647,6 +671,38 @@ private fun fetchLiveStrategyComparison(interval:String,fastPeriod:Int,slowPerio
       atr.optInt("closed_trades"),atr.optDouble("win_rate_pct"),atr.opt("profit_factor")?.toString()?:"—",
       delta.optDouble("net_return_pct"),delta.optDouble("max_drawdown_pct"),
       root.optString("interpretation_note","مقایسه پژوهشی است و پیش‌بینی عملکرد آینده نیست."))
+  } finally {connection.disconnect()}
+}
+
+private fun fetchLiveOosStrategyComparison(interval:String,fastPeriod:Int,slowPeriod:Int,spreadBps:Double):OosComparisonUi{
+  require(spreadBps.isFinite()&&spreadBps in 0.0..500.0){"اسپرد باید بین ۰ تا ۵۰۰ واحد پایه باشد."}
+  require(fastPeriod>=2&&slowPeriod>fastPeriod){"دوره‌های EMA معتبر نیستند."}
+  val url=URL(BuildConfig.API_BASE_URL+"/v1/backtest/strategy-comparison/oos/live?symbol=xau&interval=$interval&starting_capital=10000&fee_bps=10&slippage_bps=5&spread_bps=$spreadBps&fast_period=$fastPeriod&slow_period=$slowPeriod&atr_period=14&atr_stop_multiple=2&reward_risk_multiple=1.5&risk_fraction=0.01")
+  val connection=url.openConnection() as HttpURLConnection
+  connection.requestMethod="GET";connection.connectTimeout=12000;connection.readTimeout=45000
+  try {
+    val stream=if(connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+    val root=JSONObject(stream.bufferedReader().use{it.readText()})
+    if(connection.responseCode !in 200..299) throw IllegalStateException(root.optString("error","Out-of-sample comparison unavailable"))
+    val models=root.getJSONObject("models")
+    fun regimeSummary(model:JSONObject):String {
+      val buckets=model.optJSONObject("regime_diagnostics")?.optJSONArray("buckets")?:return "داده‌ای نیست"
+      return (0 until buckets.length()).map { index ->
+        val bucket=buckets.getJSONObject(index)
+        "\${bucket.optString("regime")}:\${bucket.optInt("trade_count")} معامله/\${bucket.optInt("bars")} کندل"
+      }.joinToString("، ").ifBlank{"داده‌ای نیست"}
+    }
+    val ema=models.getJSONObject("ema_crossover")
+    val atr=models.getJSONObject("atr_fixed_risk")
+    val em=ema.getJSONObject("metrics")
+    val am=atr.getJSONObject("metrics")
+    return OosComparisonUi(root.optString("market_interval",interval),root.optInt("test_candles"),
+      root.optString("out_of_sample_start",""),root.optString("out_of_sample_end",""),
+      em.optDouble("net_return_pct"),em.optDouble("max_drawdown_pct"),em.optInt("closed_trades"),
+      em.optString("sample_status","INSUFFICIENT_SAMPLE"),regimeSummary(ema),
+      am.optDouble("net_return_pct"),am.optDouble("max_drawdown_pct"),am.optInt("closed_trades"),
+      am.optString("sample_status","INSUFFICIENT_SAMPLE"),regimeSummary(atr),
+      root.optString("methodology_note","آزمون تاریخی است و پیش‌بینی عملکرد آینده نیست."))
   } finally {connection.disconnect()}
 }
 
