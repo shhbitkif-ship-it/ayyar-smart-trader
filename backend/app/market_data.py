@@ -13,6 +13,7 @@ import httpx
 SOURCE_URL = "https://nerkhara.com/api/v1/latest.json"
 CACHE_SECONDS = 60
 MAX_AGE_SECONDS = 660
+MAX_SINGLE_SNAPSHOT_MOVE_PCT = 5.0
 
 
 def _index_rows(rows: list) -> dict:
@@ -151,6 +152,49 @@ def _normalise(item: dict | None, symbol: str, name: str, source_id: str) -> dic
     }
 
 
+def _quarantine_price_jumps(snapshot: dict, previous: dict | None) -> dict:
+    """Hide implausible one-snapshot price jumps until independently confirmed."""
+    if not isinstance(previous, dict):
+        return snapshot
+    old_quotes = {
+        quote.get("symbol"): quote
+        for quote in previous.get("quotes", [])
+        if isinstance(quote, dict) and quote.get("status") == "LIVE"
+    }
+    result = dict(snapshot)
+    refreshed = []
+    for original in result.get("quotes", []):
+        quote = dict(original)
+        prior = old_quotes.get(quote.get("symbol"))
+        price = quote.get("price")
+        prior_price = prior.get("price") if isinstance(prior, dict) else None
+        valid_pair = (
+            quote.get("status") == "LIVE"
+            and isinstance(price, (int, float)) and not isinstance(price, bool)
+            and math.isfinite(price) and price > 0
+            and isinstance(prior_price, (int, float)) and not isinstance(prior_price, bool)
+            and math.isfinite(prior_price) and prior_price > 0
+        )
+        if valid_pair:
+            move_pct = abs((price / prior_price - 1) * 100)
+            if move_pct > MAX_SINGLE_SNAPSHOT_MOVE_PCT:
+                quote["price"] = None
+                quote["status"] = "STALE"
+                quote["meta"] = {
+                    **(quote.get("meta") or {}),
+                    "reason": (
+                        f"Price jump of {move_pct:.2f}% exceeds the "
+                        f"{MAX_SINGLE_SNAPSHOT_MOVE_PCT:.1f}% single-snapshot review threshold"
+                    ),
+                    "price_jump_pct": round(move_pct, 2),
+                }
+        refreshed.append(quote)
+    result["quotes"] = refreshed
+    live = sum(1 for quote in refreshed if quote.get("status") == "LIVE")
+    result["status"] = "LIVE" if refreshed and live == len(refreshed) else "PARTIAL" if live else "UNAVAILABLE"
+    return result
+
+
 def _refresh_snapshot_status(snapshot: dict, now: datetime | None = None) -> dict:
     """Re-evaluate provider and quote freshness, including cached snapshots."""
     now = now or datetime.now(timezone.utc)
@@ -223,6 +267,8 @@ async def market_snapshot() -> dict:
             "attribution": "NerkhAra — https://nerkhara.com",
         }
         result = _refresh_snapshot_status(result)
+        previous_snapshot = _cache if isinstance(_cache, dict) else None
+        result = _quarantine_price_jumps(result, previous_snapshot)
 
         # Never replace a newer accepted provider snapshot with an older one.
         # A provider clock/data rollback must fail closed rather than revive old quotes.
