@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from .engine import evaluate
 from .schemas import EvaluateRequest, SignalResponse
@@ -62,9 +63,68 @@ def atr_trade_plan(payload: AtrTradePlanRequest):
     return build_atr_trade_plan(payload)
 
 
+SIGNAL_QUOTE_SYMBOLS = {
+    "XAUUSD": "XAUUSD",
+    "GOLD18": "GOLD18",
+    "GOLD24": "GOLD24",
+    "MESGHAL": "MESGHAL",
+    "COIN_EMAMI": "COIN_EMAMI",
+    "COIN_HALF": "COIN_HALF",
+    "COIN_QUARTER": "COIN_QUARTER",
+}
+
+
 @app.post("/v1/signals/evaluate", response_model=SignalResponse)
-def evaluate_signal(payload: EvaluateRequest):
-    return evaluate(payload)
+async def evaluate_signal(payload: EvaluateRequest):
+    # Signal generation is fail-closed: the server, not the caller, verifies
+    # that the corresponding live reference quote has multi-source consensus.
+    snapshot = await market_snapshot()
+    quote_symbol = SIGNAL_QUOTE_SYMBOLS.get(payload.symbol.upper())
+    quote = next(
+        (item for item in snapshot.get("quotes", [])
+         if item.get("symbol") == quote_symbol),
+        None,
+    ) if quote_symbol else None
+    meta = quote.get("meta") if isinstance(quote, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    source_quality = meta.get("source_quality", "UNKNOWN")
+    sources = meta.get("sources")
+    spread_pct = meta.get("spread_pct")
+    quality_ok = (
+        quote is not None
+        and quote.get("status") == "LIVE"
+        and source_quality == "CONVERGED"
+        and isinstance(sources, int) and not isinstance(sources, bool) and sources >= 2
+        and isinstance(spread_pct, (int, float)) and not isinstance(spread_pct, bool)
+        and 0 <= spread_pct <= 0.5
+    )
+    if not quality_ok:
+        return SignalResponse(
+            symbol=payload.symbol.upper(),
+            action="NO_TRADE",
+            status="NO_SETUP",
+            reason="Signal blocked: the live reference quote is unavailable or lacks verified multi-source consensus (at least two sources, spread no greater than 0.5%).",
+            evaluated_at=datetime.now(timezone.utc),
+            analysis={
+                "market_data_quality": source_quality,
+                "market_data_sources": sources,
+                "market_data_spread_pct": spread_pct,
+                "market_data_status": quote.get("status") if quote else "UNAVAILABLE",
+                "signal_blocked_by_data_quality": True,
+                "execution_enabled": False,
+            },
+        )
+    result = evaluate(payload)
+    result.analysis = {
+        **result.analysis,
+        "market_data_quality": source_quality,
+        "market_data_sources": sources,
+        "market_data_spread_pct": spread_pct,
+        "market_data_status": quote.get("status"),
+        "signal_blocked_by_data_quality": False,
+        "execution_enabled": False,
+    }
+    return result
 
 
 @app.post("/v1/research/data-quality")
