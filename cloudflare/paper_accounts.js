@@ -383,6 +383,12 @@ export class PaperAccount extends DurableObject {
 
   _createTradeAtomic(account,tokenHash,trade,createdAt) {
     if(!account) return null;
+    const hasSignalId=typeof trade.signal_id==="string"&&trade.signal_id.trim().length>0;
+    const hasSignalType=typeof trade.signal_type==="string"&&trade.signal_type.trim().length>0;
+    if((hasSignalId||hasSignalType)&&
+       (!hasSignalId||!hasSignalType||!["BUY","SELL"].includes(trade.signal_type)||
+        trade.signal_type!==trade.side))
+      throw new Error("INVALID_SIGNAL_TRADE_METADATA");
     const existing=trade.idempotency_key ? this.ctx.storage.sql.exec(
       `SELECT trade_id,status,symbol,side,quantity,entry_price,stop_loss,take_profit,
        fees,fee_bps,opened_at,strategy_id,signal_id,signal_type
