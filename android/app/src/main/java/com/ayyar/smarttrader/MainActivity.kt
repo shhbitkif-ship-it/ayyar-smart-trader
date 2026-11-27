@@ -878,7 +878,28 @@ private fun paperApi(method:String,path:String,token:String?=null,body:JSONObjec
     OutlinedTextField(value=target,onValueChange={target=it},label={Text("حد سود")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=strategyId,onValueChange={strategyId=it},label={Text("شناسه استراتژی (مثلاً EMA20_50)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=signalId,onValueChange={signalId=it},label={Text("شناسه سیگنال معتبر (حداکثر ۶۰ دقیقه)")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-    val valid=quantity.toDoubleOrNull()?.let{it>0}==true&&entry.toDoubleOrNull()?.let{it>0}==true&&stop.toDoubleOrNull()?.let{it>0}==true&&target.toDoubleOrNull()?.let{it>0}==true
+    val q=quantity.toDoubleOrNull()
+    val e=entry.toDoubleOrNull()
+    val sl=stop.toDoubleOrNull()
+    val tp=target.toDoubleOrNull()
+    val balance=summary?.optDouble("balance")?:0.0
+    val directional=q!=null&&e!=null&&sl!=null&&tp!=null&&
+      q.isFinite()&&e.isFinite()&&sl.isFinite()&&tp.isFinite()&&q>0&&e>0&&sl>0&&tp>0&&
+      (if(side=="BUY") sl<e&&tp>e else sl>e&&tp<e)
+    val estimatedFees=if(directional) q!!*(e!!+sl!!)*0.0005 else 0.0
+    val estimatedRisk=if(directional) q!!*kotlin.math.abs(e!!-sl!!)+estimatedFees else 0.0
+    val riskPercent=if(balance>0) estimatedRisk/balance*100 else Double.POSITIVE_INFINITY
+    val reward=if(directional) q!!*kotlin.math.abs(tp!!-e!!) else 0.0
+    val rewardRisk=if(estimatedRisk>0) reward/estimatedRisk else 0.0
+    val valid=directional&&balance>0&&estimatedRisk.isFinite()&&estimatedRisk>0&&estimatedRisk<=balance*0.01+1e-8
+    if(directional){
+     Text("ریسک برآوردی با کارمزد: ${String.format(Locale.US,"%.2f",estimatedRisk)} • ${String.format(Locale.US,"%.2f",riskPercent)}٪ موجودی",color=if(valid) Color(0xFF8FD6A8) else Color(0xFFFF8D8D),fontSize=11.sp,fontWeight=FontWeight.SemiBold)
+     Text("نسبت سود بالقوه به ریسک: ${String.format(Locale.US,"%.2f",rewardRisk)} • سقف ریسک هر معامله: ۱٪",color=muted,fontSize=10.sp)
+    }else{
+     Text("چیدمان قیمت نامعتبر است: برای خرید حد ضرر باید پایین‌تر و هدف بالاتر از ورود باشد؛ برای فروش برعکس.",color=Color(0xFFFF8D8D),fontSize=10.sp)
+    }
+    if(directional&&balance>0&&estimatedRisk>balance*0.01)
+     Text("ریسک این موقعیت از سقف ۱٪ موجودی بیشتر است؛ حجم یا فاصله حد ضرر را کاهش بده.",color=Color(0xFFFF8D8D),fontSize=10.sp)
     Button(enabled=!busy&&valid,onClick={
      scope.launch{
       busy=true
