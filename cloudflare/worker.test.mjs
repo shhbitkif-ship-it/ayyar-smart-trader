@@ -372,7 +372,7 @@ test("live OHLC backtest runs from the verified XAUS feed without manual candle 
     const body=await response.json();
     assert.equal(response.status,200,JSON.stringify(body));
     assert.match(requested,/xaus\.com\/api\/v1\/chart/);
-    assert.equal(body.market_provider,"XAUS+BIQUOTE");
+    assert.equal(body.market_provider,"XAUS");
     assert.equal(body.market_data_status,"LIVE",JSON.stringify(body));
     assert.equal(body.market_interval,"60m");
     assert.equal(body.candle_count,120);
@@ -913,7 +913,11 @@ test("multi-timeframe signal is archived once per completed 60m candle and histo
     });
   }
   globalThis.fetch=async url=>{
-    const interval=new URL(String(url)).searchParams.get("interval");
+    const parsed=new URL(String(url));
+    const interval=parsed.searchParams.get("interval");
+    if(parsed.hostname==="biquote.io")
+      return new Response(JSON.stringify(biquoteFixture(candlesByInterval[interval==="1h"?"60m":interval]||[],interval==="1h"?"60m":interval)),
+        {status:200,headers:{"content-type":"application/json"}});
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),
       {status:200,headers:{"content-type":"application/json"}});
   };
