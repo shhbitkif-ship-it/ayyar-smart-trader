@@ -806,6 +806,69 @@ function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
 
+const SIGNAL_STABILITY_MIN_INTERVAL_MS = 20_000;
+const SIGNAL_STABILITY_MAX_WINDOW_MS = 5 * 60_000;
+
+async function confirmSignalStability(env, symbol, signal, markets, now = Date.now()) {
+  const pending = (status, confirmations = 0) => ({
+    confirmed: false, status, confirmations, required_confirmations: 2,
+    minimum_interval_seconds: SIGNAL_STABILITY_MIN_INTERVAL_MS / 1000
+  });
+  if (!env?.SIGNAL_HISTORY) return pending("STORAGE_UNAVAILABLE");
+  if (!["BUY", "SELL"].includes(signal) || !Array.isArray(markets) || markets.length !== 3 ||
+      !Number.isFinite(now)) return pending("INVALID_CANDIDATE");
+
+  const fingerprintPayload = {
+    symbol, signal,
+    timeframes: markets.map(market => ({
+      interval: market.interval,
+      last_candle_at: market.last_candle_at,
+      candles: market.candles.slice(-3).map(candle => ({
+        timestamp: candle.timestamp,
+        open: candle.open, high: candle.high, low: candle.low, close: candle.close
+      })),
+      source_quality: market.source_quality,
+      consensus: market.source_consensus?.status
+    }))
+  };
+  const fingerprint = await sha256Hex(JSON.stringify(fingerprintPayload));
+  const key = "signal-stability:" + symbol;
+  try {
+    const previous = await env.SIGNAL_HISTORY.get(key, "json");
+    const previousAt = Date.parse(previous?.last_observed_at);
+    const firstAt = Date.parse(previous?.first_seen_at);
+    const same = previous?.fingerprint === fingerprint &&
+      Number.isFinite(previousAt) && Number.isFinite(firstAt) &&
+      now >= previousAt && now - firstAt <= SIGNAL_STABILITY_MAX_WINDOW_MS;
+
+    if (!same) {
+      const state = {fingerprint, first_seen_at:new Date(now).toISOString(),
+        last_observed_at:new Date(now).toISOString(), confirmations:1};
+      await env.SIGNAL_HISTORY.put(key, JSON.stringify(state), {expirationTtl:600});
+      return pending("AWAITING_CONFIRMATION", 1);
+    }
+
+    if (now - previousAt < SIGNAL_STABILITY_MIN_INTERVAL_MS) {
+      return pending("WAITING_FOR_SEPARATED_OBSERVATION",
+        Math.min(1, Number(previous.confirmations) || 1));
+    }
+
+    const confirmations = Math.min(2, (Number(previous.confirmations) || 1) + 1);
+    const state = {...previous, last_observed_at:new Date(now).toISOString(), confirmations};
+    await env.SIGNAL_HISTORY.put(key, JSON.stringify(state), {expirationTtl:600});
+    return {
+      confirmed: confirmations >= 2,
+      status: confirmations >= 2 ? "CONFIRMED" : "AWAITING_CONFIRMATION",
+      confirmations, required_confirmations:2,
+      minimum_interval_seconds:SIGNAL_STABILITY_MIN_INTERVAL_MS / 1000,
+      first_seen_at:state.first_seen_at,
+      last_observed_at:state.last_observed_at
+    };
+  } catch {
+    return pending("STORAGE_UNAVAILABLE");
+  }
+}
+
 async function archiveSignal(env,symbol,result) {
   if(!env?.SIGNAL_HISTORY || !result?.last_candle_at || result.market_data_status!=="LIVE")
     return {saved:false,alert_status:"NOT_CONFIGURED"};
@@ -1463,7 +1526,12 @@ export default {
           market.source_quality==="CONVERGED" &&
           market.source_consensus?.status==="CONVERGED"
         ) && analyses.every(analysis=>![ "STALE","GAPPED","MISALIGNED","UNAVAILABLE" ].includes(analysis.data_status));
-        const aligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade&&dataQualityClean;
+        const candidateAligned=intraday!=="NO_TRADE"&&shortAligned&&trendAligned&&regimeAllowsTrade&&dataQualityClean;
+        const stability=candidateAligned
+          ? await confirmSignalStability(env,symbol,intraday,markets)
+          : {confirmed:false,status:"NO_DIRECTIONAL_CANDIDATE",confirmations:0,required_confirmations:2};
+        const stabilityPending=candidateAligned&&!stability.confirmed;
+        const aligned=candidateAligned&&stability.confirmed;
         const base=analyses[1];
         const blockedReasons=[];
         if(analyses.some(a=>a.signal==="NO_TRADE"&&a.proposed_signal!=="NO_TRADE"))
@@ -1473,12 +1541,14 @@ export default {
         if(intraday==="NO_TRADE") blockedReasons.push("60m timeframe has no qualified directional setup.");
         else if(!shortAligned) blockedReasons.push("15m and 60m directional signals disagree.");
         if(!trendAligned) blockedReasons.push("EMA trend is not aligned across 15m, 60m and daily timeframes.");
+        if(stabilityPending) blockedReasons.push("Directional setup is awaiting a second identical verified observation at least 20 seconds later.");
         const qualityChecks=[
           {id:"15m_signal",passed:analyses[0].signal!=="NO_TRADE"&&analyses[0].signal===intraday},
           {id:"60m_signal",passed:intraday!=="NO_TRADE"},
           {id:"daily_trend",passed:trendAligned},
           {id:"60m_market_regime",passed:regimeAllowsTrade},
-          {id:"all_timeframe_data_quality_and_source_consensus",passed:dataQualityClean}
+          {id:"all_timeframe_data_quality_and_source_consensus",passed:dataQualityClean},
+          {id:"signal_temporal_stability",passed:!candidateAligned||stability.confirmed}
         ];
         const result={
           signal:aligned?intraday:"NO_TRADE",
@@ -1491,6 +1561,7 @@ export default {
           entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
           take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
           timeframes:byInterval,market_data_status:dataQualityClean?"LIVE":"DEGRADED",
+          signal_stability:stability,
           market_provider:[...new Set(markets.flatMap(market=>market.source_consensus?.providers||[market.provider]))].join("+"),
           market_sources:markets.map(market=>({interval:market.interval,provider:market.provider,
             source_url:market.source_url,
@@ -1503,12 +1574,17 @@ export default {
           execution_enabled:false,
           warning:"Multi-timeframe research signal only. Indicative global XAU/USD data; no broker orders are placed."
         };
-        try {
-          const archive=await archiveSignal(env,symbol,result);
-          result.archive_status=archive.saved?"SAVED":"SKIPPED";
-          result.alert_status=archive.alert_status;
-          if(archive.saved&&archive.key) result.signal_id=archive.key;
-        } catch { result.archive_status="UNAVAILABLE";result.alert_status="UNAVAILABLE"; }
+        if(stabilityPending) {
+          result.archive_status="WAITING_FOR_STABILITY";
+          result.alert_status="NOT_SENT";
+        } else {
+          try {
+            const archive=await archiveSignal(env,symbol,result);
+            result.archive_status=archive.saved?"SAVED":"SKIPPED";
+            result.alert_status=archive.alert_status;
+            if(archive.saved&&archive.key) result.signal_id=archive.key;
+          } catch { result.archive_status="UNAVAILABLE";result.alert_status="UNAVAILABLE"; }
+        }
         return json(result);
       } catch(e) {
         return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
