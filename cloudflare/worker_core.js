@@ -1193,7 +1193,9 @@ export default {
              (idem!==undefined&&(typeof idem!=="string"||idem.length<8||idem.length>128))||
              (strategyId!==null&&(typeof strategyId!=="string"||!/^[A-Za-z0-9._:-]{1,64}$/.test(strategyId)))||
              (signalId!==null&&(typeof signalId!=="string"||!/^[A-Za-z0-9._:-]{1,96}$/.test(signalId)))||
-             (signalType!==null&&(!["BUY","SELL","NO_TRADE"].includes(signalType))))
+             (signalType!==null&&(!["BUY","SELL"].includes(signalType)))||
+             ((signalId===null)!==(signalType===null))||
+             (signalType!==null&&signalType!==side))
             return json({error:"Invalid trade: use positive numeric values, directional stop/target and a valid optional idempotency_key"},400);
           const result=await account.createTrade(tokenHash,{trade_id:randomHex(16),symbol,side,quantity,entry_price,stop_loss,take_profit,fee_bps:feeBps,idempotency_key:idem??null,
             strategy_id:strategyId,signal_id:signalId,signal_type:signalType},new Date().toISOString());
