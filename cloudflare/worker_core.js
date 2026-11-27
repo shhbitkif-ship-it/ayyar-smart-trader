@@ -1457,7 +1457,7 @@ export default {
           entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
           take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
           timeframes:byInterval,market_data_status:dataQualityClean?"LIVE":"DEGRADED",
-          market_provider:[...new Set(markets.map(market=>market.provider))].join("+"),
+          market_provider:[...new Set(markets.flatMap(market=>market.source_consensus?.providers||[market.provider]))].join("+"),
           market_sources:markets.map(market=>({interval:market.interval,provider:market.provider,
             source_url:market.source_url,
             fallback_reason:market.source_consensus?.errors?.join("; ")||market.fallback_reason||null,
