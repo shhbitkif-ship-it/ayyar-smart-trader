@@ -539,7 +539,7 @@ test("EMA versus ATR out-of-sample comparison excludes training P&L and reports 
     assert.ok(Number.isFinite(m.max_drawdown_pct));
     assert.ok(["DESCRIPTIVE_SAMPLE","INSUFFICIENT_SAMPLE"].includes(m.sample_status));
     assert.ok(Array.isArray(model.regime_diagnostics.buckets));
-    assert.equal(model.regime_diagnostics.test_bars,90);
+    assert.equal(model.regime_diagnostics.buckets.reduce((sum,bucket)=>sum+bucket.bars,0),90);
   }
   assert.equal(body.execution_enabled,false);
   assert.match(body.methodology_note,/first 70% is indicator warm-up only/i);
