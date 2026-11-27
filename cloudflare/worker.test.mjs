@@ -436,6 +436,57 @@ test("EMA backtest returns cost-aware metrics from valid OHLC candles", async ()
   assert.ok(body.warning.startsWith("Research only"));
 });
 
+test("ATR risk backtest sizes positions to at most one percent and returns conservative stop diagnostics", async () => {
+  const candles=[];
+  for(let i=0;i<180;i++){
+    const close=i<70?3100-i*2:i<115?2960+(i-70)*5:3185-(i-115)*4;
+    candles.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+4,low:close-4,close});
+  }
+  const response=await worker.fetch(new Request("https://unit.test/v1/backtest/atr-risk",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles,starting_capital:10000,risk_fraction:0.01,
+      atr_period:14,atr_stop_multiple:2,reward_risk_multiple:1.5})
+  }));
+  const body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.strategy,"EMA crossover with ATR stop and fixed fractional risk");
+  assert.equal(body.risk_model.method,"fixed_fractional");
+  assert.equal(body.risk_model.risk_fraction,0.01);
+  assert.equal(body.execution_enabled,undefined);
+  assert.ok(body.equity_curve.every(point=>Number.isFinite(point.equity)&&point.equity>0));
+  for(const trade of body.trades){
+    const entryIndex=body.equity_curve.findIndex(point=>point.timestamp===trade.entry_time);
+    assert.ok(entryIndex>=1,"entry must be aligned with the next candle open");
+    const priorEquity=body.equity_curve[entryIndex-1].equity;
+    assert.ok(trade.initial_risk_amount<=priorEquity*0.0101,
+      "estimated loss at stop, including exit costs, must not exceed the 1% risk budget");
+    assert.ok(trade.stop_price<trade.entry_price);
+    assert.ok(trade.target_price>trade.entry_price);
+    assert.ok(["STOP_LOSS","STOP_LOSS_GAP","STOP_LOSS_BOTH_LEVELS_TOUCHED",
+      "TAKE_PROFIT","TAKE_PROFIT_GAP","EMA_BEARISH_CROSS","END_OF_TEST"].includes(trade.exit_reason));
+  }
+  assert.equal(body.open_position,false);
+  assert.ok(body.warning.startsWith("Research only"));
+});
+
+test("ATR risk backtest rejects risk above one percent and irregular history", async () => {
+  const candles=Array.from({length:100},(_,i)=>{
+    const close=3000+Math.sin(i/5)*20+i*0.2;
+    return {timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),open:close,high:close+3,low:close-3,close};
+  });
+  const call=async payload=>worker.fetch(new Request("https://unit.test/v1/backtest/atr-risk",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)
+  }));
+  const tooMuch=await call({candles,risk_fraction:0.0101});
+  assert.equal(tooMuch.status,400);
+  const gap=candles.map(x=>({...x}));
+  gap[50].timestamp=new Date(Date.parse(gap[49].timestamp)+2*86400000).toISOString();
+  const irregular=await call({candles:gap});
+  assert.equal(irregular.status,400);
+  assert.match((await irregular.json()).error,/gapped/i);
+});
+
 test("EMA backtest applies half-spread on each side and reports the full spread", async () => {
   const candles=[];
   for(let i=0;i<150;i++){
