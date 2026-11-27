@@ -136,7 +136,7 @@ def test_signal_endpoint_blocks_unavailable_or_single_source_market_data(monkeyp
             }],
         }
 
-    monkeypatch.setattr(market_data, "market_snapshot", snapshot)
+    monkeypatch.setattr("app.main.market_snapshot", snapshot)
     response = client.post("/v1/signals/evaluate", json=_signal_request())
     assert response.status_code == 200
     body = response.json()
@@ -166,7 +166,7 @@ def test_signal_endpoint_requires_server_verified_multi_source_consensus(monkeyp
             reason="Test evaluator", evaluated_at=datetime.now(timezone.utc), analysis={},
         )
 
-    monkeypatch.setattr(market_data, "market_snapshot", snapshot)
+    monkeypatch.setattr("app.main.market_snapshot", snapshot)
     monkeypatch.setattr("app.main.evaluate", fake_evaluate)
     response = client.post("/v1/signals/evaluate", json=_signal_request())
     assert response.status_code == 200
@@ -181,7 +181,7 @@ def test_signal_endpoint_blocks_unknown_instrument_reference(monkeypatch):
     async def snapshot():
         return {"status": "LIVE", "quotes": []}
 
-    monkeypatch.setattr(market_data, "market_snapshot", snapshot)
+    monkeypatch.setattr("app.main.market_snapshot", snapshot)
     response = client.post("/v1/signals/evaluate", json=_signal_request("UNKNOWN"))
     assert response.status_code == 200
     body = response.json()
