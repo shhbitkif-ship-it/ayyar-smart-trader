@@ -110,3 +110,80 @@ def test_backtest_endpoint_accepts_and_reports_full_spread():
     assert response.status_code == 200
     assert response.json()["cost_model"]["spread_bps_full"] == 18
     assert response.json()["cost_model"]["spread_bps_per_side"] == 9
+
+
+def _signal_request(symbol="XAUUSD"):
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    candles = []
+    for index in range(220):
+        price = 3000 + index * 0.1
+        candles.append({
+            "timestamp": (now - timedelta(minutes=220-index)).isoformat(),
+            "open": price, "high": price + 1, "low": price - 1,
+            "close": price, "volume": 10,
+        })
+    return {"symbol": symbol, "timeframe": "1m", "candles": candles}
+
+
+def test_signal_endpoint_blocks_unavailable_or_single_source_market_data(monkeypatch):
+    async def snapshot():
+        return {
+            "status": "PARTIAL",
+            "quotes": [{
+                "symbol": "XAUUSD", "status": "LIVE", "price": 3000,
+                "meta": {"source_quality": "SINGLE_SOURCE", "sources": 1, "spread_pct": None},
+            }],
+        }
+
+    monkeypatch.setattr(market_data, "market_snapshot", snapshot)
+    response = client.post("/v1/signals/evaluate", json=_signal_request())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"] == "NO_TRADE"
+    assert body["status"] == "NO_SETUP"
+    assert body["analysis"]["signal_blocked_by_data_quality"] is True
+    assert body["analysis"]["market_data_quality"] == "SINGLE_SOURCE"
+
+
+def test_signal_endpoint_requires_server_verified_multi_source_consensus(monkeypatch):
+    async def snapshot():
+        return {
+            "status": "LIVE",
+            "quotes": [{
+                "symbol": "XAUUSD", "status": "LIVE", "price": 3000,
+                "meta": {"source_quality": "CONVERGED", "sources": 3, "spread_pct": 0.3},
+            }],
+        }
+
+    called = {"value": False}
+    def fake_evaluate(payload):
+        called["value"] = True
+        from app.schemas import SignalResponse
+        from datetime import datetime, timezone
+        return SignalResponse(
+            symbol=payload.symbol, action="NO_TRADE", status="NO_SETUP",
+            reason="Test evaluator", evaluated_at=datetime.now(timezone.utc), analysis={},
+        )
+
+    monkeypatch.setattr(market_data, "market_snapshot", snapshot)
+    monkeypatch.setattr("app.main.evaluate", fake_evaluate)
+    response = client.post("/v1/signals/evaluate", json=_signal_request())
+    assert response.status_code == 200
+    assert called["value"] is True
+    body = response.json()
+    assert body["analysis"]["market_data_quality"] == "CONVERGED"
+    assert body["analysis"]["market_data_sources"] == 3
+    assert body["analysis"]["signal_blocked_by_data_quality"] is False
+
+
+def test_signal_endpoint_blocks_unknown_instrument_reference(monkeypatch):
+    async def snapshot():
+        return {"status": "LIVE", "quotes": []}
+
+    monkeypatch.setattr(market_data, "market_snapshot", snapshot)
+    response = client.post("/v1/signals/evaluate", json=_signal_request("UNKNOWN"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"] == "NO_TRADE"
+    assert body["analysis"]["signal_blocked_by_data_quality"] is True
