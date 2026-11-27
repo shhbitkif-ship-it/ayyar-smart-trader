@@ -749,7 +749,7 @@ async function archiveSignal(env,symbol,result) {
 export async function validateArchivedSignalForTrade(env,signalId,symbol,side,now=Date.now()) {
   const invalid=(error)=>({valid:false,error});
   if(!env?.SIGNAL_HISTORY) return invalid("SIGNAL_HISTORY_UNAVAILABLE");
-  if(typeof signalId!=="string"||!/^xau:latest:\\d{13}$/.test(signalId))
+  if(typeof signalId!=="string"||!/^xau:latest:\d{13}$/.test(signalId))
     return invalid("INVALID_SIGNAL_REFERENCE");
   let record;
   try { record=await env.SIGNAL_HISTORY.get(signalId,"json"); }
