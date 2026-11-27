@@ -848,9 +848,17 @@ async function confirmSignalStability(env, symbol, signal, markets, now = Date.n
       return pending("AWAITING_CONFIRMATION", 1);
     }
 
+    if ((Number(previous.confirmations) || 1) >= 2) {
+      return {
+        confirmed:true, status:"CONFIRMED", confirmations:2, required_confirmations:2,
+        minimum_interval_seconds:SIGNAL_STABILITY_MIN_INTERVAL_MS / 1000,
+        first_seen_at:previous.first_seen_at,
+        last_observed_at:previous.last_observed_at
+      };
+    }
+
     if (now - previousAt < SIGNAL_STABILITY_MIN_INTERVAL_MS) {
-      return pending("WAITING_FOR_SEPARATED_OBSERVATION",
-        Math.min(1, Number(previous.confirmations) || 1));
+      return pending("WAITING_FOR_SEPARATED_OBSERVATION", 1);
     }
 
     const confirmations = Math.min(2, (Number(previous.confirmations) || 1) + 1);
