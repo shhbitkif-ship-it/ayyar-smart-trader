@@ -2932,7 +2932,13 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
   return {key,record:{signal:"BUY",symbol:"xau",market_data_status:"LIVE",
    execution_enabled:false,archive_source:"validated completed OHLC multi-timeframe evaluation",
    last_candle_at:candleAt,recorded_at:new Date(time+1000).toISOString(),
-   confidence:85,entry:4100,stop_loss:4080,take_profit:4140,archive_key:key,...overrides}};
+   confidence:85,entry:4100,stop_loss:4080,take_profit:4140,archive_key:key,
+   signal_quality:{status:"PASSED"},
+   signal_stability:{status:"CONFIRMED",confirmed:true,confirmations:2,required_confirmations:2},
+   market_sources:["15m","60m","1d"].map(interval=>({interval,source_quality:"CONVERGED",
+    data_quality:{status:"CLEAN"},source_consensus:{status:"CONVERGED",
+     latest_timestamp_match:true,overlap_candles:3,max_ohlc_spread_pct:0.2}})),
+   ...overrides}};
  };
  const current=makeRecord(now-60_000);
  const store=new Map([[current.key,current.record]]);
@@ -2942,6 +2948,15 @@ test("paper trade signal validation rejects expired, superseded, and mismatched 
  const valid=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","BUY",now);
  assert.equal(valid.valid,true,JSON.stringify(valid));
  assert.equal(valid.signal_id,current.key);
+ const legacy=makeRecord(now-30_000,{signal_stability:undefined});
+ store.set(legacy.key,legacy.record);
+ const legacyResult=await validateArchivedSignalForTrade(env,legacy.key,"XAUUSD","BUY",now);
+ assert.equal(legacyResult.error,"SIGNAL_NOT_FOUND_OR_INVALID");
+ const weakConsensus=makeRecord(now-25_000,{market_sources:current.record.market_sources.map((source,i)=>
+   i===0?{...source,source_consensus:{...source.source_consensus,max_ohlc_spread_pct:0.8}}:source)});
+ store.set(weakConsensus.key,weakConsensus.record);
+ const weakResult=await validateArchivedSignalForTrade(env,weakConsensus.key,"XAUUSD","BUY",now);
+ assert.equal(weakResult.error,"SIGNAL_NOT_FOUND_OR_INVALID");
  const wrongSide=await validateArchivedSignalForTrade(env,current.key,"XAUUSD","SELL",now);
  assert.equal(wrongSide.error,"SIGNAL_SIDE_MISMATCH");
  const wrongSymbol=await validateArchivedSignalForTrade(env,current.key,"BTCUSD","BUY",now);
