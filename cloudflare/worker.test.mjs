@@ -2158,6 +2158,22 @@ test("paper trade endpoint validates direction, stores trades and supports idemp
   assert.equal((await journal.json()).trades.length,1);
 });
 
+test("paper trade endpoint rejects quantity precision beyond six decimal places",async()=>{
+  const env=paperAccountEnv();
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.201"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const url="https://unit.test/v1/paper/accounts/"+account.account_id+"/trades";
+  const headers={"content-type":"application/json",authorization:"Bearer "+account.access_token};
+  const response=await worker.fetch(new Request(url,{method:"POST",headers,body:JSON.stringify({
+    symbol:"XAUUSD",side:"BUY",quantity:0.0000001,entry_price:2000,stop_loss:1990,take_profit:2020
+  })}),env);
+  assert.equal(response.status,400);
+  assert.match((await response.json()).error,/positive numeric values/i);
+});
+
 test("paper trade close is authenticated and records realized PnL only in paper mode",async()=>{
   const env=paperAccountEnv();
   const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
