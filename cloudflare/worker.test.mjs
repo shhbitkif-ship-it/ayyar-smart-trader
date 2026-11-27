@@ -754,16 +754,14 @@ test("latest signal endpoint fails closed when the provider is unavailable", asy
 
 test("multi-timeframe endpoint requires 15m, 60m, daily trend and temporally stable confirmation", async () => {
   const originalFetch=globalThis.fetch;
-  const originalNow=Date.now;
-  let fakeNow=originalNow();
-  Date.now=()=>fakeNow;
+  let fakeNow=Date.now();
   const store=new Map();
   const kv={
     async put(key,value,options){store.set(key,{value:JSON.parse(value),options});},
     async list({prefix,limit}){return {keys:[...store.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(name=>({name}))};},
     async get(key){return store.get(key)?.value??null;}
   };
-  const env={SIGNAL_HISTORY:kv};
+  const env={SIGNAL_HISTORY:kv,__signalClock:()=>fakeNow};
   const candlesByInterval={};
   for (const [interval,intervalMs,count] of [["15m",900000,120],["60m",3600000,120],["1d",86400000,80]]) {
     const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
@@ -829,7 +827,7 @@ test("multi-timeframe endpoint requires 15m, 60m, daily trend and temporally sta
     assert.ok(Math.abs((body.take_profit-body.entry)-expectedAtr*3)<0.00001);
     assert.ok(body.stop_loss>0&&body.stop_loss<body.entry);
     assert.ok(body.take_profit>body.entry);
-  } finally { globalThis.fetch=originalFetch; Date.now=originalNow; }
+  } finally { globalThis.fetch=originalFetch; }
 });
 
 test("multi-timeframe signal reports the actual BIQUOTE fallback provider per timeframe", async () => {
@@ -914,9 +912,7 @@ test("multi-timeframe endpoint blocks signals when any timeframe has candle gaps
 
 test("multi-timeframe signal is archived once per completed 60m candle after stable confirmation", async () => {
   const originalFetch=globalThis.fetch;
-  const originalNow=Date.now;
-  let fakeNow=originalNow();
-  Date.now=()=>fakeNow;
+  let fakeNow=Date.now();
   const store=new Map();
   const kv={
     async put(key,value,options){store.set(key,{value:JSON.parse(value),options});},
@@ -943,7 +939,7 @@ test("multi-timeframe signal is archived once per completed 60m candle after sta
       {status:200,headers:{"content-type":"application/json"}});
   };
   try{
-    const env={SIGNAL_HISTORY:kv};
+    const env={SIGNAL_HISTORY:kv,__signalClock:()=>fakeNow};
     const first=await worker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"),env);
     const firstBody=await first.json();
     assert.equal(firstBody.signal,"NO_TRADE");
@@ -963,7 +959,7 @@ test("multi-timeframe signal is archived once per completed 60m candle after sta
     assert.equal(historyBody.count,1);
     assert.equal(historyBody.records[0].archive_source,"validated completed OHLC multi-timeframe evaluation");
     assert.equal(historyBody.execution_enabled,false);
-  }finally{globalThis.fetch=originalFetch;Date.now=originalNow;}
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("signal performance uses next candle open, completed horizons and refuses candle gaps", async () => {
@@ -1142,6 +1138,7 @@ test("signal performance returns unavailable without storage or when the candle 
 
 test("Telegram signal alert is sent once for a new confirmed direction and not duplicated", async () => {
   const originalFetch=globalThis.fetch;
+  let fakeNow=Date.now();
   const store=new Map();
   const kv={
     async put(key,value){store.set(key,JSON.parse(value));},
@@ -1173,16 +1170,23 @@ test("Telegram signal alert is sent once for a new confirmed direction and not d
     return new Response(JSON.stringify(xausChartFixture(candlesByInterval[interval]||[])),{status:200,headers:{"content-type":"application/json"}});
   };
   try{
-    const env={SIGNAL_HISTORY:kv,BOT_TOKEN:"test-token",SIGNAL_ALERT_CHAT_ID:"12345"};
+    const env={SIGNAL_HISTORY:kv,BOT_TOKEN:"test-token",SIGNAL_ALERT_CHAT_ID:"12345",
+      __signalClock:()=>fakeNow};
     const request=()=>new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau");
     const first=await worker.fetch(request(),env);
     const firstBody=await first.json();
-    assert.equal(firstBody.signal,"BUY",JSON.stringify(firstBody));
-    assert.equal(firstBody.alert_status,"SENT");
-    assert.equal(sent.length,1);
+    assert.equal(firstBody.signal,"NO_TRADE",JSON.stringify(firstBody));
+    assert.equal(firstBody.archive_status,"WAITING_FOR_STABILITY");
+    assert.equal(sent.length,0);
+    fakeNow+=21_000;
     const second=await worker.fetch(request(),env);
     const secondBody=await second.json();
-    assert.equal(secondBody.signal,"BUY");
+    assert.equal(secondBody.signal,"BUY",JSON.stringify(secondBody));
+    assert.equal(secondBody.alert_status,"SENT");
+    assert.equal(sent.length,1);
+    const third=await worker.fetch(request(),env);
+    const thirdBody=await third.json();
+    assert.equal(thirdBody.signal,"BUY");
     assert.equal(sent.length,1,"same completed candle must not send duplicate Telegram alerts");
   }finally{globalThis.fetch=originalFetch;}
 });
