@@ -704,6 +704,70 @@ async function fetchGoldCandles(symbol, interval) {
   }
 }
 
+
+const CANDLE_SOURCE_MAX_SPREAD_PCT = 0.5;
+const CANDLE_SOURCE_MIN_OVERLAP = 3;
+
+async function fetchGoldCandlesWithConsensus(symbol, interval) {
+  const results = await Promise.allSettled([
+    fetchGoldCandlesFromXaus(symbol, interval),
+    fetchGoldCandlesFromBiquote(symbol, interval)
+  ]);
+  const available = results.filter(result => result.status === "fulfilled").map(result => result.value);
+  const errors = results.map((result, index) => result.status === "rejected"
+    ? (index === 0 ? "XAUS: " : "BIQUOTE: ") + String(result.reason?.message || "unavailable")
+    : null).filter(Boolean);
+  if (!available.length) throw new Error("No OHLC provider available for consensus: " + errors.join("; "));
+  const primary = available[0];
+  const base = {
+    ...primary,
+    source_consensus: {
+      status: "UNCONFIRMED",
+      providers: available.map(item => item.provider),
+      required_providers: ["XAUS", "BIQUOTE"],
+      overlap_candles: 0,
+      max_close_spread_pct: null,
+      errors
+    }
+  };
+  if (available.length !== 2) {
+    return {...base, source_quality: "SINGLE_SOURCE", status: "UNCONFIRMED",
+      analysis_ready: false,
+      note: "A second independent OHLC provider is unavailable; this feed is diagnostic only and cannot authorize a signal."};
+  }
+  const [xaus, biquote] = results.map(result => result.value);
+  const byTime = new Map(biquote.candles.map(candle => [candle.timestamp, candle]));
+  const overlap = xaus.candles.filter(candle => byTime.has(candle.timestamp));
+  if (overlap.length < CANDLE_SOURCE_MIN_OVERLAP) {
+    return {...base, source_quality: "UNCONFIRMED", status: "UNCONFIRMED",
+      source_consensus: {...base.source_consensus, overlap_candles: overlap.length},
+      analysis_ready: false,
+      note: "Providers do not share enough completed candle timestamps to verify consensus."};
+  }
+  const spreads = overlap.map(candle => {
+    const other = byTime.get(candle.timestamp);
+    return Math.abs(candle.close / other.close - 1) * 100;
+  });
+  const maxSpread = Math.max(...spreads);
+  const converged = Number.isFinite(maxSpread) && maxSpread <= CANDLE_SOURCE_MAX_SPREAD_PCT;
+  return {
+    ...base,
+    source_quality: converged ? "CONVERGED" : "DIVERGENT",
+    status: converged && primary.data_quality?.status === "CLEAN" ? "LIVE" : "UNAVAILABLE",
+    analysis_ready: converged && primary.data_quality?.status === "CLEAN" && primary.candles.length >= 60,
+    source_consensus: {
+      ...base.source_consensus,
+      status: converged ? "CONVERGED" : "DIVERGENT",
+      overlap_candles: overlap.length,
+      max_close_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      tolerance_pct: CANDLE_SOURCE_MAX_SPREAD_PCT
+    },
+    note: converged
+      ? "XAUS and BIQUOTE agree on overlapping completed XAU/USD candle closes within the configured tolerance. Indicative data only, not a broker execution feed."
+      : "Cross-provider candle disagreement exceeds the configured tolerance; signal generation is blocked."
+  };
+}
+
 function round2(v){return Math.round(v*100)/100;}
 function round4(v){return Math.round(v*10000)/10000;}
 function round6(v){return Math.round(v*1000000)/1000000;}
@@ -1338,7 +1402,7 @@ export default {
       const symbol=url.searchParams.get("symbol")||"xau";
       const intervals=["15m","60m","1d"];
       try {
-        const markets=await Promise.all(intervals.map(interval=>fetchGoldCandles(symbol,interval)));
+        const markets=await Promise.all(intervals.map(interval=>fetchGoldCandlesWithConsensus(symbol,interval)));
         const analyses=markets.map((market,i)=>evaluateSignal({
           candles:market.candles,timeframe_minutes:market.interval_seconds/60
         }));
@@ -1365,7 +1429,7 @@ export default {
         const blockedReasons=[];
         if(analyses.some(a=>a.signal==="NO_TRADE"&&a.proposed_signal!=="NO_TRADE"))
           blockedReasons.push("At least one timeframe produced a directional candidate that failed its market-regime quality gate.");
-        if(!dataQualityClean) blockedReasons.push("At least one timeframe has candle gaps or non-clean data quality.");
+        if(!dataQualityClean) blockedReasons.push("At least one timeframe lacks clean candles or verified XAUS/BIQUOTE source consensus.");
         if(!regimes[1].tradeable) blockedReasons.push("60m regime blocks entries: "+regimes[1].reason);
         if(intraday==="NO_TRADE") blockedReasons.push("60m timeframe has no qualified directional setup.");
         else if(!shortAligned) blockedReasons.push("15m and 60m directional signals disagree.");
@@ -1375,7 +1439,7 @@ export default {
           {id:"60m_signal",passed:intraday!=="NO_TRADE"},
           {id:"daily_trend",passed:trendAligned},
           {id:"60m_market_regime",passed:regimeAllowsTrade},
-          {id:"all_timeframe_data_quality",passed:dataQualityClean}
+          {id:"all_timeframe_data_quality_and_source_consensus",passed:dataQualityClean}
         ];
         const result={
           signal:aligned?intraday:"NO_TRADE",
