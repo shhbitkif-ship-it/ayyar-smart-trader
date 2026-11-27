@@ -53,7 +53,8 @@ data class SignalPerformanceHorizon(val horizon:Int,val scored:Int,val wins:Int,
 data class SignalPerformancePeriodHorizon(val horizon:Int,val scored:Int,val averageNetReturn:Double?,val winRate:Double?,val sampleStatus:String)
 data class SignalPerformancePeriod(val period:String,val horizons:List<SignalPerformancePeriodHorizon>)
 data class SignalPerformanceRegime(val regime:String,val tradeable:Boolean,val horizons:List<SignalPerformancePeriodHorizon>)
-data class SignalPerformanceUi(val horizons:List<SignalPerformanceHorizon>,val periods:List<SignalPerformancePeriod>,val regimes:List<SignalPerformanceRegime>,val directionalSignals:Int,val pending:Int,val unavailable:Int,val lastCandle:String,val warning:String)
+data class SignalPerformanceConfidence(val band:String,val horizons:List<SignalPerformancePeriodHorizon>)
+data class SignalPerformanceUi(val horizons:List<SignalPerformanceHorizon>,val periods:List<SignalPerformancePeriod>,val regimes:List<SignalPerformanceRegime>,val confidenceBands:List<SignalPerformanceConfidence>,val directionalSignals:Int,val pending:Int,val unavailable:Int,val lastCandle:String,val warning:String)
 private val bg=Color(0xFF090B10); private val panel=Color(0xFF171B24); private val gold=Color(0xFFD6AD55); private val muted=Color(0xFF9AA3B2)
 private val historySymbols=listOf("gold-18k" to "طلای ۱۸ عیار","gold-24k" to "طلای ۲۴ عیار","gold-mesghal" to "مثقال طلا","coin-emami" to "سکه امامی","coin-half" to "نیم سکه","coin-quarter" to "ربع سکه","usd" to "دلار آزاد","xau" to "اونس جهانی")
 
@@ -245,6 +246,25 @@ class MainActivity:ComponentActivity(){ override fun onCreate(savedInstanceState
                     }
                     Text("$regimeName • ${if(regime.tradeable) "مجاز از نظر فیلتر رژیم" else "غیرمجاز / تشخیصی"}",color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
                     regime.horizons.forEach { h ->
+                      val net=h.averageNetReturn?.let { String.format(Locale.US,"%+.3f%%",it) } ?: "—"
+                      Text("${h.horizon} کندل • ${h.scored} نمونه • بازده خالص: $net • ${if(h.sampleStatus=="DESCRIPTIVE_SAMPLE") "نمونه توصیفی" else "نمونه ناکافی"}",color=muted,fontSize=10.sp)
+                    }
+                  }
+                }
+                if(p.confidenceBands.isNotEmpty()) {
+                  Divider(color=Color(0xFF343B48))
+                  Text("عملکرد بر اساس قدرت همگرایی تایم‌فریم‌ها",color=gold,fontWeight=FontWeight.SemiBold,fontSize=13.sp)
+                  Text("امتیاز فنی ۱۵ دقیقه، یک‌ساعته و روزانه است؛ احتمال برد نیست.",color=muted,fontSize=10.sp)
+                  p.confidenceBands.forEach { band ->
+                    val bandName=when(band.band) {
+                      "LOW_0_39" -> "ضعیف (۰ تا ۳۹)"
+                      "MODERATE_40_59" -> "متوسط (۴۰ تا ۵۹)"
+                      "STRONG_60_79" -> "قوی (۶۰ تا ۷۹)"
+                      "VERY_STRONG_80_100" -> "بسیار قوی (۸۰ تا ۱۰۰)"
+                      else -> "نامشخص"
+                    }
+                    Text(bandName,color=Color.White,fontWeight=FontWeight.SemiBold,fontSize=12.sp)
+                    band.horizons.forEach { h ->
                       val net=h.averageNetReturn?.let { String.format(Locale.US,"%+.3f%%",it) } ?: "—"
                       Text("${h.horizon} کندل • ${h.scored} نمونه • بازده خالص: $net • ${if(h.sampleStatus=="DESCRIPTIVE_SAMPLE") "نمونه توصیفی" else "نمونه ناکافی"}",color=muted,fontSize=10.sp)
                     }
@@ -524,7 +544,19 @@ private fun fetchSignalPerformance():SignalPerformanceUi{
      }
      SignalPerformanceRegime(regime.optString("regime"),regime.optBoolean("tradeable"),regimeHorizons)
    }
-   return SignalPerformanceUi(horizons,periods,regimes,root.optInt("directional_signals"),root.optInt("pending_count"),
+   val confidenceArray=root.optJSONArray("confidence_breakdown")?:JSONArray()
+   val confidenceBands=(0 until confidenceArray.length()).map { i ->
+     val band=confidenceArray.getJSONObject(i)
+     val metrics=band.optJSONObject("horizons")?:JSONObject()
+     val bandHorizons=listOf(1,4,24).mapNotNull { horizon ->
+       val metric=metrics.optJSONObject(horizon.toString())?:return@mapNotNull null
+       val net=if(metric.isNull("average_net_return_pct")) null else metric.optDouble("average_net_return_pct")
+       val win=if(metric.isNull("win_rate_pct")) null else metric.optDouble("win_rate_pct")
+       SignalPerformancePeriodHorizon(horizon,metric.optInt("scored"),net,win,metric.optString("sample_status","INSUFFICIENT_SAMPLE"))
+     }
+     SignalPerformanceConfidence(band.optString("confidence_band"),bandHorizons)
+   }
+   return SignalPerformanceUi(horizons,periods,regimes,confidenceBands,root.optInt("directional_signals"),root.optInt("pending_count"),
      root.optInt("unavailable_count"),root.optString("market_last_candle_at",""),
      root.optString("warning","ارزیابی توصیفی است و تضمین سود نیست."))
  } finally {connection.disconnect()}
