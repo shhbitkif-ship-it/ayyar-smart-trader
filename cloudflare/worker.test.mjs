@@ -2860,6 +2860,33 @@ test("market status endpoint exposes accurate partial quote counts", async () =>
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("market status exposes per-provider and per-instrument freshness diagnostics", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-source-health-test")).default;
+  const stamp=new Date().toISOString();
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:stamp,
+    items:[
+      {id:"gold-18k",price:7200000,unit:"IRT",updated_utc:stamp,stale:false},
+      {id:"gold-24k",price:9600000,unit:"IRT",updated_utc:new Date(Date.now()-20*60*1000).toISOString(),stale:false}
+    ]
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"PARTIAL");
+    assert.ok(Array.isArray(body.source_health));
+    const nerkhAra=body.source_health.find(source=>source.provider==="NerkhAra");
+    assert.ok(nerkhAra);
+    assert.equal(nerkhAra.live_quotes,1);
+    assert.equal(nerkhAra.stale_quotes,1);
+    assert.equal(nerkhAra.total_quotes,8);
+    assert.equal(nerkhAra.quotes.find(quote=>quote.symbol==="GOLD18").status,"LIVE");
+    assert.equal(nerkhAra.quotes.find(quote=>quote.symbol==="GOLD24").status,"STALE");
+    assert.match(body.note,/not an upstream connectivity/i);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("market status endpoint reports zero live quotes when providers fail", async () => {
   const isolatedWorker=(await import("./worker_core.js?market-status-unavailable-test")).default;
   globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
