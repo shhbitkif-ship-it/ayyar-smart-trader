@@ -2850,6 +2850,32 @@ test("scheduled monitor checks every registered paper account using fresh comple
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("scheduled paper monitor persists classified provider failures without touching paper positions",async()=>{
+  const statusStore=new Map();
+  const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.57"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  assert.equal(created.status,201);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
+  try{
+    await assert.rejects(
+      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.parse("2026-11-27T21:00:00Z")},env),
+      /XAUS unavailable:.*BIQUOTE fallback unavailable:/
+    );
+    const status=statusStore.get("paper-monitor:latest");
+    assert.equal(status.status,"ERROR");
+    assert.deepEqual(status.provider_failures.map(item=>item.provider),["XAUS","BIQUOTE"]);
+    assert.deepEqual(status.provider_failures.map(item=>item.failure_class),["PROVIDER_UNAVAILABLE","PROVIDER_UNAVAILABLE"]);
+    assert.equal(status.execution_enabled,false);
+    assert.equal(env.__accounts.size,1);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("scheduled paper monitor records estimated weekend closure without fetching stale candles or changing open positions",async()=>{
   const statusStore=new Map();
   const env=paperAccountEnv();
