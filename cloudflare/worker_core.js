@@ -2097,10 +2097,29 @@ export default {
         }
         return json(result);
       } catch(e) {
-        return json({signal:"NO_TRADE",confidence:0,data_status:"UNAVAILABLE",
-          reason:String(e?.message||"Multi-timeframe OHLC data unavailable"),
-          execution_enabled:false,
-          warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."});
+        const reason=String(e?.message||"Multi-timeframe OHLC data unavailable");
+        const unavailableTimeframes=Object.fromEntries(intervals.map(interval=>[interval,{
+          signal:"NO_TRADE",proposed_signal:"NO_TRADE",confidence:0,
+          data_status:"UNAVAILABLE",data_quality:{status:"UNAVAILABLE",reason},
+          source_quality:"UNAVAILABLE",
+          source_consensus:{status:"UNAVAILABLE",required_providers:["XAUS","BIQUOTE"],
+            providers:[],provider_diagnostics:[],errors:[reason]},
+          reason
+        }]));
+        return json({
+          signal:"NO_TRADE",confidence:0,signal_quality:{status:"BLOCKED",
+            checks:[{id:"all_timeframe_data_quality_and_source_consensus",passed:false}],
+            passed_checks:0,required_checks:1,
+            blocked_reasons:["Multi-timeframe market data is unavailable; directional signals are blocked."]},
+          data_status:"UNAVAILABLE",market_data_status:"DEGRADED",
+          signal_stability:{status:"UNAVAILABLE",confirmed:false,confirmations:0,required_confirmations:2},
+          timeframes:unavailableTimeframes,
+          market_sources:intervals.map(interval=>({interval,status:"UNAVAILABLE",
+            data_quality:{status:"UNAVAILABLE",reason},source_quality:"UNAVAILABLE",
+            source_consensus:unavailableTimeframes[interval].source_consensus})),
+          reason,execution_enabled:false,
+          warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."
+        });
       }
     }
     if(url.pathname==="/v1/signals/performance"&&request.method==="GET") {
