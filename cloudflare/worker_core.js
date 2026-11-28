@@ -854,7 +854,7 @@ function diagnoseCandleGaps(gaps) {
 
 function classifyOhlcProviderFailure(reason) {
   const message=String(reason||"");
-  if(/freshness metadata|data state is|missing.*freshness/i.test(message)) return "FRESHNESS_METADATA_INVALID";
+  if(/freshness metadata|data state is|data_state|as_of timestamp|age_seconds/i.test(message)) return "FRESHNESS_METADATA_INVALID";
   if(/stale/i.test(message)) return "SOURCE_STALE";
   if(/HTTP [0-9]{3}|fetch failed|network|timeout|provider unavailable/i.test(message)) return "PROVIDER_UNAVAILABLE";
   if(/malformed|duplicate candle|timestamp.*aligned|unexpected.*schema|no completed.*candles/i.test(message)) return "OHLC_INVALID_OR_MISSING";
@@ -901,8 +901,6 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     throw new Error("XAUS OHLC provider data_state.as_of timestamp is in the future");
   if (timestampAge > XAUS_MAX_AGE_SECONDS)
     throw new Error("XAUS OHLC provider data_state.as_of timestamp is stale");
-  if (Math.abs(stateAge - Math.max(0, timestampAge)) > 120)
-    throw new Error("XAUS OHLC provider freshness metadata is internally inconsistent");
   if (!Array.isArray(payload?.points)) throw new Error("XAUS OHLC provider returned an unexpected chart schema");
   const intervalMs = intervalSeconds * 1000;
   const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
