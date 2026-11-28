@@ -33,10 +33,15 @@ jobs:
           # Read-only provider contract probes. These never feed the trading engine.
           probes = {
               "xaus_chart_15m": "https://xaus.com/api/v1/chart?symbol=xau&range=5d&interval=15m",
-              "xaus_chart_60m": "https://xaus.com/api/v1/chart?symbol=xau&range=1mo&interval=60m",
+              "xaus_chart_60m": "https://xaus.com/api/v1/chart?symbol=xau&range=3mo&interval=60m",
               "xaus_chart_1d": "https://xaus.com/api/v1/chart?symbol=xau&range=1y&interval=1d",
               "xaus_intraday_48h": "https://xaus.com/api/v1/intraday?symbol=xau&hours=48",
-              "xaus_spot": "https://xaus.com/api/v1/spot"
+              "xaus_spot": "https://xaus.com/api/v1/spot",
+              "biquote_health": "https://biquote.io/health",
+              "biquote_quote": "https://biquote.io/api/XAUUSD?allowStale=false",
+              "biquote_ohlc_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=192",
+              "biquote_ohlc_60m": "https://biquote.io/api/XAUUSD/ohlc?interval=1h&limit=168",
+              "biquote_ohlc_1d": "https://biquote.io/api/XAUUSD/ohlc?interval=1d&limit=180"
           }
           for name, url in probes.items():
               try:
@@ -49,7 +54,20 @@ jobs:
                       data = json.loads(raw)
                       now_epoch = datetime.now(timezone.utc).timestamp()
                       points = data.get("points") if isinstance(data, dict) and isinstance(data.get("points"), list) else []
+                      bars = data.get("bars") if isinstance(data, dict) and isinstance(data.get("bars"), list) else []
+                      completed_bars = [bar for bar in bars if isinstance(bar, dict) and bar.get("isOpen") is False]
+                      last_bar = max(completed_bars, key=lambda bar: str(bar.get("openTime") or ""), default=None)
                       last_point_timestamp = points[-1].get("t") if points and isinstance(points[-1], dict) else None
+                      last_bar_close_age_seconds = None
+                      if last_bar and isinstance(last_bar.get("openTime"), str):
+                          try:
+                              bar_open = datetime.fromisoformat(last_bar["openTime"].replace("Z", "+00:00"))
+                              interval_name = data.get("interval")
+                              interval_seconds = {"15m": 900, "1h": 3600, "1d": 86400}.get(interval_name)
+                              if bar_open.tzinfo is not None and interval_seconds:
+                                  last_bar_close_age_seconds = round((datetime.now(timezone.utc) - bar_open.astimezone(timezone.utc)).total_seconds() - interval_seconds, 1)
+                          except ValueError:
+                              pass
                       point_age_seconds = (
                           round(now_epoch - last_point_timestamp, 1)
                           if isinstance(last_point_timestamp, (int, float)) and not isinstance(last_point_timestamp, bool)
@@ -76,6 +94,13 @@ jobs:
                           "last_points": points[-3:],
                           "last_point_timestamp": last_point_timestamp,
                           "last_point_age_seconds": point_age_seconds,
+                          "bar_count": len(bars),
+                          "completed_bar_count": len(completed_bars),
+                          "last_completed_bar": last_bar,
+                          "last_bar_close_age_seconds": last_bar_close_age_seconds,
+                          "quote_timestamp": data.get("timestamp") if isinstance(data, dict) else None,
+                          "quote_mid": data.get("mid") if isinstance(data, dict) else None,
+                          "quote_state": data.get("marketState") if isinstance(data, dict) else None,
                           "error": data.get("error") if isinstance(data, dict) else "Unexpected JSON root type"
                       }, ensure_ascii=False))
               except Exception as error:
