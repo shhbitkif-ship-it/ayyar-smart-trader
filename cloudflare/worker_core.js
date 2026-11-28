@@ -1695,8 +1695,31 @@ async function fetchXausSpotQuote() {
     return {id:"xau",price,unit:"USD",updated_utc:stamp.toISOString(),stale:false};
   } catch { return null; }
 }
+function refreshCachedSnapshotFreshness(snapshot,now=Date.now()) {
+  if(!snapshot||!Array.isArray(snapshot.quotes)) return snapshot;
+  const quotes=snapshot.quotes.map(quote=>{
+    if(quote?.status!=="LIVE") return quote;
+    const stamp=parseStamp(quote.timestamp);
+    const age=stamp?(now-stamp.getTime())/1000:null;
+    const maxAge=quote.source==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:
+      quote.source==="XAUS"?XAUS_MAX_AGE_SECONDS:MAX_AGE_SECONDS;
+    const fresh=Boolean(Number.isFinite(quote.price)&&quote.price>0&&stamp&&
+      age>=-30&&age<=maxAge&&quote.meta?.unit_valid===true);
+    return {...quote,price:fresh?quote.price:null,status:fresh?"LIVE":"STALE",
+      age_seconds:age===null?null:Math.round(age*10)/10,
+      meta:{...(quote.meta||{}),reason:fresh?null:"Cached quote exceeded its source freshness limit or failed validation"}};
+  });
+  const liveQuotes=quotes.filter(quote=>quote.status==="LIVE").length;
+  return {...snapshot,quotes,live_quotes:liveQuotes,
+    status:liveQuotes===quotes.length?"LIVE":liveQuotes>0?"PARTIAL":"UNAVAILABLE",
+    freshness_checked_at:new Date(now).toISOString()};
+}
+
 async function snapshot(env={}) {
-  if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) return cached;
+  if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) {
+    cached=refreshCachedSnapshotFreshness(cached);
+    return cached;
+  }
   try {
     let payload=await fetchTalasanj(env);
     let provider="Talasanj";
