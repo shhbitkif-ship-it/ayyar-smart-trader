@@ -3335,3 +3335,43 @@ test("XAUS candle age is measured from candle close, matching BIQUOTE semantics"
     assert.equal(body.freshness_limit_seconds,1800);
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("multi-timeframe signal fails closed when either OHLC provider returns a non-positive or non-finite candle field", async () => {
+  const intervals={"15m":900,"60m":3600,"1d":86400};
+  const originalFetch=globalThis.fetch;
+  for (const badProvider of ["XAUS","BIQUOTE"]) {
+    const isolatedWorker=(await import("./worker_core.js?invalid-provider-ohlc-"+badProvider.toLowerCase())).default;
+    globalThis.fetch=async url=>{
+      const parsed=new URL(String(url));
+      const interval=parsed.searchParams.get("interval");
+      const seconds=intervals[interval==="1h"?"60m":interval];
+      const lastClosed=Math.floor(Date.now()/(seconds*1000))*(seconds*1000)-seconds*1000;
+      const candles=Array.from({length:80},(_,i)=>{
+        const close=2600+i*.15;
+        return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
+          open:close-.05,high:close+.2,low:close-.2,close};
+      });
+      if (interval==="15m" && badProvider==="XAUS") candles[candles.length-1].high=null;
+      if (interval==="15m" && badProvider==="BIQUOTE") candles[candles.length-1].high=0;
+      if(parsed.hostname==="biquote.io")
+        return new Response(JSON.stringify(biquoteFixture(candles,interval)),{status:200,
+          headers:{"content-type":"application/json"}});
+      return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,
+        headers:{"content-type":"application/json"}});
+    };
+    try {
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+      const body=await response.json();
+      assert.equal(response.status,200,JSON.stringify(body));
+      assert.equal(body.signal,"NO_TRADE");
+      assert.equal(body.execution_enabled,false);
+      assert.equal(body.timeframes["15m"].source_quality,"SINGLE_SOURCE");
+      assert.equal(body.timeframes["15m"].source_consensus.status,"UNCONFIRMED");
+      assert.equal(body.timeframes["15m"].analysis_ready,false);
+      assert.equal(body.signal_quality.status,"BLOCKED");
+    } finally {
+      globalThis.fetch=originalFetch;
+    }
+  }
+});
