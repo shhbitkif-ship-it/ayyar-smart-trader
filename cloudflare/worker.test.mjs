@@ -2928,6 +2928,29 @@ test("market status attributes the XAU fallback to XAUS without mixing provider 
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("market status rejects materially future-dated quotes instead of marking them LIVE", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-future-timestamp-test")).default;
+  const stamp=new Date().toISOString();
+  const items=freshItems.map(item=>({...item}));
+  const futureQuote=items.find(item=>item.id==="gold-18k");
+  futureQuote.updated_utc=new Date(Date.now()+5*60*1000).toISOString();
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:stamp,items
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"PARTIAL");
+    assert.equal(body.live_quotes,7);
+    const provider=body.source_health.find(source=>source.provider==="NerkhAra");
+    const quote=provider.quotes.find(item=>item.symbol==="GOLD18");
+    assert.equal(quote.status,"STALE");
+    assert.ok(quote.age_seconds < -30);
+    assert.equal(body.total_quotes,8);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("market status endpoint reports zero live quotes when providers fail", async () => {
   const isolatedWorker=(await import("./worker_core.js?market-status-unavailable-test")).default;
   globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
