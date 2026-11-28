@@ -852,6 +852,15 @@ function diagnoseCandleGaps(gaps) {
     note:"A repeated timing pattern does not prove a market closure. Per-gap timing and duration are diagnostic only; no missing candle is filled, interpolated, or ignored."};
 }
 
+function classifyOhlcProviderFailure(reason) {
+  const message=String(reason||"");
+  if(/stale/i.test(message)) return "SOURCE_STALE";
+  if(/freshness metadata|data state is|missing.*freshness/i.test(message)) return "FRESHNESS_METADATA_INVALID";
+  if(/HTTP \\d{3}|fetch failed|network|timeout|provider unavailable/i.test(message)) return "PROVIDER_UNAVAILABLE";
+  if(/malformed|duplicate candle|timestamp.*aligned|unexpected.*schema|no completed.*candles/i.test(message)) return "OHLC_INVALID_OR_MISSING";
+  return "UNKNOWN_FAILURE";
+}
+
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
 
@@ -1038,7 +1047,14 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
   const errors = results.map((result, index) => result.status === "rejected"
     ? (index === 0 ? "XAUS: " : "BIQUOTE: ") + String(result.reason?.message || "unavailable")
     : null).filter(Boolean);
-  if (!available.length) throw new Error("No OHLC provider available for consensus: " + errors.join("; "));
+  if (!available.length) {
+    const error=new Error("No OHLC provider available for consensus: " + errors.join("; "));
+    error.provider_failures=results.map((result,index)=>result.status==="rejected"?{
+      provider:index===0?"XAUS":"BIQUOTE",
+      reason:String(result.reason?.message||"Provider unavailable")
+    }:null).filter(Boolean);
+    throw error;
+  }
   const primary = available[0];
   const providerDiagnostics = available.map(item => {
     const latest = item.candles?.[item.candles.length - 1];
@@ -2124,12 +2140,19 @@ export default {
         return json(result);
       } catch(e) {
         const reason=String(e?.message||"Multi-timeframe OHLC data unavailable");
+        const providerFailures=Array.isArray(e?.provider_failures)?e.provider_failures:[];
+        const providerDiagnostics=["XAUS","BIQUOTE"].map(provider=>{
+          const failure=providerFailures.find(item=>item.provider===provider);
+          return {provider,status:failure?classifyOhlcProviderFailure(failure.reason):"NOT_CHECKED",
+            reason:failure?.reason||null};
+        });
+        const sessionEstimate=classifyXauWeekendSession();
         const unavailableTimeframes=Object.fromEntries(intervals.map(interval=>[interval,{
           signal:"NO_TRADE",proposed_signal:"NO_TRADE",confidence:0,
           data_status:"UNAVAILABLE",data_quality:{status:"UNAVAILABLE",reason},
           source_quality:"UNAVAILABLE",
           source_consensus:{status:"UNAVAILABLE",required_providers:["XAUS","BIQUOTE"],
-            providers:[],provider_diagnostics:[],errors:[reason]},
+            providers:[],provider_diagnostics,errors:providerFailures.map(item=>item.provider+": "+item.reason)},
           reason
         }]));
         return json({
@@ -2139,12 +2162,13 @@ export default {
             blocked_reasons:["Multi-timeframe market data is unavailable; directional signals are blocked."]},
           data_status:"UNAVAILABLE",market_data_status:"DEGRADED",
           signal_stability:{status:"UNAVAILABLE",confirmed:false,confirmations:0,required_confirmations:2},
-          timeframes:unavailableTimeframes,
+          timeframes:unavailableTimeframes,provider_diagnostics:providerDiagnostics,
+          session_estimate:sessionEstimate,
           market_sources:intervals.map(interval=>({interval,status:"UNAVAILABLE",
             data_quality:{status:"UNAVAILABLE",reason},source_quality:"UNAVAILABLE",
             source_consensus:unavailableTimeframes[interval].source_consensus})),
           reason,execution_enabled:false,
-          warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."
+          warning:"Provider failure classes and XAU weekend session are diagnostic only. Session estimates never override stale or invalid OHLC checks. All three real completed timeframes are required; no synthetic candles or orders are produced."
         });
       }
     }
