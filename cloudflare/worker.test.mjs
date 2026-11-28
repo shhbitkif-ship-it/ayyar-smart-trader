@@ -2834,7 +2834,7 @@ test("scheduled monitor checks every registered paper account using fresh comple
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
   try{
-    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env);
+    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.parse("2026-11-27T21:00:00Z")},env);
     assert.equal(result.status,"OK");
     assert.equal(result.accounts_checked,1);
     assert.equal(result.closed_trades,1,JSON.stringify(result));
@@ -3204,7 +3204,7 @@ test("scheduled paper monitor refuses BIQUOTE candles with gaps and leaves open 
   };
   try{
     await assert.rejects(
-      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env),
+      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.parse("2026-11-27T21:00:00Z")},env),
       /candle gap\(s\)/
     );
     const stored=env.__accounts.get(account.account_id).trades[0];
