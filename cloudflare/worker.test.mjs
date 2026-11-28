@@ -166,6 +166,43 @@ test("XAUS fresh spot is used only as a validated XAU quote fallback when NerkhA
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("cached XAUS spot quote is downgraded immediately when its source freshness limit expires",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?cached-xaus-freshness-recheck")).default;
+  const originalNow=Date.now;
+  let now=originalNow();
+  Date.now=()=>now;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("nerkhara.com")) return new Response("provider unavailable",{status:503});
+    if(String(url).includes("xaus.com/api/v1/spot")){
+      const stamp=new Date(now-119_000).toISOString();
+      return new Response(JSON.stringify({spot_usd_oz:4123.45,
+        xau:{price:4123.45,currency:"USD",unit:"oz"},
+        data_state:{status:"fresh",as_of:stamp,age_seconds:119},updated_at:stamp}),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const first=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const firstBody=await first.json();
+    const firstXau=firstBody.quotes.find(q=>q.symbol==="XAUUSD");
+    assert.equal(firstXau.status,"LIVE");
+    assert.equal(firstXau.price,4123.45);
+    now+=2_000;
+    const second=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const secondBody=await second.json();
+    const secondXau=secondBody.quotes.find(q=>q.symbol==="XAUUSD");
+    assert.equal(secondXau.status,"STALE");
+    assert.equal(secondXau.price,null);
+    assert.equal(secondBody.live_quotes,0);
+    assert.equal(secondBody.status,"UNAVAILABLE");
+    assert.ok(secondBody.freshness_checked_at);
+  }finally{
+    Date.now=originalNow;
+    globalThis.fetch=originalFetch;
+  }
+});
+
 test("XAUS spot fallback rejects missing or non-numeric freshness age metadata",async()=>{
   for(const age of [undefined,null,"0"]){
     const isolatedWorker=(await import("./worker_core.js?xaus-spot-invalid-age-"+String(age))).default;
