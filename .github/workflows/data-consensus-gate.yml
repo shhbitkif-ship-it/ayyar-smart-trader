@@ -1,6 +1,9 @@
 name: Live data consensus safety gate
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/data-consensus-gate.yml"
   push:
     branches: [main]
     paths:
