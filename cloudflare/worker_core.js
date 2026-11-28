@@ -911,7 +911,7 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   const ageSeconds=(Date.now()-lastCandleCloseAt)/1000;
   const freshnessLimit=Math.max(600,intervalSeconds*2);
   if (ageSeconds < -30 || ageSeconds > freshnessLimit)
-    throw new Error("Latest completed XAUS OHLC candle is stale");
+    throw new Error("Latest completed XAUS OHLC candle is stale (last_candle_close_at="+new Date(lastCandleCloseAt).toISOString()+", age_seconds="+Math.round(ageSeconds)+", freshness_limit_seconds="+freshnessLimit+")");
   const gaps=[];
   for(let i=1;i<candles.length;i++){
     const delta=(Date.parse(candles[i].timestamp)-Date.parse(candles[i-1].timestamp))/intervalMs;
@@ -981,7 +981,7 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
   const ageSeconds=(Date.now()-lastCloseTime)/1000;
   const freshnessLimit=Math.max(600,intervalSeconds*2);
   if(ageSeconds < -30||ageSeconds>freshnessLimit)
-    throw new Error("Latest completed BIQUOTE OHLC candle is stale");
+    throw new Error("Latest completed BIQUOTE OHLC candle is stale (last_candle_close_at="+new Date(lastCloseTime).toISOString()+", age_seconds="+Math.round(ageSeconds)+", freshness_limit_seconds="+freshnessLimit+")");
   const gaps=[];
   for(let i=1;i<candles.length;i++){
     const delta=(Date.parse(candles[i].timestamp)-Date.parse(candles[i-1].timestamp))/intervalMs;
