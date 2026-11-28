@@ -3688,3 +3688,39 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
     }
   }
 });
+
+
+test("ATR backtest evaluates stop and target on the entry candle instead of skipping intrabar outcomes", async () => {
+  const base=[];
+  for(let i=0;i<180;i++){
+    const close=i<70?3100-i*2:i<115?2960+(i-70)*5:3185-(i-115)*4;
+    base.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+4,low:close-4,close});
+  }
+  // With EMA20/EMA50, the bullish cross is confirmed on candle 87 and
+  // the simulated entry is at candle 88's open.
+  const entryIndex=88;
+  const run=async (kind)=>{
+    const candles=base.map(c=>({...c}));
+    if(kind==="stop") candles[entryIndex].low=candles[entryIndex].open-100;
+    else candles[entryIndex].high=candles[entryIndex].open+100;
+    const response=await worker.fetch(new Request("https://unit.test/v1/backtest/atr-risk",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({candles,starting_capital:10000,risk_fraction:0.01,
+        atr_period:14,atr_stop_multiple:2,reward_risk_multiple:1.5})
+    }));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    const trade=body.trades.find(t=>t.entry_time===candles[entryIndex].timestamp);
+    assert.ok(trade,"the expected next-open entry must be recorded");
+    assert.equal(trade.exit_time,candles[entryIndex].timestamp,
+      "an entry-candle stop/target must close within that same candle");
+    return trade;
+  };
+  const stopped=await run("stop");
+  assert.equal(stopped.exit_reason,"STOP_LOSS_ENTRY_CANDLE");
+  assert.ok(stopped.pnl<0);
+  const targeted=await run("target");
+  assert.equal(targeted.exit_reason,"TAKE_PROFIT_ENTRY_CANDLE");
+  assert.ok(targeted.pnl>0);
+});
