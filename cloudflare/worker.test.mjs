@@ -2924,7 +2924,7 @@ test("market status attributes the XAU fallback to XAUS without mixing provider 
     assert.equal(fallback.total_quotes,1);
     assert.equal(fallback.live_quotes,1);
     assert.equal(fallback.quotes[0].symbol,"XAUUSD");
-    assert.equal(fallback.quotes[0].unit,"USD");
+    assert.equal(fallback.quotes[0].unit,"USD/oz");
   } finally { globalThis.fetch=originalFetch; }
 });
 
