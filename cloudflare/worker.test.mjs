@@ -923,14 +923,7 @@ test("latest signal endpoint fails closed when the provider is unavailable", asy
     assert.equal(body.signal,"NO_TRADE");
     assert.equal(body.confidence,0);
     assert.equal(body.data_status,"UNAVAILABLE");
-    assert.equal(body.market_data_status,"DEGRADED");
-    assert.equal(body.signal_quality.status,"BLOCKED");
     assert.equal(body.execution_enabled,false);
-    assert.deepEqual(Object.keys(body.timeframes).sort(),["15m","1d","60m"]);
-    for(const interval of ["15m","60m","1d"]) {
-      assert.equal(body.timeframes[interval].data_status,"UNAVAILABLE");
-      assert.deepEqual(body.timeframes[interval].source_consensus.required_providers,["XAUS","BIQUOTE"]);
-    }
   } finally { globalThis.fetch=originalFetch; }
 });
 
@@ -1448,8 +1441,16 @@ test("multi-timeframe endpoint fails closed if any timeframe is unavailable", as
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.confidence,0);
     assert.equal(body.data_status,"UNAVAILABLE");
+    assert.equal(body.market_data_status,"DEGRADED");
+    assert.equal(body.signal_quality.status,"BLOCKED");
     assert.equal(body.execution_enabled,false);
+    assert.deepEqual(Object.keys(body.timeframes).sort(),["15m","1d","60m"]);
+    for(const interval of ["15m","60m","1d"]) {
+      assert.equal(body.timeframes[interval].data_status,"UNAVAILABLE");
+      assert.deepEqual(body.timeframes[interval].source_consensus.required_providers,["XAUS","BIQUOTE"]);
+    }
   } finally { globalThis.fetch=originalFetch; }
 });
 
