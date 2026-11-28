@@ -3840,7 +3840,7 @@ test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-s
     assert.equal(body.trade_tape_sample_count,2);
     assert.equal(body.trade_tape_sample_volume,30);
     assert.equal(body.trade_tape_sample_value_rial,3148000);
-    assert.equal(body.provider_reported_turnover_rial,9000000000);
+    assert.equal(body.provider_reported_daily_traded_value_rial,9000000000);
     assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
@@ -3920,7 +3920,7 @@ test("Ayar quality endpoint evaluates explicit liquidity limits without issuing 
     throw new Error("Unexpected TSETMC URL "+value);
   };
   try {
-    const env={AYAR_MAX_SPREAD_BPS:"25",AYAR_MIN_REPORTED_TURNOVER_RIAL:"1000000",
+    const env={AYAR_MAX_SPREAD_BPS:"25",AYAR_MIN_DAILY_TRADED_VALUE_RIAL:"1000000",
       AYAR_MIN_BID_DEPTH_RIAL:"1000000",AYAR_MIN_ASK_DEPTH_RIAL:"1000000"};
     const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/quality"),env);
     const body=await response.json();
