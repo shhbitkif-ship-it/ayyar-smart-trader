@@ -1791,6 +1791,88 @@ async function discoverAyarInstrument() {
   }
 }
 
+
+function tsetmcLocalTimestamp(deven,hEven) {
+  if(!Number.isInteger(Number(deven))||!Number.isInteger(Number(hEven))) return null;
+  const date=String(deven).padStart(8,"0"),time=String(hEven).padStart(6,"0");
+  if(!/^\\d{8}$/.test(date)||!/^\\d{6}$/.test(time)) return null;
+  const y=Number(date.slice(0,4)),m=Number(date.slice(4,6)),d=Number(date.slice(6,8));
+  const hh=Number(time.slice(0,2)),mm=Number(time.slice(2,4)),ss=Number(time.slice(4,6));
+  if(m<1||m>12||d<1||d>31||hh>23||mm>59||ss>59) return null;
+  // TSETMC dEven/hEven are Tehran local time (UTC+03:30).
+  const utc=Date.UTC(y,m-1,d,hh,mm,ss)-210*60*1000;
+  const check=new Date(utc+210*60*1000);
+  if(check.getUTCFullYear()!==y||check.getUTCMonth()!==m-1||check.getUTCDate()!==d) return null;
+  return utc;
+}
+
+async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
+  const base="https://cdn.tsetmc.com/api/";
+  const headers={accept:"application/json","user-agent":"Mozilla/5.0 AyyarSmartTrader/1.0"};
+  const request=async path=>{
+    const response=await fetch(base+path,{headers,signal:AbortSignal.timeout(8000)});
+    if(!response.ok) throw new Error("TSETMC HTTP "+response.status+" for "+path.split("/")[0]);
+    return response.json();
+  };
+  try {
+    const [quotePayload,bookPayload,navPayload]=await Promise.all([
+      request("ClosingPrice/GetClosingPriceInfo/"+insCode),
+      request("BestLimits/"+insCode),
+      request("Fund/GetETFByInsCode/"+insCode)
+    ]);
+    const quote=quotePayload?.closingPriceInfo;
+    const nav=navPayload?.etf;
+    const book=bookPayload?.bestLimits;
+    if(!quote||String(quote.insCode)!==String(insCode)||!nav||
+       String(nav.insCode)!==String(insCode)||!Array.isArray(book))
+      throw new Error("TSETMC Ayar response schema or instrument identity mismatch");
+    const last=Number(quote.pDrCotVal),close=Number(quote.pClosing);
+    const redemptionNav=Number(nav.pRedTran),subscriptionNav=Number(nav.pSubTran);
+    const quoteAt=tsetmcLocalTimestamp(quote.dEven,quote.hEven);
+    const navAt=tsetmcLocalTimestamp(nav.deven,nav.hEven);
+    const quoteAge=quoteAt===null?null:(now-quoteAt)/1000;
+    const navAge=navAt===null?null:(now-navAt)/1000;
+    const active=String(quote.instrumentState?.cEtaval??"").trim()==="A"||
+      String(quote.instrumentState?.cEtavalTitle??"").trim()==="مجاز";
+    const fresh=quoteAge!==null&&navAge!==null&&quoteAge>=-30&&navAge>=-30&&
+      quoteAge<=1200&&navAge<=1200&&Math.abs(quoteAt-navAt)<=300000;
+    const validPrices=[last,close,redemptionNav,subscriptionNav].every(v=>Number.isFinite(v)&&v>0&&v<=1e15);
+    if(!fresh||!validPrices||!active)
+      throw new Error(!fresh?"TSETMC quote/NAV timestamps are stale or misaligned":
+        !active?"Ayar instrument is not in an active permitted state":"TSETMC returned invalid price or NAV values");
+    const levels=book.map(level=>({
+      bid_price:Number(level?.pd),bid_volume:Number(level?.qd),
+      ask_price:Number(level?.po),ask_volume:Number(level?.qo)
+    })).filter(level=>[level.bid_price,level.bid_volume,level.ask_price,level.ask_volume]
+      .every(v=>Number.isFinite(v)&&v>=0));
+    const top=levels[0];
+    if(!top||top.bid_price<=0||top.ask_price<=0||top.bid_volume<=0||top.ask_volume<=0||
+       top.ask_price<top.bid_price)
+      throw new Error("TSETMC order book is empty or invalid");
+    const premium=(last/redemptionNav-1)*100;
+    return {
+      status:"LIVE",symbol:"AYAR",source:"TSETMC",ins_code:String(insCode),
+      currency_unit:"RIAL",price:last,closing_price:close,
+      redemption_nav:redemptionNav,subscription_nav:subscriptionNav,
+      premium_discount_pct:Number(premium.toFixed(4)),
+      quote_at:new Date(quoteAt).toISOString(),nav_at:new Date(navAt).toISOString(),
+      quote_age_seconds:Math.round(quoteAge),nav_age_seconds:Math.round(navAge),
+      best_bid:{price:top.bid_price,volume:top.bid_volume},
+      best_ask:{price:top.ask_price,volume:top.ask_volume},
+      order_book_levels:levels.length,
+      traded_count:Number.isFinite(Number(quote.zTotTran))?Number(quote.zTotTran):null,
+      traded_value_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
+      execution_enabled:false,
+      note:"TSETMC is an undocumented public data surface. This is a market-data diagnostic, not broker execution or an investment signal."
+    };
+  } catch(error) {
+    return {status:"UNAVAILABLE",symbol:"AYAR",source:"TSETMC",
+      reason:String(error?.message||"Ayar market snapshot unavailable").slice(0,240),
+      retrieved_at:new Date(now).toISOString(),execution_enabled:false,
+      note:"No stale, partial, mismatched, or inferred quote/NAV/order-book values are published."};
+  }
+}
+
 async function snapshot(env={}) {
   if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) {
     cached=refreshCachedSnapshotFreshness(cached);
@@ -2149,6 +2231,11 @@ export default {
     }
     if(url.pathname==="/v1/market/ayar/discovery"&&request.method==="GET")
       return json(await discoverAyarInstrument());
+    if(url.pathname==="/v1/market/ayar/snapshot"&&request.method==="GET") {
+      const identity=await discoverAyarInstrument();
+      if(identity.status!=="IDENTIFIED") return json({...identity,market_status:"UNAVAILABLE"});
+      return json({...await fetchAyarMarketSnapshot(identity.ins_code),instrument:identity});
+    }
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
     if(url.pathname==="/v1/market/gold18-parity"&&request.method==="GET") {
       const market=await snapshot(env);
