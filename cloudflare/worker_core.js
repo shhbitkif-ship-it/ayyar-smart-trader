@@ -1105,12 +1105,27 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
     return failConsensus("At least one provider reports candle gaps or non-clean OHLC data.", "DIVERGENT");
   }
 
-  const spreads = recentOverlap.flatMap(candle => {
-    const other = byTime.get(candle.timestamp);
-    return ["open", "high", "low", "close"].map(field =>
-      Math.abs(candle[field] / other[field] - 1) * 100);
-  });
-  const maxSpread = Math.max(...spreads);
+  const ohlcFields = ["open", "high", "low", "close"];
+  const fieldSpreadDiagnostics = Object.fromEntries(ohlcFields.map(field => {
+    let maxSpread = -Infinity;
+    let candleAt = null;
+    for (const candle of recentOverlap) {
+      const other = byTime.get(candle.timestamp);
+      const spread = Math.abs(candle[field] / other[field] - 1) * 100;
+      if (spread > maxSpread) {
+        maxSpread = spread;
+        candleAt = candle.timestamp;
+      }
+    }
+    return [field, {
+      max_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      candle_at: candleAt
+    }];
+  }));
+  const worstField = ohlcFields.reduce((worst, field) =>
+    fieldSpreadDiagnostics[field].max_spread_pct >
+      fieldSpreadDiagnostics[worst].max_spread_pct ? field : worst, ohlcFields[0]);
+  const maxSpread = fieldSpreadDiagnostics[worstField].max_spread_pct;
   const converged = Number.isFinite(maxSpread) && maxSpread <= CANDLE_SOURCE_MAX_SPREAD_PCT;
   return {
     ...base,
@@ -1122,8 +1137,15 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
       status: converged ? "CONVERGED" : "DIVERGENT",
       overlap_candles: overlap.length,
       compared_recent_candles: recentOverlap.length,
-      compared_ohlc_values: spreads.length,
-      max_ohlc_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      compared_ohlc_values: recentOverlap.length * ohlcFields.length,
+      max_ohlc_spread_pct: maxSpread,
+      ohlc_spread_by_field_pct: Object.fromEntries(ohlcFields.map(field =>
+        [field, fieldSpreadDiagnostics[field].max_spread_pct])),
+      worst_ohlc_mismatch: {
+        field: worstField,
+        candle_at: fieldSpreadDiagnostics[worstField].candle_at,
+        spread_pct: maxSpread
+      },
       latest_timestamp_match: latestTimestampMatch,
       latest_common_candle_at: xausLatest.timestamp,
       tolerance_pct: CANDLE_SOURCE_MAX_SPREAD_PCT
