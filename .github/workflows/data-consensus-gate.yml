@@ -48,18 +48,28 @@ jobs:
                       data = json.loads(raw)
                       result = (data.get("chart") or {}).get("result") or []
                       quote = ((result[0].get("indicators") or {}).get("quote") or [{}])[0] if result else {}
+                      yahoo_timestamps = result[0].get("timestamp") or [] if result else []
+                      yahoo_last_timestamp = yahoo_timestamps[-1] if yahoo_timestamps else None
+                      yahoo_age_seconds = (
+                          max(0, int(datetime.now(timezone.utc).timestamp() - yahoo_last_timestamp))
+                          if isinstance(yahoo_last_timestamp, (int, float)) else None
+                      )
+                      yahoo_last_close = (quote.get("close") or [None])[-1] if quote else None
+                      points = data.get("points") if isinstance(data.get("points"), list) else []
                       print("UPSTREAM_PROBE", name, json.dumps({
                           "http": probe_response.status,
-                          "keys": list(data.keys())[:25],
-                          "data_state": data.get("data_state"),
-                          "updated_at": data.get("updated_at"),
-                          "price_as_of": data.get("price_as_of"),
-                          "point_count": len(data.get("points") or []),
-                          "last_points": (data.get("points") or [])[-3:],
-                          "yahoo_rows": len(result[0].get("timestamp") or []) if result else 0,
-                          "yahoo_last_timestamp": (result[0].get("timestamp") or [None])[-1] if result else None,
-                          "yahoo_last_close": (quote.get("close") or [None])[-1] if quote else None,
-                          "error": data.get("error")
+                          "keys": list(data.keys())[:25] if isinstance(data, dict) else [],
+                          "data_state": data.get("data_state") if isinstance(data, dict) else None,
+                          "updated_at": data.get("updated_at") if isinstance(data, dict) else None,
+                          "price_as_of": data.get("price_as_of") if isinstance(data, dict) else None,
+                          "point_count": len(points),
+                          "last_points": points[-3:],
+                          "yahoo_rows": len(yahoo_timestamps),
+                          "yahoo_last_timestamp": yahoo_last_timestamp,
+                          "yahoo_age_seconds": yahoo_age_seconds,
+                          "yahoo_last_close": yahoo_last_close,
+                          "yahoo_price_valid": isinstance(yahoo_last_close, (int, float)) and math.isfinite(yahoo_last_close) and yahoo_last_close > 0,
+                          "error": data.get("error") if isinstance(data, dict) else "Unexpected JSON root type"
                       }, ensure_ascii=False))
               except Exception as error:
                   print("UPSTREAM_PROBE", name, json.dumps({"error": str(error)[:400]}))
