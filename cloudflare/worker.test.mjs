@@ -3328,6 +3328,6 @@ test("XAUS candle age is measured from candle close, matching BIQUOTE semantics"
     assert.equal(body.last_candle_close_at,new Date(Date.parse(candles.at(-1).timestamp)+intervalMs).toISOString());
     assert.ok(Math.abs(body.age_seconds-Math.max(0,Math.round(expectedAge)))<=1,
       "age_seconds must be measured from candle close, not candle open");
-    assert.equal(body.freshness_limit_seconds,600);
+    assert.equal(body.freshness_limit_seconds,1800);
   }finally{globalThis.fetch=originalFetch;}
 });
