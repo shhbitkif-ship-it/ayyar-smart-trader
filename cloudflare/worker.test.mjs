@@ -3453,3 +3453,44 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
     }
   }
 });
+
+test("BIQUOTE excludes explicitly open bars before validating completed OHLC values",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?biquote-open-bar-exclusion-regression")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const bars=[{
+    openTime:"not-a-timestamp",open:null,high:-1,low:0,close:Infinity,
+    volume:0,tickVolume:0,isOpen:true
+  }];
+  for(let i=0;i<80;i++){
+    const openTime=currentBucket-(i+1)*intervalMs;
+    const open=3600+i*.1,close=open+.15;
+    bars.push({openTime:new Date(openTime).toISOString(),open,high:close+.1,
+      low:open-.1,close,volume:0,tickVolume:100+i,isOpen:false});
+  }
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify({data_state:{status:"stale",
+        as_of:"2020-01-01T00:00:00Z",age_seconds:999999},points:[]}),
+        {status:200,headers:{"content-type":"application/json"}});
+    if(String(url).includes("biquote.io/api/XAUUSD/ohlc"))
+      return new Response(JSON.stringify({symbol:"XAUUSD",interval:"15m",bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request(
+      "https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.provider,"BIQUOTE");
+    assert.equal(body.status,"LIVE");
+    assert.equal(body.candles.length,80);
+    assert.equal(body.data_quality.status,"CLEAN");
+    assert.equal(body.data_quality.rejected_completed_points,0);
+    assert.equal(body.execution_enabled,false);
+  }finally{
+    globalThis.fetch=originalFetch;
+  }
+});
