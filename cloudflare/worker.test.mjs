@@ -87,6 +87,9 @@ test("OHLC provider failures receive explicit diagnostic classes without weakeni
   assert.equal(classifyOhlcProviderFailure("Latest completed candle is stale"),"SOURCE_STALE");
   assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data state is missing"),"FRESHNESS_METADATA_INVALID");
   assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider freshness metadata is missing, invalid, or stale"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data_state.as_of timestamp is missing"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data_state.age_seconds is invalid"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data_state.as_of timestamp is stale"),"FRESHNESS_METADATA_INVALID");
   assert.equal(classifyOhlcProviderFailure("BIQUOTE OHLC provider HTTP 503"),"PROVIDER_UNAVAILABLE");
   assert.equal(classifyOhlcProviderFailure("BIQUOTE returned duplicate candle timestamps"),"OHLC_INVALID_OR_MISSING");
   assert.equal(classifyOhlcProviderFailure("unexpected response"),"UNKNOWN_FAILURE");
