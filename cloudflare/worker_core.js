@@ -2154,6 +2154,13 @@ export default {
       const intervals=["15m","60m","1d"];
       try {
         const markets=await Promise.all(intervals.map(interval=>fetchGoldCandlesWithConsensus(symbol,interval)));
+        let gold18Parity;
+        try {
+          gold18Parity=calculateGold18kParity(await snapshot(env));
+        } catch(error) {
+          gold18Parity={status:"UNAVAILABLE",symbol:"GOLD18",reason:"PARITY_DIAGNOSTIC_UNAVAILABLE",
+            note:"Parity diagnostic failed closed; it does not affect the XAU signal gate."};
+        }
         const analyses=markets.map((market,i)=>evaluateSignal({
           candles:market.candles,timeframe_minutes:market.interval_seconds/60
         }));
@@ -2218,6 +2225,7 @@ export default {
           entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
           take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
           timeframes:byInterval,market_data_status:dataQualityClean?"LIVE":"DEGRADED",
+          gold18_parity:gold18Parity,
           signal_stability:stability,
           market_provider:[...new Set(markets.flatMap(market=>market.source_consensus?.providers||[market.provider]))].join("+"),
           market_sources:markets.map(market=>({interval:market.interval,provider:market.provider,
