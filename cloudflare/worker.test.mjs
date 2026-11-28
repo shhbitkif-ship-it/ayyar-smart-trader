@@ -3340,3 +3340,74 @@ test("multi-timeframe consensus rejects a single recent OHLC outlier just above 
     }
   }finally{globalThis.fetch=originalFetch;}
 });
+
+test("XAUS candle age is measured from candle close, matching BIQUOTE semantics", async () => {
+  const isolatedWorker=(await import("./worker_core.js?xaus-close-age-semantics-test")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{
+    const open=3500+i*.1,close=open+.05;
+    return {timestamp:new Date(currentBucket-(80-i)*intervalMs).toISOString(),
+      open,high:close+.1,low:open-.1,close};
+  });
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify(xausChartFixture(candles)),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    const expectedAge=(Date.now()-(Date.parse(candles.at(-1).timestamp)+intervalMs))/1000;
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.provider,"XAUS");
+    assert.equal(body.last_candle_close_at,new Date(Date.parse(candles.at(-1).timestamp)+intervalMs).toISOString());
+    assert.ok(Math.abs(body.age_seconds-Math.max(0,Math.round(expectedAge)))<=1,
+      "age_seconds must be measured from candle close, not candle open");
+    assert.equal(body.freshness_limit_seconds,1800);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("multi-timeframe signal fails closed when either OHLC provider returns a non-positive or non-finite candle field", async () => {
+  const intervals={"15m":900,"60m":3600,"1d":86400};
+  const originalFetch=globalThis.fetch;
+  for (const badProvider of ["XAUS","BIQUOTE"]) {
+    const isolatedWorker=(await import("./worker_core.js?invalid-provider-ohlc-"+badProvider.toLowerCase())).default;
+    globalThis.fetch=async url=>{
+      const parsed=new URL(String(url));
+      const interval=parsed.searchParams.get("interval");
+      const seconds=intervals[interval==="1h"?"60m":interval];
+      const lastClosed=Math.floor(Date.now()/(seconds*1000))*(seconds*1000)-seconds*1000;
+      const candles=Array.from({length:80},(_,i)=>{
+        const close=2600+i*.15;
+        return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
+          open:close-.05,high:close+.2,low:close-.2,close};
+      });
+      if(parsed.hostname==="biquote.io") {
+        const biquoteCandles=candles.map(candle=>({...candle}));
+        if (interval==="15m" && badProvider==="BIQUOTE") biquoteCandles[biquoteCandles.length-1].high=0;
+        return new Response(JSON.stringify(biquoteFixture(biquoteCandles,interval)),{status:200,
+          headers:{"content-type":"application/json"}});
+      }
+      const xausCandles=candles.map(candle=>({...candle}));
+      if (interval==="15m" && badProvider==="XAUS") xausCandles[xausCandles.length-1].high=null;
+      return new Response(JSON.stringify(xausChartFixture(xausCandles)),{status:200,
+        headers:{"content-type":"application/json"}});
+    };
+    try {
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+      const body=await response.json();
+      assert.equal(response.status,200,JSON.stringify(body));
+      assert.equal(body.signal,"NO_TRADE");
+      assert.equal(body.execution_enabled,false);
+      assert.ok(body.timeframes,JSON.stringify({badProvider,body}));
+      assert.equal(body.timeframes["15m"].source_quality,"SINGLE_SOURCE");
+      assert.equal(body.timeframes["15m"].source_consensus.status,"UNCONFIRMED");
+      assert.equal(body.signal_quality.status,"BLOCKED");
+    } finally {
+      globalThis.fetch=originalFetch;
+    }
+  }
+});

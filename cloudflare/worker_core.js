@@ -905,9 +905,12 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     throw new Error("XAUS returned duplicate candle timestamps; data quality check failed");
   const last = candles[candles.length-1];
   if (!last) throw new Error("No completed OHLC candles are available from XAUS");
-  const ageSeconds=(Date.now()-Date.parse(last.timestamp))/1000;
+  // Candle timestamps identify the candle OPEN. Measure freshness from close
+  // time so the age has the same meaning for XAUS and BIQUOTE.
+  const lastCandleCloseAt=Date.parse(last.timestamp)+intervalMs;
+  const ageSeconds=(Date.now()-lastCandleCloseAt)/1000;
   const freshnessLimit=Math.max(600,intervalSeconds*2);
-  if (ageSeconds < 0 || ageSeconds > freshnessLimit)
+  if (ageSeconds < -30 || ageSeconds > freshnessLimit)
     throw new Error("Latest completed XAUS OHLC candle is stale");
   const gaps=[];
   for(let i=1;i<candles.length;i++){
@@ -925,7 +928,8 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
     interval, interval_seconds:intervalSeconds, status:gaps.length?"PARTIAL":"LIVE",data_quality:dataQuality,
     analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(), last_candle_at:last.timestamp,
-    age_seconds:Math.round(ageSeconds), candles,
+    last_candle_close_at:new Date(lastCandleCloseAt).toISOString(),
+    age_seconds:Math.max(0,Math.round(ageSeconds)), freshness_limit_seconds:freshnessLimit, candles,
     note:"Completed OHLC candles for global XAU/USD from XAUS chart API. Data is indicative, may be delayed, and is not a broker execution feed. Iranian gold and coin instruments are not represented by this feed."
   };
 }
@@ -996,7 +1000,8 @@ async function fetchGoldCandlesFromBiquote(symbol, interval) {
     interval,interval_seconds:intervalSeconds,status:gaps.length?"PARTIAL":"LIVE",data_quality:dataQuality,
     analysis_ready:candles.length>=60,minimum_analysis_candles:60,
     retrieved_at:new Date().toISOString(),last_candle_at:last.timestamp,
-    age_seconds:Math.max(0,Math.round(ageSeconds)),candles,
+    last_candle_close_at:new Date(lastCloseTime).toISOString(),
+    age_seconds:Math.max(0,Math.round(ageSeconds)),freshness_limit_seconds:freshnessLimit,candles,
     note:"Completed XAU/USD OHLC candles from BIQUOTE public read-only feed. Bars marked open are excluded. Data may contain market-closure or provider gaps; indicative data only, not a broker execution feed."
   };
 }
@@ -1038,7 +1043,9 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
       provider: item.provider,
       candle_count: item.candles?.length ?? 0,
       last_candle_at: latest?.timestamp ?? null,
+      last_candle_close_at: item.last_candle_close_at ?? null,
       age_seconds: item.age_seconds ?? null,
+      freshness_limit_seconds: item.freshness_limit_seconds ?? null,
       data_quality: item.data_quality?.status ?? "UNKNOWN",
       analysis_ready: item.analysis_ready === true
     };
@@ -1098,12 +1105,27 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
     return failConsensus("At least one provider reports candle gaps or non-clean OHLC data.", "DIVERGENT");
   }
 
-  const spreads = recentOverlap.flatMap(candle => {
-    const other = byTime.get(candle.timestamp);
-    return ["open", "high", "low", "close"].map(field =>
-      Math.abs(candle[field] / other[field] - 1) * 100);
-  });
-  const maxSpread = Math.max(...spreads);
+  const ohlcFields = ["open", "high", "low", "close"];
+  const fieldSpreadDiagnostics = Object.fromEntries(ohlcFields.map(field => {
+    let maxSpread = -Infinity;
+    let candleAt = null;
+    for (const candle of recentOverlap) {
+      const other = byTime.get(candle.timestamp);
+      const spread = Math.abs(candle[field] / other[field] - 1) * 100;
+      if (spread > maxSpread) {
+        maxSpread = spread;
+        candleAt = candle.timestamp;
+      }
+    }
+    return [field, {
+      max_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      candle_at: candleAt
+    }];
+  }));
+  const worstField = ohlcFields.reduce((worst, field) =>
+    fieldSpreadDiagnostics[field].max_spread_pct >
+      fieldSpreadDiagnostics[worst].max_spread_pct ? field : worst, ohlcFields[0]);
+  const maxSpread = fieldSpreadDiagnostics[worstField].max_spread_pct;
   const converged = Number.isFinite(maxSpread) && maxSpread <= CANDLE_SOURCE_MAX_SPREAD_PCT;
   return {
     ...base,
@@ -1115,8 +1137,15 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
       status: converged ? "CONVERGED" : "DIVERGENT",
       overlap_candles: overlap.length,
       compared_recent_candles: recentOverlap.length,
-      compared_ohlc_values: spreads.length,
-      max_ohlc_spread_pct: Math.round(maxSpread * 10000) / 10000,
+      compared_ohlc_values: recentOverlap.length * ohlcFields.length,
+      max_ohlc_spread_pct: maxSpread,
+      ohlc_spread_by_field_pct: Object.fromEntries(ohlcFields.map(field =>
+        [field, fieldSpreadDiagnostics[field].max_spread_pct])),
+      worst_ohlc_mismatch: {
+        field: worstField,
+        candle_at: fieldSpreadDiagnostics[worstField].candle_at,
+        spread_pct: maxSpread
+      },
       latest_timestamp_match: latestTimestampMatch,
       latest_common_candle_at: xausLatest.timestamp,
       tolerance_pct: CANDLE_SOURCE_MAX_SPREAD_PCT
