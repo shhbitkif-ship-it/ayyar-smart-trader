@@ -1815,7 +1815,7 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
     return response.json();
   };
   try {
-    const [quotePayload,bookPayload,navPayload]=await Promise.all([
+    const [quotePayload,bookPayload,navPayload,tradePayload]=await Promise.all([
       request("ClosingPrice/GetClosingPriceInfo/"+insCode),
       request("BestLimits/"+insCode),
       request("Fund/GetETFByInsCode/"+insCode),
@@ -1874,7 +1874,7 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
       daily_traded_volume:tradedVolume,
       daily_traded_value_rial:tradedValue,
       five_day_average_volume:Number.isFinite(Number(quote.qTotTran5J))?Number(quote.qTotTran5J):null,
-      market_cap_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
+      provider_reported_daily_value_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
       execution_enabled:false,
       note:"TSETMC is an undocumented public data surface. This is a market-data diagnostic, not broker execution or an investment signal."
     };
