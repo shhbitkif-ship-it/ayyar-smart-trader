@@ -2115,6 +2115,8 @@ export default {
         const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
         const dataQualityClean=markets.every(market=>
+          market.status==="LIVE" &&
+          market.analysis_ready===true &&
           market.data_quality?.status==="CLEAN" &&
           market.source_quality==="CONVERGED" &&
           market.source_consensus?.status==="CONVERGED"
@@ -2160,7 +2162,8 @@ export default {
           market_sources:markets.map(market=>({interval:market.interval,provider:market.provider,
             source_url:market.source_url,
             fallback_reason:market.source_consensus?.errors?.join("; ")||market.fallback_reason||null,
-            last_candle_at:market.last_candle_at,data_quality:market.data_quality,
+            last_candle_at:market.last_candle_at,analysis_ready:market.analysis_ready===true,
+            market_status:market.status,data_quality:market.data_quality,
             source_quality:market.source_quality,source_consensus:market.source_consensus})),
           last_candle_at:markets[1].last_candle_at,
           market_regime:regimes[1],
