@@ -3301,10 +3301,18 @@ test("multi-timeframe signal is blocked when only one OHLC provider is available
     for(const interval of ["15m","60m","1d"]){
       assert.equal(body.timeframes[interval].source_quality,"SINGLE_SOURCE");
       assert.equal(body.timeframes[interval].source_consensus.status,"UNCONFIRMED");
-      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics.length,1);
-      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics[0].provider,"XAUS");
-      assert.ok(body.timeframes[interval].source_consensus.provider_diagnostics[0].candle_count>=60);
-      assert.equal(typeof body.timeframes[interval].source_consensus.provider_diagnostics[0].last_candle_at,"string");
+      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics.length,2);
+      const xaus=body.timeframes[interval].source_consensus.provider_diagnostics[0];
+      const biquote=body.timeframes[interval].source_consensus.provider_diagnostics[1];
+      assert.equal(xaus.provider,"XAUS");
+      assert.equal(xaus.request_status,"FULFILLED");
+      assert.ok(xaus.candle_count>=60);
+      assert.equal(typeof xaus.last_candle_at,"string");
+      assert.equal(biquote.provider,"BIQUOTE");
+      assert.equal(biquote.request_status,"REJECTED");
+      assert.equal(biquote.failure_class,"PROVIDER_UNAVAILABLE");
+      assert.equal(biquote.candle_count,0);
+      assert.equal(biquote.analysis_ready,false);
     }
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
