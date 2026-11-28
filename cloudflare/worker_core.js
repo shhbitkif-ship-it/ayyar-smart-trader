@@ -880,14 +880,29 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   if (!response.ok) throw new Error("XAUS OHLC provider HTTP " + response.status);
   const payload = await response.json();
   const state = payload?.data_state;
-  if (state?.status !== "fresh")
-    throw new Error("XAUS OHLC provider data state is " + String(state?.status || "missing"));
+  if (!state || typeof state !== "object")
+    throw new Error("XAUS OHLC provider data_state metadata is missing");
+  if (state.status !== "fresh")
+    throw new Error("XAUS OHLC provider data state is " + String(state.status || "missing"));
+  if (typeof state.as_of !== "string" || !state.as_of.trim())
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is missing");
   const stateStamp = parseStamp(state.as_of);
+  if (!stateStamp)
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is invalid");
+  if (state.age_seconds === undefined || state.age_seconds === null || state.age_seconds === "")
+    throw new Error("XAUS OHLC provider data_state.age_seconds is missing");
   const stateAge = Number(state.age_seconds);
-  const timestampAge = stateStamp ? (Date.now() - stateStamp.getTime()) / 1000 : NaN;
-  if (!stateStamp || !Number.isFinite(stateAge) || stateAge < 0 || stateAge > XAUS_MAX_AGE_SECONDS ||
-      !Number.isFinite(timestampAge) || timestampAge < -30 || timestampAge > XAUS_MAX_AGE_SECONDS)
-    throw new Error("XAUS OHLC provider freshness metadata is missing, invalid, or stale");
+  if (!Number.isFinite(stateAge) || stateAge < 0)
+    throw new Error("XAUS OHLC provider data_state.age_seconds is invalid");
+  if (stateAge > XAUS_MAX_AGE_SECONDS)
+    throw new Error("XAUS OHLC provider data_state.age_seconds is stale");
+  const timestampAge = (Date.now() - stateStamp.getTime()) / 1000;
+  if (!Number.isFinite(timestampAge) || timestampAge < -30)
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is in the future");
+  if (timestampAge > XAUS_MAX_AGE_SECONDS)
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is stale");
+  if (Math.abs(stateAge - Math.max(0, timestampAge)) > 120)
+    throw new Error("XAUS OHLC provider freshness metadata is internally inconsistent");
   if (!Array.isArray(payload?.points)) throw new Error("XAUS OHLC provider returned an unexpected chart schema");
   const intervalMs = intervalSeconds * 1000;
   const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
