@@ -1032,12 +1032,24 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
     : null).filter(Boolean);
   if (!available.length) throw new Error("No OHLC provider available for consensus: " + errors.join("; "));
   const primary = available[0];
+  const providerDiagnostics = available.map(item => {
+    const latest = item.candles?.[item.candles.length - 1];
+    return {
+      provider: item.provider,
+      candle_count: item.candles?.length ?? 0,
+      last_candle_at: latest?.timestamp ?? null,
+      age_seconds: item.age_seconds ?? null,
+      data_quality: item.data_quality?.status ?? "UNKNOWN",
+      analysis_ready: item.analysis_ready === true
+    };
+  });
   const base = {
     ...primary,
     source_consensus: {
       status: "UNCONFIRMED",
       providers: available.map(item => item.provider),
       required_providers: ["XAUS", "BIQUOTE"],
+      provider_diagnostics: providerDiagnostics,
       overlap_candles: 0,
       max_ohlc_spread_pct: null,
       latest_timestamp_match: false,
