@@ -3914,7 +3914,7 @@ test("Ayar quality endpoint evaluates explicit liquidity limits without issuing 
   globalThis.fetch=async url=>{
     const value=String(url);
     if(value.includes("Instrument/GetInstrumentSearch")) return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
-    if(value.includes("ClosingPrice/GetClosingPriceInfo")) return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo")) return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,qTotCap:9000000000,qTotTran5J:90000,instrumentState:{cEtaval:"A"}}}),{status:200});
     if(value.includes("Fund/GetETFByInsCode")) return new Response(JSON.stringify({etf:{insCode:code,deven,hEven:heven,pRedTran:100000,pSubTran:100500}}),{status:200});
     if(value.includes("BestLimits")) return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
     if(value.includes("Trade/GetTrade")) return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10}]}),{status:200});
