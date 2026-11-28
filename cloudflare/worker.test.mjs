@@ -1214,6 +1214,9 @@ test("multi-timeframe endpoint requires 15m, 60m, daily trend and temporally sta
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
+    assert.ok(["AVAILABLE","UNAVAILABLE"].includes(body.gold18_parity.status));
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.signal,"BUY","Parity diagnostics must not override the independently validated XAU signal");
     assert.ok(body.market_sources.every(source=>source.market_status==="LIVE"&&source.analysis_ready===true),
       "Every timeframe must be explicitly LIVE and analysis-ready before a directional signal is allowed");
     assert.equal(body.signal_stability.status,"CONFIRMED");
