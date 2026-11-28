@@ -1749,6 +1749,48 @@ function refreshCachedSnapshotFreshness(snapshot,now=Date.now()) {
     freshness_checked_at:new Date(now).toISOString()};
 }
 
+async function discoverAyarInstrument() {
+  const endpoint="https://cdn.tsetmc.com/api/Instrument/GetInstrumentSearch/"+encodeURIComponent("عیار");
+  try {
+    const response=await fetch(endpoint,{
+      headers:{accept:"application/json","user-agent":"Mozilla/5.0 AyyarSmartTrader/1.0"},
+      signal:AbortSignal.timeout(8000)
+    });
+    if(!response.ok) throw new Error("TSETMC instrument search HTTP "+response.status);
+    const payload=await response.json();
+    const rows=Array.isArray(payload)?payload:
+      Array.isArray(payload?.instrumentSearch)?payload.instrumentSearch:
+      Array.isArray(payload?.instrumentsearch)?payload.instrumentsearch:null;
+    if(!rows) throw new Error("TSETMC instrument search schema is unrecognized");
+    const normalize=value=>String(value??"").replace(/\u200c/g,"").replace(/\s+/g,"").trim();
+    const matches=rows.filter(row=>{
+      const symbol=normalize(row?.lVal18AFC??row?.symbol??row?.insName??row?.instrument?.lVal18AFC);
+      return symbol==="عیار";
+    }).map(row=>({
+      symbol:"عیار",
+      name:String(row?.lVal30??row?.name??row?.instrument?.lVal30??"").slice(0,120),
+      ins_code:String(row?.insCode??row?.inscode??row?.instrument?.insCode??"")
+    })).filter(row=>/^\d{8,20}$/.test(row.ins_code));
+    if(matches.length!==1) return {
+      status:"UNAVAILABLE",symbol:"AYAR",source:"TSETMC",
+      reason:matches.length===0?"EXACT_SYMBOL_NOT_FOUND":"AMBIGUOUS_EXACT_SYMBOL_MATCH",
+      candidate_count:matches.length,retrieved_at:new Date().toISOString(),
+      execution_enabled:false,
+      note:"Instrument identity is not confirmed. No fund quote, NAV, or trading signal is inferred."
+    };
+    return {status:"IDENTIFIED",symbol:"AYAR",ticker:matches[0].symbol,
+      instrument_name:matches[0].name,ins_code:matches[0].ins_code,
+      source:"TSETMC",source_url:endpoint,retrieved_at:new Date().toISOString(),
+      next_step:"Instrument identity only; live price, NAV, timestamp alignment and liquidity remain unverified.",
+      execution_enabled:false};
+  } catch(error) {
+    return {status:"UNAVAILABLE",symbol:"AYAR",source:"TSETMC",
+      reason:String(error?.message||"TSETMC instrument discovery failed").slice(0,240),
+      retrieved_at:new Date().toISOString(),execution_enabled:false,
+      note:"No instrument code or market price is guessed when TSETMC discovery is unavailable."};
+  }
+}
+
 async function snapshot(env={}) {
   if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) {
     cached=refreshCachedSnapshotFreshness(cached);
@@ -2105,6 +2147,8 @@ export default {
           execution_enabled:false},400);
       }
     }
+    if(url.pathname==="/v1/market/ayar/discovery"&&request.method==="GET")
+      return json(await discoverAyarInstrument());
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
     if(url.pathname==="/v1/market/gold18-parity"&&request.method==="GET") {
       const market=await snapshot(env);
