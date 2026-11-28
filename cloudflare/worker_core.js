@@ -1679,7 +1679,7 @@ async function fetchXausSpotQuote() {
     const state=payload?.data_state;
     if(state?.status!=="fresh") return null;
     const stamp=parseStamp(state.as_of||payload.price_as_of||payload.updated_at);
-    const ageFromSource=Number(state.age_seconds);
+    const ageFromSource=typeof state.age_seconds==="number"?state.age_seconds:NaN;
     const ageFromTimestamp=stamp?(Date.now()-stamp.getTime())/1000:NaN;
     const price=Number(payload?.spot_usd_oz??payload?.xau?.price);
     const unit=payload?.xau?.unit;
