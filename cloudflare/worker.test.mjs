@@ -3816,7 +3816,7 @@ test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-s
     if(value.includes("Instrument/GetInstrumentSearch"))
       return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",lVal30:"صندوق عیار",insCode:code}]}),{status:200});
     if(value.includes("ClosingPrice/GetClosingPriceInfo"))
-      return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,zTotTran:1200,qTotCap:9000000000,instrumentState:{cEtaval:"A "}}}),{status:200});
+      return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,zTotTran:1200,qTotTran5J:777,qTotCap:9000000000,instrumentState:{cEtaval:"A "}}}),{status:200});
     if(value.includes("Fund/GetETFByInsCode"))
       return new Response(JSON.stringify({etf:{insCode:code,deven,hEven,pRedTran:100000,pSubTran:100500}}),{status:200});
     if(value.includes("BestLimits"))
@@ -3841,6 +3841,7 @@ test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-s
     assert.equal(body.trade_tape_sample_volume,30);
     assert.equal(body.trade_tape_sample_value_rial,3148000);
     assert.equal(body.provider_reported_daily_traded_value_rial,9000000000);
+    assert.equal(body.provider_reported_daily_traded_volume,777);
     assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
