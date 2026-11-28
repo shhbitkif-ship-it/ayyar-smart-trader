@@ -1552,9 +1552,12 @@ test("walk-forward parameter selection is invariant to unseen first-fold test pr
   const baseline=await call(candles);
   const changed=[...candles];
   const firstTestIndex=Math.floor(candles.length*.55);
+  let previous=changed[firstTestIndex-1].close;
   for(let i=firstTestIndex;i<changed.length;i++){
-    const row=changed[i];
-    changed[i]={...row,open:row.open*1.08,high:row.high*1.08,low:row.low*1.08,close:row.close*1.08};
+    const close=previous-0.9+Math.sin(i/2)*0.25;
+    changed[i]={...changed[i],open:previous,high:Math.max(previous,close)+0.8,
+      low:Math.min(previous,close)-0.8,close};
+    previous=close;
   }
   const modified=await call(changed);
   assert.equal(modified.folds[0].selected_strategy,baseline.folds[0].selected_strategy);
