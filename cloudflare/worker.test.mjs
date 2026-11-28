@@ -3045,7 +3045,7 @@ test("BIQUOTE fallback rejects stale completed candles instead of fabricating a 
     const body=await response.json();
     assert.equal(response.status,502);
     assert.equal(body.status,"UNAVAILABLE");
-    assert.match(body.error,/Latest completed BIQUOTE OHLC candle is stale/);
+    assert.match(body.error,/Latest completed BIQUOTE OHLC candle is stale.*last_candle_close_at=.*age_seconds=.*freshness_limit_seconds=/);
     assert.equal(body.execution_enabled,false);
     assert.deepEqual(body.candles,[]);
   }finally{globalThis.fetch=originalFetch;}
