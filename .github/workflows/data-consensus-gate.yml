@@ -1,0 +1,92 @@
+name: Live data consensus safety gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/data-consensus-gate.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "41 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live-consensus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify multi-timeframe data quality and fail-closed signal behavior
+        run: |
+          python - <<'PY'
+          import json
+          import math
+          import urllib.request
+          from datetime import datetime, timezone
+
+          base = "https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev"
+
+          request = urllib.request.Request(
+              base + "/v1/signals/multi-timeframe?symbol=xau",
+              headers={"Accept": "application/json", "User-Agent": "AyyarSmartTrader-ConsensusGate/1.0"}
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              assert response.status == 200, "Multi-timeframe endpoint must respond HTTP 200"
+              payload = json.loads(response.read().decode("utf-8"))
+
+          assert payload.get("signal") in {"BUY", "SELL", "NO_TRADE"}, "Unknown signal"
+          assert payload.get("execution_enabled") is False, "Live execution must remain disabled"
+          timeframes = payload.get("timeframes") or {}
+          assert set(timeframes) == {"15m", "60m", "1d"}, "All three timeframes must be reported"
+
+          def parse_utc(value):
+              assert isinstance(value, str) and value, "Missing candle-close timestamp"
+              parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+              assert parsed.tzinfo is not None, "Timestamp must include timezone"
+              return parsed.astimezone(timezone.utc)
+
+          for interval, data in timeframes.items():
+              consensus = data.get("source_consensus") or {}
+              diagnostics = consensus.get("provider_diagnostics") or []
+              assert consensus.get("required_providers") == ["XAUS", "BIQUOTE"], interval
+              assert len(diagnostics) in {0, 1, 2}, interval
+              for provider in diagnostics:
+                  assert provider.get("provider") in {"XAUS", "BIQUOTE"}, interval
+                  age = provider.get("age_seconds")
+                  limit = provider.get("freshness_limit_seconds")
+                  assert isinstance(age, (int, float)) and math.isfinite(age) and age >= 0, interval
+                  assert isinstance(limit, (int, float)) and math.isfinite(limit) and limit > 0, interval
+                  assert age <= limit, "Provider freshness limit exceeded: " + interval
+                  parse_utc(provider.get("last_candle_close_at"))
+              print("TIMEFRAME", interval, json.dumps({
+                  "signal": data.get("signal"),
+                  "source_quality": data.get("source_quality"),
+                  "consensus": consensus.get("status"),
+                  "providers": [p.get("provider") for p in diagnostics],
+                  "max_ohlc_spread_pct": consensus.get("max_ohlc_spread_pct")
+              }, ensure_ascii=False))
+
+          if payload["signal"] in {"BUY", "SELL"}:
+              assert payload.get("signal_quality", {}).get("status") == "PASSED"
+              assert payload.get("signal_stability", {}).get("status") == "CONFIRMED"
+              assert payload.get("signal_stability", {}).get("confirmed") is True
+              assert payload.get("signal_stability", {}).get("confirmations") >= 2
+              for interval, data in timeframes.items():
+                  assert data.get("source_quality") == "CONVERGED", interval
+                  assert data.get("data_quality", {}).get("status") == "CLEAN", interval
+                  assert data.get("source_consensus", {}).get("status") == "CONVERGED", interval
+                  assert len(data.get("source_consensus", {}).get("provider_diagnostics", [])) == 2, interval
+              assert payload.get("market_data_status") == "LIVE"
+              assert len(payload.get("market_sources", [])) == 3
+              print("DIRECTIONAL_SIGNAL_FULLY_VERIFIED", payload["signal"])
+          else:
+              assert payload.get("confidence", 0) == 0, "Blocked signal must have zero confidence"
+              print("NO_TRADE_FAIL_CLOSED", json.dumps({
+                  "blocked_reasons": payload.get("signal_quality", {}).get("blocked_reasons"),
+                  "market_data_status": payload.get("market_data_status"),
+                  "stability": payload.get("signal_stability", {}).get("status")
+              }, ensure_ascii=False))
+
+          print("CONSENSUS_SAFETY_GATE_OK")
+          PY
