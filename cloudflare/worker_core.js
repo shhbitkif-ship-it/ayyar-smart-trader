@@ -1695,6 +1695,40 @@ async function fetchXausSpotQuote() {
     return {id:"xau",price,unit:"USD",updated_utc:stamp.toISOString(),stale:false};
   } catch { return null; }
 }
+function calculateGold18kParity(snapshot,now=Date.now()) {
+  const quotes=Array.isArray(snapshot?.quotes)?snapshot.quotes:[];
+  const bySymbol=new Map(quotes.map(quote=>[quote.symbol,quote]));
+  const required=["GOLD18","USD_IRT","XAUUSD"];
+  const inputs=Object.fromEntries(required.map(symbol=>[symbol,bySymbol.get(symbol)||null]));
+  const unavailable=required.filter(symbol=>{
+    const quote=inputs[symbol];
+    if(!quote||quote.status!=="LIVE"||!Number.isFinite(quote.price)||quote.price<=0) return true;
+    const stamp=parseStamp(quote.timestamp);
+    if(!stamp) return true;
+    const age=(now-stamp.getTime())/1000;
+    return age < -30 || age > (quote.source==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:
+      quote.source==="XAUS"?XAUS_MAX_AGE_SECONDS:MAX_AGE_SECONDS);
+  });
+  const base={status:"UNAVAILABLE",symbol:"GOLD18",unit:"تومان/گرم",
+    formula:"XAUUSD × USD_IRT × 0.75 ÷ 31.1034768",
+    inputs:Object.fromEntries(required.map(symbol=>[symbol,inputs[symbol]?{
+      status:inputs[symbol].status,price:inputs[symbol].price,
+      timestamp:inputs[symbol].timestamp,source:inputs[symbol].source}:null])),
+    note:"برآورد نظری طلای ۱۸ عیار؛ بدون اجرت، مالیات، کارمزد و حباب بازار."};
+  if(unavailable.length) return {...base,reason:"REQUIRED_LIVE_INPUT_MISSING",missing_inputs:unavailable};
+  const stamps=required.map(symbol=>parseStamp(inputs[symbol].timestamp).getTime());
+  const skewSeconds=(Math.max(...stamps)-Math.min(...stamps))/1000;
+  if(skewSeconds>180) return {...base,reason:"INPUT_TIMESTAMP_SKEW",timestamp_skew_seconds:round2(skewSeconds)};
+  const theoretical=inputs.XAUUSD.price*inputs.USD_IRT.price*0.75/31.1034768;
+  const observed=inputs.GOLD18.price;
+  if(!Number.isFinite(theoretical)||theoretical<=0||!Number.isFinite(observed)||observed<=0)
+    return {...base,reason:"INVALID_PARITY_CALCULATION"};
+  return {...base,status:"AVAILABLE",theoretical_price_irt_per_gram:round2(theoretical),
+    observed_market_price_irt_per_gram:observed,
+    premium_discount_pct:round2((observed/theoretical-1)*100),
+    timestamp_skew_seconds:round2(skewSeconds),reason:null};
+}
+
 function refreshCachedSnapshotFreshness(snapshot,now=Date.now()) {
   if(!snapshot||!Array.isArray(snapshot.quotes)) return snapshot;
   const quotes=snapshot.quotes.map(quote=>{
@@ -2072,6 +2106,10 @@ export default {
       }
     }
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
+    if(url.pathname==="/v1/market/gold18-parity"&&request.method==="GET") {
+      const market=await snapshot(env);
+      return json(calculateGold18kParity(market));
+    }
     if(url.pathname==="/v1/market/history"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol") || "gold-18k";
       if(!HISTORY_IDS.has(symbol)) return json({error:"Unsupported symbol",allowed_symbols:[...HISTORY_IDS]},400);
