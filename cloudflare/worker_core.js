@@ -2492,4 +2492,4 @@ export default {
     return json({error:"Not found"},404);
   }
 };
-export { classifyXauWeekendSession };
+export { classifyOhlcProviderFailure, classifyXauWeekendSession };
