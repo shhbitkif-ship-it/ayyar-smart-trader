@@ -3299,6 +3299,10 @@ test("multi-timeframe consensus compares all OHLC fields, not only candle closes
     for(const interval of ["15m","60m","1d"]){
       assert.equal(body.timeframes[interval].source_quality,"DIVERGENT");
       assert.ok(body.timeframes[interval].source_consensus.max_ohlc_spread_pct>0.5);
+      assert.ok(body.timeframes[interval].source_consensus.ohlc_spread_by_field_pct.high>0.5);
+      assert.ok(body.timeframes[interval].source_consensus.ohlc_spread_by_field_pct.close<0.001);
+      assert.equal(body.timeframes[interval].source_consensus.worst_ohlc_mismatch.field,"high");
+      assert.ok(body.timeframes[interval].source_consensus.worst_ohlc_mismatch.candle_at);
     }
   }finally{globalThis.fetch=originalFetch;}
 });
