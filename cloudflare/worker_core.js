@@ -1029,8 +1029,13 @@ async function fetchGoldCandles(symbol, interval) {
     const fallback=await fetchGoldCandlesFromBiquote(symbol,interval);
     return {...fallback, fallback_reason:primaryError};
   } catch(error) {
-    throw new Error("XAUS unavailable: "+primaryError+"; BIQUOTE fallback unavailable: "+
-      String(error?.message||"unknown provider error"));
+    const fallbackError=String(error?.message||"unknown provider error");
+    const combined=new Error("XAUS unavailable: "+primaryError+"; BIQUOTE fallback unavailable: "+fallbackError);
+    combined.provider_failures=[
+      {provider:"XAUS",failure_class:classifyOhlcProviderFailure(primaryError),reason:primaryError},
+      {provider:"BIQUOTE",failure_class:classifyOhlcProviderFailure(fallbackError),reason:fallbackError}
+    ];
+    throw combined;
   }
 }
 
@@ -1785,6 +1790,11 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       status:"ERROR",scheduled_at:new Date(scheduledTime).toISOString(),
       started_at:startedAt,completed_at:new Date().toISOString(),
       error:String(error?.message||"Scheduled paper monitor failed").slice(0,300),
+      provider_failures:Array.isArray(error?.provider_failures)?error.provider_failures.slice(0,2).map(item=>({
+        provider:String(item.provider||"unknown"),
+        failure_class:String(item.failure_class||"UNKNOWN_FAILURE"),
+        reason:String(item.reason||"Provider unavailable").slice(0,240)
+      })):[],
       execution_enabled:false,mode:"PAPER_ONLY"
     }).catch(()=>{});
     throw error;
