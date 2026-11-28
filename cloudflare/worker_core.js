@@ -1056,18 +1056,26 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
     throw error;
   }
   const primary = available[0];
-  const providerDiagnostics = available.map(item => {
-    const latest = item.candles?.[item.candles.length - 1];
-    return {
-      provider: item.provider,
-      candle_count: item.candles?.length ?? 0,
-      last_candle_at: latest?.timestamp ?? null,
-      last_candle_close_at: item.last_candle_close_at ?? null,
-      age_seconds: item.age_seconds ?? null,
-      freshness_limit_seconds: item.freshness_limit_seconds ?? null,
-      data_quality: item.data_quality?.status ?? "UNKNOWN",
-      analysis_ready: item.analysis_ready === true
-    };
+  const providerDiagnostics = results.map((result,index) => {
+    const provider=index===0?"XAUS":"BIQUOTE";
+    if(result.status==="rejected") {
+      const reason=String(result.reason?.message||"Provider unavailable");
+      return {provider,request_status:"REJECTED",
+        failure_class:classifyOhlcProviderFailure(reason),error:reason,
+        candle_count:0,last_candle_at:null,last_candle_close_at:null,
+        age_seconds:null,freshness_limit_seconds:null,data_quality:"UNAVAILABLE",
+        analysis_ready:false};
+    }
+    const item=result.value;
+    const latest=item.candles?.[item.candles.length-1];
+    return {provider:item.provider,request_status:"FULFILLED",
+      failure_class:null,error:null,candle_count:item.candles?.length??0,
+      last_candle_at:latest?.timestamp??null,
+      last_candle_close_at:item.last_candle_close_at??null,
+      age_seconds:item.age_seconds??null,
+      freshness_limit_seconds:item.freshness_limit_seconds??null,
+      data_quality:item.data_quality?.status??"UNKNOWN",
+      analysis_ready:item.analysis_ready===true};
   });
   const base = {
     ...primary,
