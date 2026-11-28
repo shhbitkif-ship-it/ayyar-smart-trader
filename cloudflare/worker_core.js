@@ -1565,6 +1565,29 @@ function randomHex(byteLength) {
   return Array.from(bytes,byte=>byte.toString(16).padStart(2,"0")).join("");
 }
 
+function classifyXauWeekendSession(nowMs=Date.now()) {
+  if(!Number.isFinite(nowMs)) throw new Error("nowMs must be a finite timestamp");
+  const parts=new Intl.DateTimeFormat("en-US",{
+    timeZone:"America/New_York",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"
+  }).formatToParts(new Date(nowMs));
+  const values=Object.fromEntries(parts.filter(part=>part.type!=="literal").map(part=>[part.type,part.value]));
+  const hour=Number(values.hour),minute=Number(values.minute);
+  if(!Number.isInteger(hour)||!Number.isInteger(minute)||!values.weekday)
+    throw new Error("Unable to determine New York market-session clock");
+  const afterFridayClose=values.weekday==="Fri"&&(hour>17||(hour===17&&minute>=0));
+  const saturday=values.weekday==="Sat";
+  const beforeSundayOpen=values.weekday==="Sun"&&hour<17;
+  const weekendClosed=afterFridayClose||saturday||beforeSundayOpen;
+  return {
+    status:weekendClosed?"WEEKEND_CLOSED_ESTIMATE":"NOT_WEEKEND_CLOSED",
+    is_weekend_closed_estimate:weekendClosed,
+    reference_timezone:"America/New_York",
+    reference_close:"Friday 17:00",
+    reference_open:"Sunday 17:00",
+    note:"Calendar heuristic only; broker holidays and instrument-specific trading hours may differ. This estimate never overrides quote or candle freshness checks."
+  };
+}
+
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
     "content-type":"application/json; charset=utf-8","cache-control":"no-store",
@@ -2217,7 +2240,7 @@ export default {
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
       const s=await snapshot(env);
       return json({status:s.status,as_of:s.as_of,live_quotes:s.quotes.filter(q=>q.status==="LIVE").length,
-        total_quotes:s.quotes.length,attribution:s.attribution});
+        total_quotes:s.quotes.length,session_estimate:classifyXauWeekendSession(),attribution:s.attribution});
     }
     if(url.pathname==="/v1/risk/policy"&&request.method==="GET") return json({
       default_risk_per_trade:0.01,max_daily_loss:0.03,max_drawdown:0.08,execution_enabled:false,
@@ -2445,3 +2468,4 @@ export default {
     return json({error:"Not found"},404);
   }
 };
+export { classifyXauWeekendSession };
