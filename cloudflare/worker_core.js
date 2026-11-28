@@ -1818,13 +1818,15 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
     const [quotePayload,bookPayload,navPayload]=await Promise.all([
       request("ClosingPrice/GetClosingPriceInfo/"+insCode),
       request("BestLimits/"+insCode),
-      request("Fund/GetETFByInsCode/"+insCode)
+      request("Fund/GetETFByInsCode/"+insCode),
+      request("Trade/GetTrade/"+insCode)
     ]);
     const quote=quotePayload?.closingPriceInfo;
     const nav=navPayload?.etf;
     const book=bookPayload?.bestLimits;
+    const trades=tradePayload?.trade;
     if(!quote||String(quote.insCode)!==String(insCode)||!nav||
-       String(nav.insCode)!==String(insCode)||!Array.isArray(book))
+       String(nav.insCode)!==String(insCode)||!Array.isArray(book)||!Array.isArray(trades))
       throw new Error("TSETMC Ayar response schema or instrument identity mismatch");
     const last=Number(quote.pDrCotVal),close=Number(quote.pClosing);
     const redemptionNav=Number(nav.pRedTran),subscriptionNav=Number(nav.pSubTran);
@@ -1849,6 +1851,11 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
     if(!top||top.bid_price<=0||top.ask_price<=0||top.bid_volume<=0||top.ask_volume<=0||
        top.ask_price<top.bid_price)
       throw new Error("TSETMC order book is empty or invalid");
+    const spreadBps=((top.ask_price-top.bid_price)/((top.ask_price+top.bid_price)/2))*10000;
+    const validTrades=trades.filter(trade=>Number.isFinite(Number(trade?.pTran))&&
+      Number(trade.pTran)>0&&Number.isFinite(Number(trade?.qTitTran))&&Number(trade.qTitTran)>0);
+    const tradedVolume=validTrades.reduce((sum,trade)=>sum+Number(trade.qTitTran),0);
+    const tradedValue=validTrades.reduce((sum,trade)=>sum+Number(trade.pTran)*Number(trade.qTitTran),0);
     const premium=(last/redemptionNav-1)*100;
     return {
       status:"LIVE",symbol:"AYAR",source:"TSETMC",ins_code:String(insCode),
@@ -1860,8 +1867,14 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
       best_bid:{price:top.bid_price,volume:top.bid_volume},
       best_ask:{price:top.ask_price,volume:top.ask_volume},
       order_book_levels:levels.length,
-      traded_count:Number.isFinite(Number(quote.zTotTran))?Number(quote.zTotTran):null,
-      traded_value_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
+      order_book_spread_bps:Number(spreadBps.toFixed(2)),
+      order_book_bid_depth_rial:levels.reduce((sum,level)=>sum+level.bid_price*level.bid_volume,0),
+      order_book_ask_depth_rial:levels.reduce((sum,level)=>sum+level.ask_price*level.ask_volume,0),
+      daily_trade_count:validTrades.length,
+      daily_traded_volume:tradedVolume,
+      daily_traded_value_rial:tradedValue,
+      five_day_average_volume:Number.isFinite(Number(quote.qTotTran5J))?Number(quote.qTotTran5J):null,
+      market_cap_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
       execution_enabled:false,
       note:"TSETMC is an undocumented public data surface. This is a market-data diagnostic, not broker execution or an investment signal."
     };
