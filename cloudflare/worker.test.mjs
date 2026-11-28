@@ -910,6 +910,42 @@ test("latest signal endpoint evaluates real provider OHLC and never enables exec
     assert.equal(body.market_regime.tradeable,true);
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
+    assert.ok(body.entry>body.stop_loss,"BUY stop must be below entry");
+    assert.ok(body.take_profit>body.entry,"BUY target must be above entry");
+    const risk=body.entry-body.stop_loss;
+    const reward=body.take_profit-body.entry;
+    assert.ok(Math.abs(reward/risk-2)<0.00001,"BUY reward/risk must equal 2");
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("latest SELL signal keeps stop above entry and target below entry at 2R", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  let close=3000;
+  const candles=Array.from({length:120},(_,i)=>{
+    const previous=close;
+    close-=i%2===0?0.5:-0.3;
+    if(i===119) close=previous-0.5;
+    return {timestamp:new Date(lastClosed-(119-i)*intervalMs).toISOString(),
+      open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{
+    status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.market_data_status,"LIVE",JSON.stringify(body));
+    assert.equal(body.signal,"SELL",JSON.stringify(body));
+    assert.equal(body.signal_quality.status,"TRADEABLE");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.risk_reward_ratio,2);
+    assert.ok(body.stop_loss>body.entry,"SELL stop must be above entry");
+    assert.ok(body.take_profit<body.entry,"SELL target must be below entry");
+    const risk=body.stop_loss-body.entry;
+    const reward=body.entry-body.take_profit;
+    assert.ok(Math.abs(reward/risk-2)<0.00001,"SELL reward/risk must equal 2");
   } finally { globalThis.fetch=originalFetch; }
 });
 
