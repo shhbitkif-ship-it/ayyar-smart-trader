@@ -208,7 +208,8 @@ test("gold 18k parity fails closed for stale, missing or time-misaligned inputs"
     assert.equal(body.reason,"INPUT_TIMESTAMP_SKEW");
     items=freshItems.map(row=>({...row,updated_utc:new Date(now).toISOString()}));
     items.find(row=>row.id==="usd").stale=true;
-    response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    const staleWorker=(await import("./worker_core.js?gold-parity-stale-input-case")).default;
+    response=await staleWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
     body=await response.json();
     assert.equal(body.status,"UNAVAILABLE");
     assert.ok(body.missing_inputs.includes("USD_IRT"));
