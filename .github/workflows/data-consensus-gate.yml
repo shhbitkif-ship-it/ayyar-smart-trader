@@ -121,6 +121,89 @@ jobs:
               except Exception as error:
                   print("UPSTREAM_PROBE", name, json.dumps({"error": str(error)[:400]}))
 
+          # AlgoSpecial is a diagnostic-only candidate. Its timestamps are documented as broker-server
+          # time (not UTC), so nearest-offset ages are informational and MUST NOT qualify it as live.
+          from datetime import timedelta
+          from urllib.parse import urlencode
+
+          algo_now = datetime.now(timezone.utc)
+          algo_from = (algo_now.date() - timedelta(days=3)).isoformat()
+          algo_to = algo_now.date().isoformat()
+          for tf, seconds_per_bar in (("M15", 900), ("H1", 3600), ("D1", 86400)):
+              params = {"symbol": "XAUUSD", "tf": tf, "from": algo_from, "to": algo_to, "format": "json"}
+              urls = {
+                  "ohlc": "https://www.algospecial.com/api/ohlc.php?" + urlencode(params),
+                  "quality": "https://www.algospecial.com/api/data-quality.php?" + urlencode({"symbol": "XAUUSD", "tf": tf}),
+              }
+              result = {"timeframe": tf, "requested_from": algo_from, "requested_to": algo_to,
+                        "timestamp_timezone": "broker_server_time_per_provider_docs",
+                        "freshness_authoritative": False}
+              try:
+                  req = urllib.request.Request(urls["ohlc"], headers={"Accept": "application/json",
+                      "User-Agent": "AyyarSmartTrader-ProviderProbe/1.0"})
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      ohlc_payload = json.loads(resp.read(2_000_000).decode("utf-8"))
+                      rows = ohlc_payload.get("data") if isinstance(ohlc_payload, dict) else None
+                      rows = rows if isinstance(rows, list) else []
+                      stamps, invalid_ohlc, duplicate_count = [], 0, 0
+                      seen = set()
+                      for bar in rows:
+                          if not isinstance(bar, dict):
+                              invalid_ohlc += 1
+                              continue
+                          stamp = bar.get("Timestamp")
+                          parsed = None
+                          if isinstance(stamp, str):
+                              try:
+                                  parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                              except ValueError:
+                                  try:
+                                      parsed = datetime.strptime(stamp, "%Y.%m.%d %H:%M:%S")
+                                  except ValueError:
+                                      pass
+                          if parsed is None:
+                              invalid_ohlc += 1
+                          else:
+                              stamps.append(parsed)
+                              if stamp in seen:
+                                  duplicate_count += 1
+                              seen.add(stamp)
+                          try:
+                              op, hi, lo, cl = (float(bar[k]) for k in ("Open", "High", "Low", "Close"))
+                              if not all(math.isfinite(v) and v > 0 for v in (op, hi, lo, cl)) or hi < max(op, cl, lo) or lo > min(op, cl, hi):
+                                  invalid_ohlc += 1
+                          except (KeyError, TypeError, ValueError):
+                              invalid_ohlc += 1
+                      last_stamp = rows[-1].get("Timestamp") if rows and isinstance(rows[-1], dict) else None
+                      age_candidates = []
+                      if stamps:
+                          last_dt = stamps[-1]
+                          if last_dt.tzinfo is not None:
+                              age_candidates = [round((algo_now - last_dt.astimezone(timezone.utc)).total_seconds(), 1)]
+                          else:
+                              for offset in range(-12, 15):
+                                  candidate = last_dt.replace(tzinfo=timezone(timedelta(hours=offset)))
+                                  age_candidates.append(round((algo_now - candidate.astimezone(timezone.utc)).total_seconds(), 1))
+                      result.update({"http": resp.status, "rows": len(rows), "payload_rows": ohlc_payload.get("rows"),
+                          "first_timestamp": rows[0].get("Timestamp") if rows and isinstance(rows[0], dict) else None,
+                          "last_timestamp": last_stamp, "last_timestamp_age_candidate_min_seconds": min(age_candidates) if age_candidates else None,
+                          "last_timestamp_age_candidate_max_seconds": max(age_candidates) if age_candidates else None,
+                          "timestamp_timezone_ambiguous": bool(stamps and stamps[-1].tzinfo is None),
+                          "invalid_or_missing_ohlc_count": invalid_ohlc, "duplicate_timestamp_count": duplicate_count,
+                          "timestamps_monotonic": all(a <= b for a, b in zip(stamps, stamps[1:]))})
+              except Exception as error:
+                  result["ohlc_error"] = str(error)[:400]
+              try:
+                  req = urllib.request.Request(urls["quality"], headers={"Accept": "application/json",
+                      "User-Agent": "AyyarSmartTrader-ProviderProbe/1.0"})
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      quality = json.loads(resp.read(500000).decode("utf-8"))
+                      result["quality_http"] = resp.status
+                      result["quality_report"] = {k: quality.get(k) for k in ("score", "grade", "rows", "start", "end", "critical_count", "warning_count", "checks", "issues") if k in quality}
+              except Exception as error:
+                  result["quality_error"] = str(error)[:400]
+              print("UPSTREAM_PROBE", "algospecial_xau_" + tf.lower(), json.dumps(result, ensure_ascii=False))
+
           request = urllib.request.Request(
               base + "/v1/signals/multi-timeframe?symbol=xau",
               headers={"Accept": "application/json", "User-Agent": "AyyarSmartTrader-ConsensusGate/1.0"}
