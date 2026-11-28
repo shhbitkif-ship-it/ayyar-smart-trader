@@ -30,6 +30,40 @@ jobs:
 
           base = "https://ayyar-smart-trader-api.ayyar-smart-trader.workers.dev"
 
+          # Read-only provider contract probes. These never feed the trading engine.
+          probes = {
+              "xaus_chart_15m": "https://xaus.com/api/v1/chart?symbol=xau&range=5d&interval=15m",
+              "xaus_intraday_48h": "https://xaus.com/api/v1/intraday?symbol=xau&hours=48",
+              "xaus_spot": "https://xaus.com/api/v1/spot",
+              "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD%3DX?range=5d&interval=15m"
+          }
+          for name, url in probes.items():
+              try:
+                  probe_request = urllib.request.Request(url, headers={
+                      "Accept": "application/json",
+                      "User-Agent": "Mozilla/5.0 AyyarSmartTrader-ProviderProbe/1.0"
+                  })
+                  with urllib.request.urlopen(probe_request, timeout=15) as probe_response:
+                      raw = probe_response.read(120000).decode("utf-8", errors="replace")
+                      data = json.loads(raw)
+                      result = (data.get("chart") or {}).get("result") or []
+                      quote = ((result[0].get("indicators") or {}).get("quote") or [{}])[0] if result else {}
+                      print("UPSTREAM_PROBE", name, json.dumps({
+                          "http": probe_response.status,
+                          "keys": list(data.keys())[:25],
+                          "data_state": data.get("data_state"),
+                          "updated_at": data.get("updated_at"),
+                          "price_as_of": data.get("price_as_of"),
+                          "point_count": len(data.get("points") or []),
+                          "last_points": (data.get("points") or [])[-3:],
+                          "yahoo_rows": len(result[0].get("timestamp") or []) if result else 0,
+                          "yahoo_last_timestamp": (result[0].get("timestamp") or [None])[-1] if result else None,
+                          "yahoo_last_close": (quote.get("close") or [None])[-1] if quote else None,
+                          "error": data.get("error")
+                      }, ensure_ascii=False))
+              except Exception as error:
+                  print("UPSTREAM_PROBE", name, json.dumps({"error": str(error)[:400]}))
+
           request = urllib.request.Request(
               base + "/v1/signals/multi-timeframe?symbol=xau",
               headers={"Accept": "application/json", "User-Agent": "AyyarSmartTrader-ConsensusGate/1.0"}
