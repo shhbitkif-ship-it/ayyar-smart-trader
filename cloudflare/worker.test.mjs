@@ -2903,7 +2903,7 @@ test("market status attributes the XAU fallback to XAUS without mixing provider 
     primaryCalls++;
     const items=freshItems.map(item=>({...item}));
     const xau=items.find(item=>item.id==="xau");
-    xau.updated_utc=new Date(Date.now()-10*60*1000).toISOString();
+    xau.updated_utc=new Date(Date.now()-30*60*1000).toISOString();
     return new Response(JSON.stringify({generated_utc:stamp,items}),{
       status:200,headers:{"content-type":"application/json"}
     });
