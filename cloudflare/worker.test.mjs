@@ -1101,6 +1101,8 @@ test("multi-timeframe endpoint requires 15m, 60m, daily trend and temporally sta
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
+    assert.ok(body.market_sources.every(source=>source.market_status==="LIVE"&&source.analysis_ready===true),
+      "Every timeframe must be explicitly LIVE and analysis-ready before a directional signal is allowed");
     assert.equal(body.signal_stability.status,"CONFIRMED");
     assert.equal(body.market_provider,"XAUS+BIQUOTE");
     assert.equal(body.timeframes["15m"].signal,"BUY");
