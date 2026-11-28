@@ -139,6 +139,40 @@ test("fresh quotes require correct units and timestamps", async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Iranian market quotes reject malformed, wrong-unit, stale and future-dated provider rows",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?iranian-quote-validation-boundaries")).default;
+  const now=Date.now();
+  const stamp=offset=>new Date(now+offset).toISOString();
+  const rows=freshItems.map(row=>({...row}));
+  rows[0]={...rows[0],price:"7200000"};
+  rows[1]={...rows[1],unit:"USD"};
+  rows[2]={...rows[2],updated_utc:stamp(-661_000)};
+  rows[3]={...rows[3],updated_utc:stamp(31_000)};
+  rows[4]={...rows[4],stale:true};
+  globalThis.fetch=async url=>{
+    if(String(url).includes("nerkhara.com")) return new Response(JSON.stringify({
+      generated_utc:stamp(0),items:rows
+    }),{status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    const bySymbol=Object.fromEntries(body.quotes.map(quote=>[quote.symbol,quote]));
+    for(const symbol of ["GOLD18","GOLD24","MESGHAL","COIN_EMAMI","COIN_HALF"]){
+      assert.notEqual(bySymbol[symbol].status,"LIVE",symbol+" must not be presented as live");
+      assert.equal(bySymbol[symbol].price,null,symbol+" must not expose an unverified price");
+    }
+    assert.equal(bySymbol.GOLD18.status,"UNAVAILABLE");
+    assert.equal(bySymbol.GOLD24.status,"UNAVAILABLE");
+    for(const symbol of ["MESGHAL","COIN_EMAMI","COIN_HALF"]) assert.equal(bySymbol[symbol].status,"STALE");
+    assert.equal(bySymbol.XAUUSD.status,"LIVE");
+    assert.equal(body.status,"PARTIAL");
+    assert.equal(body.live_quotes,3);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("XAUS fresh spot is used only as a validated XAU quote fallback when NerkhAra is unavailable",async()=>{
   const isolatedWorker=(await import("./worker_core.js?xaus-spot-fallback-test")).default;
   globalThis.fetch=async(url)=>{
