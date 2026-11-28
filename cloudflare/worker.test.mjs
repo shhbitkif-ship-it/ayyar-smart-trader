@@ -3129,6 +3129,45 @@ test("Wrangler config preserves signal history and declares SQLite paper account
 });
 
 
+test("Ayar discovery only accepts one exact TSETMC ticker match and never guesses a code",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-discovery-exact-match-test")).default;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    assert.match(String(url),/Instrument\/GetInstrumentSearch/);
+    return new Response(JSON.stringify({instrumentSearch:[
+      {lVal18AFC:"عیار",lVal30:"صندوق سرمایه‌گذاری طلا",insCode:"12345678901234567"},
+      {lVal18AFC:"طلا",lVal30:"نماد دیگر",insCode:"12345678901234568"}
+    ]}),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/discovery"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"IDENTIFIED");
+    assert.equal(body.ticker,"عیار");
+    assert.equal(body.ins_code,"12345678901234567");
+    assert.equal(body.execution_enabled,false);
+    assert.match(body.next_step,/NAV/);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("Ayar discovery fails closed when exact TSETMC ticker match is ambiguous",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-discovery-ambiguous-test")).default;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify({instrumentSearch:[
+    {lVal18AFC:"عیار",insCode:"12345678901234567"},
+    {lVal18AFC:"عیار",insCode:"12345678901234568"}
+  ]}),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/discovery"));
+    const body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.reason,"AMBIGUOUS_EXACT_SYMBOL_MATCH");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.ins_code,undefined);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("market snapshot reports PARTIAL instead of LIVE when only some instruments are fresh", async () => {
   const isolatedWorker = (await import("./worker_core.js?partial-market-status-test")).default;
   globalThis.fetch = async () => new Response(JSON.stringify({
