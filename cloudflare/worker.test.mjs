@@ -910,6 +910,42 @@ test("latest signal endpoint evaluates real provider OHLC and never enables exec
     assert.equal(body.market_regime.tradeable,true);
     assert.equal(body.execution_enabled,false);
     assert.equal(body.risk_reward_ratio,2);
+    assert.ok(body.entry>body.stop_loss,"BUY stop must be below entry");
+    assert.ok(body.take_profit>body.entry,"BUY target must be above entry");
+    const risk=body.entry-body.stop_loss;
+    const reward=body.take_profit-body.entry;
+    assert.ok(Math.abs(reward/risk-2)<0.00001,"BUY reward/risk must equal 2");
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("latest SELL signal keeps stop above entry and target below entry at 2R", async () => {
+  const originalFetch=globalThis.fetch;
+  const intervalMs=3600000;
+  const lastClosed=Math.floor(Date.now()/intervalMs)*intervalMs-intervalMs;
+  let close=3000;
+  const candles=Array.from({length:120},(_,i)=>{
+    const previous=close;
+    close-=i%2===0?0.5:-0.3;
+    if(i===119) close=previous-0.5;
+    return {timestamp:new Date(lastClosed-(119-i)*intervalMs).toISOString(),
+      open:previous,high:Math.max(previous,close)+0.2,low:Math.min(previous,close)-0.2,close};
+  });
+  globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{
+    status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await worker.fetch(new Request("https://unit.test/v1/signals/latest?symbol=xau&interval=60m"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.market_data_status,"LIVE",JSON.stringify(body));
+    assert.equal(body.signal,"SELL",JSON.stringify(body));
+    assert.equal(body.signal_quality.status,"TRADEABLE");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.risk_reward_ratio,2);
+    assert.ok(body.stop_loss>body.entry,"SELL stop must be above entry");
+    assert.ok(body.take_profit<body.entry,"SELL target must be below entry");
+    const risk=body.stop_loss-body.entry;
+    const reward=body.entry-body.take_profit;
+    assert.ok(Math.abs(reward/risk-2)<0.00001,"SELL reward/risk must equal 2");
   } finally { globalThis.fetch=originalFetch; }
 });
 
@@ -2860,6 +2896,97 @@ test("market status endpoint exposes accurate partial quote counts", async () =>
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("market status exposes per-provider and per-instrument freshness diagnostics", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-source-health-test")).default;
+  const stamp=new Date().toISOString();
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:stamp,
+    items:[
+      {id:"gold-18k",price:7200000,unit:"IRT",updated_utc:stamp,stale:false},
+      {id:"gold-24k",price:9600000,unit:"IRT",updated_utc:new Date(Date.now()-20*60*1000).toISOString(),stale:false}
+    ]
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"PARTIAL");
+    assert.ok(Array.isArray(body.source_health));
+    const nerkhAra=body.source_health.find(source=>source.provider==="NerkhAra");
+    assert.ok(nerkhAra);
+    assert.equal(nerkhAra.live_quotes,1);
+    assert.equal(nerkhAra.stale_quotes,1);
+    assert.equal(nerkhAra.total_quotes,8);
+    assert.equal(nerkhAra.quotes.find(quote=>quote.symbol==="GOLD18").status,"LIVE");
+    assert.equal(nerkhAra.quotes.find(quote=>quote.symbol==="GOLD24").status,"STALE");
+    assert.match(body.note,/not an upstream connectivity/i);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("market status attributes the XAU fallback to XAUS without mixing provider counts", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-mixed-provider-test")).default;
+  const stamp=new Date().toISOString();
+  let primaryCalls=0, xausCalls=0;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/spot")) {
+      xausCalls++;
+      return new Response(JSON.stringify({
+        data_state:{status:"fresh",as_of:stamp,age_seconds:1},
+        spot_usd_oz:2660,xau:{unit:"oz",currency:"USD"},
+        updated_at:stamp
+      }),{status:200,headers:{"content-type":"application/json"}});
+    }
+    primaryCalls++;
+    const items=freshItems.map(item=>({...item}));
+    const xau=items.find(item=>item.id==="xau");
+    xau.updated_utc=new Date(Date.now()-30*60*1000).toISOString();
+    return new Response(JSON.stringify({generated_utc:stamp,items}),{
+      status:200,headers:{"content-type":"application/json"}
+    });
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"LIVE");
+    assert.equal(primaryCalls,1);
+    assert.equal(xausCalls,1);
+    const primary=body.source_health.find(source=>source.provider==="NerkhAra");
+    const fallback=body.source_health.find(source=>source.provider==="XAUS");
+    assert.ok(primary);
+    assert.ok(fallback);
+    assert.equal(primary.total_quotes,7);
+    assert.equal(primary.live_quotes,7);
+    assert.equal(fallback.total_quotes,1);
+    assert.equal(fallback.live_quotes,1);
+    assert.equal(fallback.quotes[0].symbol,"XAUUSD");
+    assert.equal(fallback.quotes[0].unit,"USD/oz");
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("market status rejects materially future-dated quotes instead of marking them LIVE", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-future-timestamp-test")).default;
+  const stamp=new Date().toISOString();
+  const items=freshItems.map(item=>({...item}));
+  const futureQuote=items.find(item=>item.id==="gold-18k");
+  futureQuote.updated_utc=new Date(Date.now()+5*60*1000).toISOString();
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:stamp,items
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"PARTIAL");
+    assert.equal(body.live_quotes,7);
+    const provider=body.source_health.find(source=>source.provider==="NerkhAra");
+    const quote=provider.quotes.find(item=>item.symbol==="GOLD18");
+    assert.equal(quote.status,"STALE");
+    assert.ok(quote.age_seconds < -30);
+    assert.equal(body.total_quotes,8);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("market status endpoint reports zero live quotes when providers fail", async () => {
   const isolatedWorker=(await import("./worker_core.js?market-status-unavailable-test")).default;
   globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
@@ -3266,6 +3393,12 @@ test("multi-timeframe signal is blocked when only one OHLC provider is available
       assert.equal(typeof body.timeframes[interval].source_consensus.provider_diagnostics[0].last_candle_at,"string");
     }
     assert.equal(body.execution_enabled,false);
+    assert.equal(body.confidence,0);
+    assert.equal(body.entry,null);
+    assert.equal(body.stop_loss,null);
+    assert.equal(body.take_profit,null);
+    assert.equal(body.signal_stability.confirmed,false);
+    assert.equal(body.signal_quality.status,"BLOCKED");
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -3342,6 +3475,108 @@ test("multi-timeframe consensus compares all OHLC fields, not only candle closes
       assert.equal(body.timeframes[interval].source_quality,"DIVERGENT");
       assert.ok(body.timeframes[interval].source_consensus.max_ohlc_spread_pct>0.5);
     }
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+
+test("multi-timeframe consensus accepts the exact 0.5 percent boundary and rejects any excess", async () => {
+  const intervals={"15m":900,"60m":3600,"1d":86400};
+  const originalFetch=globalThis.fetch;
+  try {
+    for (const spreadPct of [0.5,0.5001]) {
+      const isolatedWorker=(await import("./worker_core.js?ohlc-spread-boundary-"+String(spreadPct).replace(".","_"))).default;
+      globalThis.fetch=async url=>{
+        const parsed=new URL(String(url));
+        const interval=parsed.searchParams.get("interval");
+        const seconds=intervals[interval==="1h"?"60m":interval];
+        const lastClosed=Math.floor(Date.now()/(seconds*1000))*(seconds*1000)-seconds*1000;
+        const candles=Array.from({length:80},(_,i)=>{
+          const close=2600+i*.15;
+          return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
+            open:close-.05,high:close+.2,low:close-.2,close};
+        });
+        if(parsed.hostname==="biquote.io"){
+          const factor=1/(1-spreadPct/100);
+          const bars=candles.map((c,i)=>({
+            openTime:c.timestamp,open:c.open*factor,high:c.high*factor,
+            low:c.low*factor,close:c.close*factor,isOpen:false
+          }));
+          return new Response(JSON.stringify({symbol:"XAUUSD",
+            interval:interval==="60m"?"1h":interval,bars}),
+            {status:200,headers:{"content-type":"application/json"}});
+        }
+        return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,
+          headers:{"content-type":"application/json"}});
+      };
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+      const body=await response.json();
+      assert.equal(response.status,200,JSON.stringify(body));
+      for(const interval of ["15m","60m","1d"]){
+        const consensus=body.timeframes[interval].source_consensus;
+        if(spreadPct===0.5){
+          assert.equal(body.timeframes[interval].source_quality,"CONVERGED");
+          assert.equal(consensus.status,"CONVERGED");
+          assert.ok(Math.abs(consensus.max_ohlc_spread_pct-0.5)<0.0001);
+        } else {
+          assert.equal(body.timeframes[interval].source_quality,"DIVERGENT");
+          assert.equal(consensus.status,"DIVERGENT");
+          assert.ok(consensus.max_ohlc_spread_pct>0.5);
+        }
+      }
+      if(spreadPct>0.5) {
+        assert.equal(body.signal,"NO_TRADE");
+        assert.equal(body.execution_enabled,false);
+      }
+    }
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+
+test("multi-timeframe signal is blocked when only one timeframe has divergent sources", async () => {
+  const isolatedWorker=(await import("./worker_core.js?one-timeframe-divergence-block-test")).default;
+  const intervals={"15m":900,"60m":3600,"1d":86400};
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const parsed=new URL(String(url));
+    const interval=parsed.searchParams.get("interval");
+    const seconds=intervals[interval==="1h"?"60m":interval];
+    const lastClosed=Math.floor(Date.now()/(seconds*1000))*(seconds*1000)-seconds*1000;
+    const candles=Array.from({length:80},(_,i)=>{
+      const close=2600+i*.15;
+      return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
+        open:close-.05,high:close+.2,low:close-.2,close};
+    });
+    if(parsed.hostname==="biquote.io"){
+      const bars=candles.map((c,i)=>({
+        openTime:c.timestamp,open:c.open,
+        high:interval==="15m" && i>=77 ? c.high*1.02 : c.high,
+        low:c.low,close:c.close,isOpen:false
+      }));
+      return new Response(JSON.stringify({symbol:"XAUUSD",
+        interval:interval==="60m"?"1h":interval,bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,
+      headers:{"content-type":"application/json"}});
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.signal_quality.status,"BLOCKED");
+    assert.equal(body.signal_quality.checks.find(x=>x.id==="all_timeframe_data_quality_and_source_consensus").passed,false);
+    assert.equal(body.timeframes["15m"].source_quality,"DIVERGENT");
+    assert.equal(body.timeframes["15m"].source_consensus.status,"DIVERGENT");
+    for(const interval of ["60m","1d"]){
+      assert.equal(body.timeframes[interval].source_quality,"CONVERGED");
+      assert.equal(body.timeframes[interval].source_consensus.status,"CONVERGED");
+    }
+    assert.equal(body.confidence,0);
+    assert.equal(body.entry,null);
+    assert.equal(body.stop_loss,null);
+    assert.equal(body.take_profit,null);
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -3452,4 +3687,40 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
       globalThis.fetch=originalFetch;
     }
   }
+});
+
+
+test("ATR backtest evaluates stop and target on the entry candle instead of skipping intrabar outcomes", async () => {
+  const base=[];
+  for(let i=0;i<180;i++){
+    const close=i<70?3100-i*2:i<115?2960+(i-70)*5:3185-(i-115)*4;
+    base.push({timestamp:new Date(Date.UTC(2025,0,1+i)).toISOString(),
+      open:close,high:close+4,low:close-4,close});
+  }
+  // With EMA20/EMA50, the bullish cross is confirmed on candle 87 and
+  // the simulated entry is at candle 88's open.
+  const entryIndex=88;
+  const run=async (kind)=>{
+    const candles=base.map(c=>({...c}));
+    if(kind==="stop") candles[entryIndex].low=candles[entryIndex].open-100;
+    else candles[entryIndex].high=candles[entryIndex].open+100;
+    const response=await worker.fetch(new Request("https://unit.test/v1/backtest/atr-risk",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({candles,starting_capital:10000,risk_fraction:0.01,
+        atr_period:14,atr_stop_multiple:2,reward_risk_multiple:1.5})
+    }));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    const trade=body.trades.find(t=>t.entry_time===candles[entryIndex].timestamp);
+    assert.ok(trade,"the expected next-open entry must be recorded");
+    assert.equal(trade.exit_time,candles[entryIndex].timestamp,
+      "an entry-candle stop/target must close within that same candle");
+    return trade;
+  };
+  const stopped=await run("stop");
+  assert.equal(stopped.exit_reason,"STOP_LOSS_ENTRY_CANDLE");
+  assert.ok(stopped.pnl<0);
+  const targeted=await run("target");
+  assert.equal(targeted.exit_reason,"TAKE_PROFIT_ENTRY_CANDLE");
+  assert.ok(targeted.pnl>0);
 });

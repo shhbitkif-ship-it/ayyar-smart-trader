@@ -318,6 +318,18 @@ function runAtrRiskBacktest(payload) {
         }
       }
     }
+    // The entry candle begins at the modeled fill price, so its subsequent
+    // high/low must be checked immediately. Ignoring it would create optimistic
+    // backtests whenever a stop or target is reached before the next candle.
+    if(position&&position.entry_time===candle.iso){
+      const stopHit=candle.low<=position.stop,targetHit=candle.high>=position.target;
+      if(stopHit){
+        closePosition(i,position.stop,targetHit
+          ?"STOP_LOSS_BOTH_LEVELS_TOUCHED":"STOP_LOSS_ENTRY_CANDLE");
+      } else if(targetHit){
+        closePosition(i,position.target,"TAKE_PROFIT_ENTRY_CANDLE");
+      }
+    }
     const equity=cash+(position?position.quantity*candle.close*(1-cost):0);
     if(!Number.isFinite(equity)||equity<=0) throw new Error("ATR backtest equity is outside the supported numeric range");
     equityCurve.push({timestamp:candle.iso,equity:round2(equity)});
@@ -1603,6 +1615,36 @@ function normalise(item, def, provider="NerkhAra") {
       reason:fresh?null:"Quote is missing, stale, invalid, or has an unexpected unit"}
   };
 }
+function buildMarketSourceDiagnostics(quotes) {
+  const grouped=new Map();
+  for(const quote of Array.isArray(quotes)?quotes:[]) {
+    const provider=typeof quote?.source==="string"&&quote.source?quote.source:"UNKNOWN";
+    if(!grouped.has(provider)) grouped.set(provider,[]);
+    grouped.get(provider).push(quote);
+  }
+  return [...grouped.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([provider,items])=>{
+    const live=items.filter(item=>item.status==="LIVE").length;
+    const stale=items.filter(item=>item.status==="STALE").length;
+    const unavailable=items.length-live-stale;
+    return {
+      provider,
+      status:live===items.length?"LIVE":live>0?"PARTIAL":"UNAVAILABLE",
+      live_quotes:live,
+      stale_quotes:stale,
+      unavailable_quotes:unavailable,
+      total_quotes:items.length,
+      quotes:items.map(item=>({
+        symbol:item.symbol,
+        status:item.status,
+        unit:item.unit,
+        timestamp:item.timestamp,
+        age_seconds:item.age_seconds,
+        reason:item.meta?.reason??null
+      }))
+    };
+  });
+}
+
 async function fetchXausSpotQuote() {
   try {
     const response=await fetch("https://xaus.com/api/v1/spot?compact=1",{
@@ -2217,7 +2259,9 @@ export default {
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
       const s=await snapshot(env);
       return json({status:s.status,as_of:s.as_of,live_quotes:s.quotes.filter(q=>q.status==="LIVE").length,
-        total_quotes:s.quotes.length,attribution:s.attribution});
+        total_quotes:s.quotes.length,attribution:s.attribution,
+        source_health:buildMarketSourceDiagnostics(s.quotes),
+        note:"Source health is derived from per-instrument quote freshness and validation; it is not an upstream connectivity or execution-venue guarantee."});
     }
     if(url.pathname==="/v1/risk/policy"&&request.method==="GET") return json({
       default_risk_per_trade:0.01,max_daily_loss:0.03,max_drawdown:0.08,execution_enabled:false,
