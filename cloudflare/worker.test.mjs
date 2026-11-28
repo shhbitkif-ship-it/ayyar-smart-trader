@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import worker, { validateArchivedSignalForTrade } from "./worker_core.js";
+import worker, { classifyXauWeekendSession, validateArchivedSignalForTrade } from "./worker_core.js";
 import { calculateLegacyPaperBalance, calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 const originalFetch = globalThis.fetch;
@@ -70,6 +70,17 @@ test("paper ledger fee and settlement math rejects invalid and non-finite values
     exitPrice:101,entryFee:0,exitFee:0}),/INVALID_PAPER_SETTLEMENT_INPUT/);
   assert.throws(()=>calculatePaperSettlement({side:"BUY",quantity:1,entryPrice:100,
     exitPrice:101,entryFee:-1,exitFee:0}),/INVALID_PAPER_SETTLEMENT_INPUT/);
+});
+
+test("XAU weekend session estimate follows New York Friday close and Sunday open across DST",()=>{
+  const at=value=>Date.parse(value);
+  assert.equal(classifyXauWeekendSession(at("2026-11-27T21:30:00Z")).status,"NOT_WEEKEND_CLOSED");
+  assert.equal(classifyXauWeekendSession(at("2026-11-27T22:30:00Z")).status,"WEEKEND_CLOSED_ESTIMATE");
+  assert.equal(classifyXauWeekendSession(at("2026-11-28T12:00:00Z")).is_weekend_closed_estimate,true);
+  assert.equal(classifyXauWeekendSession(at("2026-11-29T21:30:00Z")).is_weekend_closed_estimate,true);
+  assert.equal(classifyXauWeekendSession(at("2026-11-29T22:30:00Z")).status,"NOT_WEEKEND_CLOSED");
+  assert.equal(classifyXauWeekendSession(at("2026-07-05T20:30:00Z")).is_weekend_closed_estimate,true);
+  assert.throws(()=>classifyXauWeekendSession(NaN),/finite timestamp/);
 });
 
 test("health endpoint responds", async () => {
