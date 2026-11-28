@@ -823,7 +823,7 @@ test("OHLC endpoint rejects missing XAUS freshness metadata", async () => {
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
     const body=await response.json();assert.equal(response.status,502);
-    assert.match(body.error,/data state is missing/i);assert.equal(body.execution_enabled,false);
+    assert.match(body.error,/XAUS OHLC provider data_state metadata is missing/i);assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
 
@@ -837,7 +837,7 @@ test("OHLC endpoint rejects stale XAUS freshness metadata even when candle times
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
     const body=await response.json();assert.equal(response.status,502);
-    assert.match(body.error,/freshness metadata.*stale/i);assert.equal(body.execution_enabled,false);
+    assert.match(body.error,/XAUS OHLC provider data_state.age_seconds is stale/i);assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
 
