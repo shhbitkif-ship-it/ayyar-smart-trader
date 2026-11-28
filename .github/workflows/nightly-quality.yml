@@ -1,0 +1,53 @@
+name: Ayyar Free Nightly Quality Audit
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: free-nightly-quality
+  cancel-in-progress: true
+
+jobs:
+  backend-regression:
+    name: Backend regression tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run backend tests
+        run: PYTHONPATH=. pytest -q
+
+  worker-regression:
+    name: Cloudflare Worker regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Worker test dependencies
+        run: npm install --prefix cloudflare --no-audit --no-fund
+      - name: Run Worker unit tests
+        run: npm test --prefix cloudflare
+      - name: Run SQLite transaction integration tests
+        run: npm run test:integration --prefix cloudflare
+      - name: Validate Worker bundle
+        run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.jsonc
