@@ -2887,6 +2887,47 @@ test("market status exposes per-provider and per-instrument freshness diagnostic
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test("market status attributes the XAU fallback to XAUS without mixing provider counts", async () => {
+  const isolatedWorker=(await import("./worker_core.js?market-status-mixed-provider-test")).default;
+  const stamp=new Date().toISOString();
+  let primaryCalls=0, xausCalls=0;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/spot")) {
+      xausCalls++;
+      return new Response(JSON.stringify({
+        data_state:{status:"fresh",as_of:stamp,age_seconds:1},
+        spot_usd_oz:2660,xau:{unit:"oz",currency:"USD"},
+        updated_at:stamp
+      }),{status:200,headers:{"content-type":"application/json"}});
+    }
+    primaryCalls++;
+    const items=freshItems.map(item=>({...item}));
+    const xau=items.find(item=>item.id==="xau");
+    xau.updated_utc=new Date(Date.now()-10*60*1000).toISOString();
+    return new Response(JSON.stringify({generated_utc:stamp,items}),{
+      status:200,headers:{"content-type":"application/json"}
+    });
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/status"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"LIVE");
+    assert.equal(primaryCalls,1);
+    assert.equal(xausCalls,1);
+    const primary=body.source_health.find(source=>source.provider==="NerkhAra");
+    const fallback=body.source_health.find(source=>source.provider==="XAUS");
+    assert.ok(primary);
+    assert.ok(fallback);
+    assert.equal(primary.total_quotes,7);
+    assert.equal(primary.live_quotes,7);
+    assert.equal(fallback.total_quotes,1);
+    assert.equal(fallback.live_quotes,1);
+    assert.equal(fallback.quotes[0].symbol,"XAUUSD");
+    assert.equal(fallback.quotes[0].unit,"USD");
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test("market status endpoint reports zero live quotes when providers fail", async () => {
   const isolatedWorker=(await import("./worker_core.js?market-status-unavailable-test")).default;
   globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
