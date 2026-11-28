@@ -2850,6 +2850,37 @@ test("scheduled monitor checks every registered paper account using fresh comple
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("scheduled paper monitor records estimated weekend closure without fetching stale candles or changing open positions",async()=>{
+  const statusStore=new Map();
+  const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.56"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
+    method:"POST",headers:{"content-type":"application/json",authorization:"Bearer "+account.access_token},
+    body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020})
+  }),env);
+  assert.equal(opened.status,201);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error("provider fetch must not run during estimated weekend closure");};
+  try{
+    const scheduledAt=Date.parse("2026-11-28T12:00:00Z");
+    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:scheduledAt},env);
+    assert.equal(result.status,"MARKET_CLOSED");
+    assert.equal(result.market_session.is_weekend_closed_estimate,true);
+    assert.equal(result.accounts_checked,0);
+    assert.equal(result.execution_enabled,false);
+    const state=env.__accounts.get(account.account_id);
+    assert.equal(state.trades.length,1);
+    assert.equal(state.trades[0].status,"OPEN");
+    assert.equal(statusStore.get("paper-monitor:latest").status,"MARKET_CLOSED");
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("Wrangler config preserves signal history and declares SQLite paper accounts",()=>{
   const config=JSON.parse(readFileSync(new URL("./wrangler.jsonc",import.meta.url),"utf8"));
   assert.equal(config.name,"ayyar-smart-trader-api");
