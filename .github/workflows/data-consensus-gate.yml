@@ -33,9 +33,10 @@ jobs:
           # Read-only provider contract probes. These never feed the trading engine.
           probes = {
               "xaus_chart_15m": "https://xaus.com/api/v1/chart?symbol=xau&range=5d&interval=15m",
+              "xaus_chart_60m": "https://xaus.com/api/v1/chart?symbol=xau&range=1mo&interval=60m",
+              "xaus_chart_1d": "https://xaus.com/api/v1/chart?symbol=xau&range=1y&interval=1d",
               "xaus_intraday_48h": "https://xaus.com/api/v1/intraday?symbol=xau&hours=48",
-              "xaus_spot": "https://xaus.com/api/v1/spot",
-              "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD%3DX?range=5d&interval=15m"
+              "xaus_spot": "https://xaus.com/api/v1/spot"
           }
           for name, url in probes.items():
               try:
