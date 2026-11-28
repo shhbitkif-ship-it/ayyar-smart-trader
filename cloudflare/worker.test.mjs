@@ -3840,7 +3840,7 @@ test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-s
     assert.equal(body.daily_trade_count,2);
     assert.equal(body.daily_traded_volume,30);
     assert.equal(body.daily_traded_value_rial,3148000);
-    assert.equal(body.market_cap_rial,9000000000);
+    assert.equal(body.provider_reported_daily_value_rial,9000000000);
     assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
@@ -3874,5 +3874,61 @@ test("Ayar market snapshot blocks stale NAV even when the quote is fresh",async(
     assert.match(body.reason,/stale or misaligned/i);
     assert.equal(body.price,undefined);
     assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+
+test("Ayar quality endpoint blocks readiness when thresholds are not configured",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-quality-unconfigured-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000);
+  const deven=Number(local.getUTCFullYear()+String(local.getUTCMonth()+1).padStart(2,"0")+String(local.getUTCDate()).padStart(2,"0"));
+  const heven=Number(String(local.getUTCHours()).padStart(2,"0")+String(local.getUTCMinutes()).padStart(2,"0")+String(local.getUTCSeconds()).padStart(2,"0"));
+  const code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch")) return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo")) return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode")) return new Response(JSON.stringify({etf:{insCode:code,deven,hEven,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits")) return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade")) return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/quality"));
+    const body=await response.json();
+    assert.equal(body.status,"DIAGNOSTIC_ONLY");
+    assert.equal(body.liquidity_status,"UNCONFIGURED");
+    assert.equal(body.trade_readiness,"BLOCKED");
+    assert.equal(body.premium_state,"PREMIUM");
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("Ayar quality endpoint evaluates explicit liquidity limits without issuing a trade signal",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-quality-configured-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000);
+  const deven=Number(local.getUTCFullYear()+String(local.getUTCMonth()+1).padStart(2,"0")+String(local.getUTCDate()).padStart(2,"0"));
+  const heven=Number(String(local.getUTCHours()).padStart(2,"0")+String(local.getUTCMinutes()).padStart(2,"0")+String(local.getUTCSeconds()).padStart(2,"0"));
+  const code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch")) return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo")) return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode")) return new Response(JSON.stringify({etf:{insCode:code,deven,hEven,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits")) return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade")) return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const env={AYAR_MAX_SPREAD_BPS:"25",AYAR_MIN_DAILY_VALUE_RIAL:"1000000",
+      AYAR_MIN_BID_DEPTH_RIAL:"1000000",AYAR_MIN_ASK_DEPTH_RIAL:"1000000"};
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/quality"),env);
+    const body=await response.json();
+    assert.equal(body.status,"EVALUATED");
+    assert.equal(body.liquidity_status,"PASS");
+    assert.equal(body.trade_readiness,"LIQUIDITY_CHECKS_PASSED_NOT_A_SIGNAL");
+    assert.equal(body.premium_state,"PREMIUM");
+    assert.equal(body.execution_enabled,false);
+    assert.deepEqual(body.failed_checks,[]);
   } finally {globalThis.fetch=originalFetch;}
 });
