@@ -1681,14 +1681,17 @@ async function fetchXausSpotQuote() {
     const stamp=typeof state.as_of==="string"?parseStamp(state.as_of):null;
     const ageFromSource=typeof state.age_seconds==="number"?state.age_seconds:NaN;
     const ageFromTimestamp=stamp?(Date.now()-stamp.getTime())/1000:NaN;
-    const price=Number(payload?.spot_usd_oz??payload?.xau?.price);
+    const rawPrice=payload?.spot_usd_oz??payload?.xau?.price;
+    const price=rawPrice;
     const unit=payload?.xau?.unit;
     const currency=payload?.xau?.currency;
+    const updatedAt=parseStamp(payload.updated_at);
+    const updatedAge=updatedAt?(Date.now()-updatedAt.getTime())/1000:NaN;
     if(!stamp||!Number.isFinite(ageFromSource)||ageFromSource<0||ageFromSource>XAUS_MAX_AGE_SECONDS||
        !Number.isFinite(ageFromTimestamp)||ageFromTimestamp< -30||ageFromTimestamp>XAUS_MAX_AGE_SECONDS||
        !Number.isFinite(price)||price<=0||price>1e15||
-       (currency&&currency!=="USD")||(unit&&!["oz","troy_oz"].includes(unit))||
-       !parseStamp(payload.updated_at)||Math.abs((Date.now()-parseStamp(payload.updated_at).getTime())/1000)>XAUS_MAX_AGE_SECONDS) return null;
+       currency!=="USD"||!["oz","troy_oz"].includes(unit)||
+       !Number.isFinite(updatedAge)||updatedAge< -30||updatedAge>XAUS_MAX_AGE_SECONDS) return null;
     return {id:"xau",price,unit:"USD",updated_utc:stamp.toISOString(),stale:false};
   } catch { return null; }
 }
