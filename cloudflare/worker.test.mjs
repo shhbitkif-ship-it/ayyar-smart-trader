@@ -3385,12 +3385,15 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
         return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
           open:close-.05,high:close+.2,low:close-.2,close};
       });
-      if (interval==="15m" && badProvider==="XAUS") candles[candles.length-1].high=null;
-      if (interval==="15m" && badProvider==="BIQUOTE") candles[candles.length-1].high=0;
-      if(parsed.hostname==="biquote.io")
-        return new Response(JSON.stringify(biquoteFixture(candles,interval)),{status:200,
+      if(parsed.hostname==="biquote.io") {
+        const biquoteCandles=candles.map(candle=>({...candle}));
+        if (interval==="15m" && badProvider==="BIQUOTE") biquoteCandles[biquoteCandles.length-1].high=0;
+        return new Response(JSON.stringify(biquoteFixture(biquoteCandles,interval)),{status:200,
           headers:{"content-type":"application/json"}});
-      return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,
+      }
+      const xausCandles=candles.map(candle=>({...candle}));
+      if (interval==="15m" && badProvider==="XAUS") xausCandles[xausCandles.length-1].high=null;
+      return new Response(JSON.stringify(xausChartFixture(xausCandles)),{status:200,
         headers:{"content-type":"application/json"}});
     };
     try {
