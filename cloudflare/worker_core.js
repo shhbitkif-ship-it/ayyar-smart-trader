@@ -856,7 +856,7 @@ function classifyOhlcProviderFailure(reason) {
   const message=String(reason||"");
   if(/stale/i.test(message)) return "SOURCE_STALE";
   if(/freshness metadata|data state is|missing.*freshness/i.test(message)) return "FRESHNESS_METADATA_INVALID";
-  if(/HTTP \\d{3}|fetch failed|network|timeout|provider unavailable/i.test(message)) return "PROVIDER_UNAVAILABLE";
+  if(/HTTP [0-9]{3}|fetch failed|network|timeout|provider unavailable/i.test(message)) return "PROVIDER_UNAVAILABLE";
   if(/malformed|duplicate candle|timestamp.*aligned|unexpected.*schema|no completed.*candles/i.test(message)) return "OHLC_INVALID_OR_MISSING";
   return "UNKNOWN_FAILURE";
 }
@@ -2152,7 +2152,7 @@ export default {
           data_status:"UNAVAILABLE",data_quality:{status:"UNAVAILABLE",reason},
           source_quality:"UNAVAILABLE",
           source_consensus:{status:"UNAVAILABLE",required_providers:["XAUS","BIQUOTE"],
-            providers:[],provider_diagnostics,errors:providerFailures.map(item=>item.provider+": "+item.reason)},
+            providers:[],provider_diagnostics:providerDiagnostics,errors:providerFailures.map(item=>item.provider+": "+item.reason)},
           reason
         }]));
         return json({
