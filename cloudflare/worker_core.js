@@ -318,6 +318,18 @@ function runAtrRiskBacktest(payload) {
         }
       }
     }
+    // The entry candle begins at the modeled fill price, so its subsequent
+    // high/low must be checked immediately. Ignoring it would create optimistic
+    // backtests whenever a stop or target is reached before the next candle.
+    if(position&&position.entry_time===candle.iso){
+      const stopHit=candle.low<=position.stop,targetHit=candle.high>=position.target;
+      if(stopHit){
+        closePosition(i,position.stop,targetHit
+          ?"STOP_LOSS_BOTH_LEVELS_TOUCHED":"STOP_LOSS_ENTRY_CANDLE");
+      } else if(targetHit){
+        closePosition(i,position.target,"TAKE_PROFIT_ENTRY_CANDLE");
+      }
+    }
     const equity=cash+(position?position.quantity*candle.close*(1-cost):0);
     if(!Number.isFinite(equity)||equity<=0) throw new Error("ATR backtest equity is outside the supported numeric range");
     equityCurve.push({timestamp:candle.iso,equity:round2(equity)});
