@@ -3218,6 +3218,10 @@ test("multi-timeframe signal is blocked when only one OHLC provider is available
     for(const interval of ["15m","60m","1d"]){
       assert.equal(body.timeframes[interval].source_quality,"SINGLE_SOURCE");
       assert.equal(body.timeframes[interval].source_consensus.status,"UNCONFIRMED");
+      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics.length,1);
+      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics[0].provider,"XAUS");
+      assert.ok(body.timeframes[interval].source_consensus.provider_diagnostics[0].candle_count>=60);
+      assert.equal(typeof body.timeframes[interval].source_consensus.provider_diagnostics[0].last_candle_at,"string");
     }
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
@@ -3255,6 +3259,9 @@ test("multi-timeframe consensus rejects providers whose latest candle timestamps
     for(const interval of ["15m","60m","1d"]){
       assert.equal(body.timeframes[interval].source_quality,"UNCONFIRMED");
       assert.equal(body.timeframes[interval].source_consensus.latest_timestamp_match,false);
+      assert.deepEqual(body.timeframes[interval].source_consensus.provider_diagnostics.map(x=>x.provider),["XAUS","BIQUOTE"]);
+      assert.notEqual(body.timeframes[interval].source_consensus.provider_diagnostics[0].last_candle_at,
+        body.timeframes[interval].source_consensus.provider_diagnostics[1].last_candle_at);
     }
   }finally{globalThis.fetch=originalFetch;}
 });
