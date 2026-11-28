@@ -1795,7 +1795,7 @@ async function discoverAyarInstrument() {
 function tsetmcLocalTimestamp(deven,hEven) {
   if(!Number.isInteger(Number(deven))||!Number.isInteger(Number(hEven))) return null;
   const date=String(deven).padStart(8,"0"),time=String(hEven).padStart(6,"0");
-  if(!/^\\d{8}$/.test(date)||!/^\\d{6}$/.test(time)) return null;
+  if(!/^\d{8}$/.test(date)||!/^\d{6}$/.test(time)) return null;
   const y=Number(date.slice(0,4)),m=Number(date.slice(4,6)),d=Number(date.slice(6,8));
   const hh=Number(time.slice(0,2)),mm=Number(time.slice(2,4)),ss=Number(time.slice(4,6));
   if(m<1||m>12||d<1||d>31||hh>23||mm>59||ss>59) return null;
