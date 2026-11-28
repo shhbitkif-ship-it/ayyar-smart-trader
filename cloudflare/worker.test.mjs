@@ -3399,6 +3399,7 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
       assert.equal(response.status,200,JSON.stringify(body));
       assert.equal(body.signal,"NO_TRADE");
       assert.equal(body.execution_enabled,false);
+      assert.ok(body.timeframes,JSON.stringify({badProvider,body}));
       assert.equal(body.timeframes["15m"].source_quality,"SINGLE_SOURCE");
       assert.equal(body.timeframes["15m"].source_consensus.status,"UNCONFIRMED");
       assert.equal(body.timeframes["15m"].analysis_ready,false);
