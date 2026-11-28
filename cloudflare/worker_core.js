@@ -1873,8 +1873,8 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
       trade_tape_sample_count:validTrades.length,
       trade_tape_sample_volume:tradedVolume,
       trade_tape_sample_value_rial:tradedValue,
-      five_day_average_volume:Number.isFinite(Number(quote.qTotTran5J))?Number(quote.qTotTran5J):null,
-      provider_reported_turnover_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
+      provider_reported_daily_traded_volume:Number.isFinite(Number(quote.qTotTran5J))?Number(quote.qTotTran5J):null,
+      provider_reported_daily_traded_value_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
       execution_enabled:false,
       note:"TSETMC is an undocumented public data surface. This is a market-data diagnostic, not broker execution or an investment signal."
     };
@@ -1896,7 +1896,7 @@ function evaluateAyarMarketQuality(market,env={}) {
   const premiumState=!Number.isFinite(premium)?"UNAVAILABLE":premium>0?"PREMIUM":premium<0?"DISCOUNT":"AT_NAV";
   const config={
     max_spread_bps:env.AYAR_MAX_SPREAD_BPS,
-    min_reported_turnover_rial:env.AYAR_MIN_REPORTED_TURNOVER_RIAL,
+    min_daily_traded_value_rial:env.AYAR_MIN_DAILY_TRADED_VALUE_RIAL,
     min_bid_depth_rial:env.AYAR_MIN_BID_DEPTH_RIAL,
     min_ask_depth_rial:env.AYAR_MIN_ASK_DEPTH_RIAL
   };
@@ -1907,7 +1907,7 @@ function evaluateAyarMarketQuality(market,env={}) {
     premium_discount_pct:premium,trade_readiness:"BLOCKED",
     required_configuration:missing,
     measures:{spread_bps:market.order_book_spread_bps,
-      reported_turnover_rial:market.provider_reported_turnover_rial,
+      daily_traded_value_rial:market.provider_reported_daily_traded_value_rial,
       bid_depth_rial:market.order_book_bid_depth_rial,
       ask_depth_rial:market.order_book_ask_depth_rial},
     reasons:["LIQUIDITY_THRESHOLDS_NOT_CONFIGURED"],
@@ -1917,13 +1917,13 @@ function evaluateAyarMarketQuality(market,env={}) {
   const limits=Object.fromEntries(Object.entries(config).map(([k,v])=>[k,Number(v)]));
   const measures={
     spread_bps:Number(market.order_book_spread_bps),
-    reported_turnover_rial:Number(market.provider_reported_turnover_rial),
+    daily_traded_value_rial:Number(market.provider_reported_daily_traded_value_rial),
     bid_depth_rial:Number(market.order_book_bid_depth_rial),
     ask_depth_rial:Number(market.order_book_ask_depth_rial)
   };
   const checks={
     spread_ok:Number.isFinite(measures.spread_bps)&&measures.spread_bps<=limits.max_spread_bps,
-    reported_turnover_ok:Number.isFinite(measures.reported_turnover_rial)&&measures.reported_turnover_rial>=limits.min_reported_turnover_rial,
+    daily_traded_value_ok:Number.isFinite(measures.daily_traded_value_rial)&&measures.daily_traded_value_rial>=limits.min_daily_traded_value_rial,
     bid_depth_ok:Number.isFinite(measures.bid_depth_rial)&&measures.bid_depth_rial>=limits.min_bid_depth_rial,
     ask_depth_ok:Number.isFinite(measures.ask_depth_rial)&&measures.ask_depth_rial>=limits.min_ask_depth_rial
   };
