@@ -66,7 +66,10 @@ jobs:
                   "signal": data.get("signal"),
                   "source_quality": data.get("source_quality"),
                   "consensus": consensus.get("status"),
-                  "providers": [p.get("provider") for p in diagnostics],
+                  "providers": diagnostics,
+                  "data_quality": data.get("data_quality"),
+                  "reason": data.get("reason"),
+                  "provider_errors": consensus.get("errors"),
                   "max_ohlc_spread_pct": consensus.get("max_ohlc_spread_pct")
               }, ensure_ascii=False))
 
