@@ -1527,13 +1527,46 @@ test("walk-forward backtest selects parameters on past data and evaluates later 
     assert.ok(["TRENDING","RANGE","HIGH_VOLATILITY","TRANSITIONAL","UNAVAILABLE"].includes(fold.regime_diagnostics.first_bar_regime));
     assert.equal(fold.regime_diagnostics.buckets.reduce((sum,b)=>sum+b.bars,0),36);
     assert.ok(Date.parse(fold.test_start)>Date.parse(fold.training_end));
-    assert.equal(fold.first_test_fill_at,fold.test_start);
-    assert.equal(fold.first_test_fill_included,true);
+    assert.equal(fold.evaluation_window_start_at,fold.test_start);
+    assert.equal(fold.test_window_start_open_included,true);
+    assert.ok(fold.first_test_fill_at===null||Date.parse(fold.first_test_fill_at)>=Date.parse(fold.test_start));
+    assert.equal(fold.first_test_fill_on_window_open,fold.first_test_fill_at===fold.test_start);
     assert.ok(["EMA9/EMA21","EMA12/EMA26","EMA20/EMA50"].includes(fold.selected_strategy));
     assert.ok(Number.isFinite(fold.out_of_sample_return_pct));
   }
 });
 
+
+
+test("walk-forward parameter selection is invariant to unseen first-fold test prices",async()=>{
+  const candles=Array.from({length:240},(_,i)=>{
+    const close=2500+i*.35+Math.sin(i/4)*3+Math.sin(i/11)*1.5;
+    const previous=i?2500+(i-1)*.35+Math.sin((i-1)/4)*3+Math.sin((i-1)/11)*1.5:close-.2;
+    return {timestamp:new Date(Date.UTC(2026,0,1)+i*3600000).toISOString(),
+      open:previous,high:Math.max(previous,close)+.8,low:Math.min(previous,close)-.8,close};
+  });
+  const call=async rows=>(await worker.fetch(new Request("https://unit.test/v1/backtest/walk-forward",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({candles:rows,timeframe_minutes:60})
+  }))).json();
+  const baseline=await call(candles);
+  const changed=[...candles];
+  const firstTestIndex=Math.floor(candles.length*.55);
+  let previous=changed[firstTestIndex-1].close;
+  for(let i=firstTestIndex;i<changed.length;i++){
+    const close=previous-0.9+Math.sin(i/2)*0.25;
+    changed[i]={...changed[i],open:previous,high:Math.max(previous,close)+0.8,
+      low:Math.min(previous,close)-0.8,close};
+    previous=close;
+  }
+  const modified=await call(changed);
+  assert.equal(modified.folds[0].selected_strategy,baseline.folds[0].selected_strategy);
+  assert.equal(modified.folds[0].training_selection_score,baseline.folds[0].training_selection_score);
+  assert.equal(modified.folds[0].training_return_pct,baseline.folds[0].training_return_pct);
+  assert.equal(modified.folds[0].training_drawdown_pct,baseline.folds[0].training_drawdown_pct);
+  assert.ok(Number.isFinite(modified.folds[0].out_of_sample_return_pct));
+  assert.ok(Number.isFinite(baseline.folds[0].out_of_sample_return_pct));
+});
 
 
 test("walk-forward regime label for first test fill excludes that candle's future OHLC",async()=>{
