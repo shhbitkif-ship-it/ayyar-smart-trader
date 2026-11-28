@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import worker, { classifyXauWeekendSession, validateArchivedSignalForTrade } from "./worker_core.js";
+import worker, { classifyOhlcProviderFailure, classifyXauWeekendSession, validateArchivedSignalForTrade } from "./worker_core.js";
 import { calculateLegacyPaperBalance, calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 const originalFetch = globalThis.fetch;
@@ -81,6 +81,36 @@ test("XAU weekend session estimate follows New York Friday close and Sunday open
   assert.equal(classifyXauWeekendSession(at("2026-11-29T22:30:00Z")).status,"NOT_WEEKEND_CLOSED");
   assert.equal(classifyXauWeekendSession(at("2026-07-05T20:30:00Z")).is_weekend_closed_estimate,true);
   assert.throws(()=>classifyXauWeekendSession(NaN),/finite timestamp/);
+});
+
+test("OHLC provider failures receive explicit diagnostic classes without weakening fail-closed behavior",async()=>{
+  assert.equal(classifyOhlcProviderFailure("Latest completed candle is stale"),"SOURCE_STALE");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data state is missing"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("BIQUOTE OHLC provider HTTP 503"),"PROVIDER_UNAVAILABLE");
+  assert.equal(classifyOhlcProviderFailure("BIQUOTE returned duplicate candle timestamps"),"OHLC_INVALID_OR_MISSING");
+  assert.equal(classifyOhlcProviderFailure("unexpected response"),"UNKNOWN_FAILURE");
+
+  const isolatedWorker=(await import("./worker_core.js?provider-failure-diagnostics-test")).default;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("xaus.com/api/v1/chart")) return new Response("unavailable",{status:503});
+    if(value.includes("biquote.io/api/XAUUSD/ohlc")) return new Response("unavailable",{status:503});
+    throw new Error("Unexpected provider URL: "+value);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.confidence,0);
+    assert.equal(body.execution_enabled,false);
+    assert.deepEqual(body.provider_diagnostics.map(item=>item.status),
+      ["PROVIDER_UNAVAILABLE","PROVIDER_UNAVAILABLE"]);
+    assert.equal(body.market_data_status,"DEGRADED");
+    assert.equal(body.session_estimate.reference_timezone,"America/New_York");
+    assert.match(body.warning,/diagnostic only/i);
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("health endpoint responds", async () => {
