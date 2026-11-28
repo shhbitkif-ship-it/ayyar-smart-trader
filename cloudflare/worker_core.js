@@ -1886,6 +1886,59 @@ async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
   }
 }
 
+
+function evaluateAyarMarketQuality(market,env={}) {
+  if(!market||market.status!=="LIVE"||market.execution_enabled!==false) {
+    return {status:"UNAVAILABLE",liquidity_status:"UNAVAILABLE",premium_state:"UNAVAILABLE",
+      trade_readiness:"BLOCKED",reasons:["FRESH_MARKET_SNAPSHOT_REQUIRED"],execution_enabled:false};
+  }
+  const premium=Number(market.premium_discount_pct);
+  const premiumState=!Number.isFinite(premium)?"UNAVAILABLE":premium>0?"PREMIUM":premium<0?"DISCOUNT":"AT_NAV";
+  const config={
+    max_spread_bps:env.AYAR_MAX_SPREAD_BPS,
+    min_daily_value_rial:env.AYAR_MIN_DAILY_VALUE_RIAL,
+    min_bid_depth_rial:env.AYAR_MIN_BID_DEPTH_RIAL,
+    min_ask_depth_rial:env.AYAR_MIN_ASK_DEPTH_RIAL
+  };
+  const missing=Object.entries(config).filter(([,v])=>v===undefined||v===null||String(v).trim()===""||
+    !Number.isFinite(Number(v))||Number(v)<=0).map(([k])=>k);
+  if(missing.length) return {
+    status:"DIAGNOSTIC_ONLY",liquidity_status:"UNCONFIGURED",premium_state:premiumState,
+    premium_discount_pct:premium,trade_readiness:"BLOCKED",
+    required_configuration:missing,
+    measures:{spread_bps:market.order_book_spread_bps,
+      daily_traded_value_rial:market.daily_traded_value_rial,
+      bid_depth_rial:market.order_book_bid_depth_rial,
+      ask_depth_rial:market.order_book_ask_depth_rial},
+    reasons:["LIQUIDITY_THRESHOLDS_NOT_CONFIGURED"],
+    note:"No arbitrary liquidity cutoffs or trade signal are applied.",
+    execution_enabled:false
+  };
+  const limits=Object.fromEntries(Object.entries(config).map(([k,v])=>[k,Number(v)]));
+  const measures={
+    spread_bps:Number(market.order_book_spread_bps),
+    daily_traded_value_rial:Number(market.daily_traded_value_rial),
+    bid_depth_rial:Number(market.order_book_bid_depth_rial),
+    ask_depth_rial:Number(market.order_book_ask_depth_rial)
+  };
+  const checks={
+    spread_ok:Number.isFinite(measures.spread_bps)&&measures.spread_bps<=limits.max_spread_bps,
+    daily_value_ok:Number.isFinite(measures.daily_traded_value_rial)&&measures.daily_traded_value_rial>=limits.min_daily_value_rial,
+    bid_depth_ok:Number.isFinite(measures.bid_depth_rial)&&measures.bid_depth_rial>=limits.min_bid_depth_rial,
+    ask_depth_ok:Number.isFinite(measures.ask_depth_rial)&&measures.ask_depth_rial>=limits.min_ask_depth_rial
+  };
+  const failed=Object.entries(checks).filter(([,ok])=>!ok).map(([k])=>k);
+  return {
+    status:"EVALUATED",liquidity_status:failed.length?"FAIL":"PASS",
+    premium_state:premiumState,premium_discount_pct:premium,
+    trade_readiness:failed.length?"BLOCKED":"LIQUIDITY_CHECKS_PASSED_NOT_A_SIGNAL",
+    measures,limits,checks,failed_checks:failed,
+    reasons:failed.length?["LIQUIDITY_THRESHOLDS_NOT_MET"]:[],
+    note:"Premium/discount is measured against redemption NAV only. Passing liquidity checks does not create a BUY/SELL signal.",
+    execution_enabled:false
+  };
+}
+
 async function snapshot(env={}) {
   if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) {
     cached=refreshCachedSnapshotFreshness(cached);
@@ -2248,6 +2301,13 @@ export default {
       const identity=await discoverAyarInstrument();
       if(identity.status!=="IDENTIFIED") return json({...identity,market_status:"UNAVAILABLE"});
       return json({...await fetchAyarMarketSnapshot(identity.ins_code),instrument:identity});
+    }
+    if(url.pathname==="/v1/market/ayar/quality"&&request.method==="GET") {
+      const identity=await discoverAyarInstrument();
+      if(identity.status!=="IDENTIFIED") return json({status:"UNAVAILABLE",instrument:identity,
+        trade_readiness:"BLOCKED",execution_enabled:false});
+      const market=await fetchAyarMarketSnapshot(identity.ins_code);
+      return json({...evaluateAyarMarketQuality(market,env),market,instrument:identity});
     }
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
     if(url.pathname==="/v1/market/gold18-parity"&&request.method==="GET") {
