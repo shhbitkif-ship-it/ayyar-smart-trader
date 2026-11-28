@@ -173,6 +173,48 @@ test("Iranian market quotes reject malformed, wrong-unit, stale and future-dated
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("gold 18k parity is calculated only from fresh synchronized live quotes",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?gold18-parity-diagnostic")).default;
+  const makeItems=(overrides={})=>freshItems.map(row=>({...row,...(overrides[row.id]||{})}));
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:new Date().toISOString(),items:makeItems()
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"AVAILABLE");
+    const expected=2650*70000*0.75/31.1034768;
+    assert.ok(Math.abs(body.theoretical_price_irt_per_gram-expected)<0.02);
+    assert.ok(Math.abs(body.premium_discount_pct-(7200000/expected-1)*100)<0.02);
+    assert.equal(body.inputs.GOLD18.status,"LIVE");
+    assert.match(body.note,/بدون اجرت/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("gold 18k parity fails closed for stale, missing or time-misaligned inputs",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?gold-parity-safety-gate")).default;
+  const now=Date.now();
+  let items=freshItems.map(row=>({...row}));
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:new Date(now).toISOString(),items
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try{
+    items=freshItems.map(row=>({...row,updated_utc:new Date(now).toISOString()}));
+    items.find(row=>row.id==="usd").updated_utc=new Date(now-240_000).toISOString();
+    let response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    let body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.reason,"INPUT_TIMESTAMP_SKEW");
+    items=freshItems.map(row=>({...row,updated_utc:new Date(now).toISOString()}));
+    items.find(row=>row.id==="usd").stale=true;
+    response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.ok(body.missing_inputs.includes("USD_IRT"));
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("XAUS fresh spot is used only as a validated XAU quote fallback when NerkhAra is unavailable",async()=>{
   const isolatedWorker=(await import("./worker_core.js?xaus-spot-fallback-test")).default;
   globalThis.fetch=async(url)=>{
