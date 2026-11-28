@@ -47,17 +47,7 @@ jobs:
                   with urllib.request.urlopen(probe_request, timeout=15) as probe_response:
                       raw = probe_response.read(120000).decode("utf-8", errors="replace")
                       data = json.loads(raw)
-                      result = (data.get("chart") or {}).get("result") or [] if isinstance(data, dict) else []
-                      quote = ((result[0].get("indicators") or {}).get("quote") or [{}])[0] if result else {}
                       now_epoch = datetime.now(timezone.utc).timestamp()
-                      yahoo_timestamps = result[0].get("timestamp") or [] if result else []
-                      yahoo_last_timestamp = yahoo_timestamps[-1] if yahoo_timestamps else None
-                      yahoo_age_seconds = (
-                          round(now_epoch - yahoo_last_timestamp, 1)
-                          if isinstance(yahoo_last_timestamp, (int, float)) and not isinstance(yahoo_last_timestamp, bool)
-                          else None
-                      )
-                      yahoo_last_close = (quote.get("close") or [None])[-1] if quote else None
                       points = data.get("points") if isinstance(data, dict) and isinstance(data.get("points"), list) else []
                       last_point_timestamp = points[-1].get("t") if points and isinstance(points[-1], dict) else None
                       point_age_seconds = (
@@ -86,11 +76,6 @@ jobs:
                           "last_points": points[-3:],
                           "last_point_timestamp": last_point_timestamp,
                           "last_point_age_seconds": point_age_seconds,
-                          "yahoo_rows": len(yahoo_timestamps),
-                          "yahoo_last_timestamp": yahoo_last_timestamp,
-                          "yahoo_age_seconds": yahoo_age_seconds,
-                          "yahoo_last_close": yahoo_last_close,
-                          "yahoo_price_valid": isinstance(yahoo_last_close, (int, float)) and not isinstance(yahoo_last_close, bool) and math.isfinite(yahoo_last_close) and yahoo_last_close > 0,
                           "error": data.get("error") if isinstance(data, dict) else "Unexpected JSON root type"
                       }, ensure_ascii=False))
               except Exception as error:
