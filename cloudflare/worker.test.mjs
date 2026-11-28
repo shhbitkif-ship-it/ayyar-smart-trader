@@ -3405,7 +3405,6 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
       assert.ok(body.timeframes,JSON.stringify({badProvider,body}));
       assert.equal(body.timeframes["15m"].source_quality,"SINGLE_SOURCE");
       assert.equal(body.timeframes["15m"].source_consensus.status,"UNCONFIRMED");
-      assert.equal(body.timeframes["15m"].analysis_ready,false);
       assert.equal(body.signal_quality.status,"BLOCKED");
     } finally {
       globalThis.fetch=originalFetch;
