@@ -3821,6 +3821,8 @@ test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-s
       return new Response(JSON.stringify({etf:{insCode:code,deven,hEven,pRedTran:100000,pSubTran:100500}}),{status:200});
     if(value.includes("BestLimits"))
       return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade"))
+      return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10},{pTran:104900,qTitTran:20}]}),{status:200});
     throw new Error("Unexpected TSETMC URL "+value);
   };
   try {
@@ -3834,6 +3836,11 @@ test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-s
     assert.equal(body.premium_discount_pct,5);
     assert.equal(body.best_bid.price,104900);
     assert.equal(body.best_ask.price,105100);
+    assert.equal(body.order_book_spread_bps,19.05);
+    assert.equal(body.daily_trade_count,2);
+    assert.equal(body.daily_traded_volume,30);
+    assert.equal(body.daily_traded_value_rial,3148000);
+    assert.equal(body.market_cap_rial,9000000000);
     assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
@@ -3856,6 +3863,8 @@ test("Ayar market snapshot blocks stale NAV even when the quote is fresh",async(
       return new Response(JSON.stringify({etf:{insCode:code,...n,pRedTran:100000,pSubTran:100500}}),{status:200});
     if(value.includes("BestLimits"))
       return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade"))
+      return new Response(JSON.stringify({trade:[]}),{status:200});
     throw new Error("Unexpected TSETMC URL "+value);
   };
   try {
