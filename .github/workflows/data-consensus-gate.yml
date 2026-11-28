@@ -127,7 +127,9 @@ jobs:
           from urllib.parse import urlencode
 
           algo_now = datetime.now(timezone.utc)
-          algo_from = (algo_now.date() - timedelta(days=3)).isoformat()
+          # Use the full 31-calendar-day preview window to expose the provider's latest available bars,
+          # even when its catalog has stopped refreshing and recent-date queries return zero rows.
+          algo_from = (algo_now.date() - timedelta(days=30)).isoformat()
           algo_to = algo_now.date().isoformat()
           for tf, seconds_per_bar in (("M15", 900), ("H1", 3600), ("D1", 86400)):
               params = {"symbol": "XAUUSD", "tf": tf, "from": algo_from, "to": algo_to, "format": "json"}
@@ -191,6 +193,19 @@ jobs:
                           "timestamp_timezone_ambiguous": bool(stamps and stamps[-1].tzinfo is None),
                           "invalid_or_missing_ohlc_count": invalid_ohlc, "duplicate_timestamp_count": duplicate_count,
                           "timestamps_monotonic": all(a <= b for a, b in zip(stamps, stamps[1:]))})
+                  freshness_limits = {"M15": 1800, "H1": 7200, "D1": 172800}
+                  limit = freshness_limits[tf]
+                  result["freshness_limit_seconds"] = limit
+                  if not stamps:
+                      result["freshness_verdict"] = "NO_DATA_IN_REQUESTED_WINDOW"
+                  elif age_candidates and min(age_candidates) > limit:
+                      result["freshness_verdict"] = "STALE_EVEN_AT_NEWEST_PLAUSIBLE_SERVER_OFFSET"
+                  elif age_candidates and max(age_candidates) < limit and stamps[-1].tzinfo is not None:
+                      result["freshness_verdict"] = "FRESH_TIMESTAMPED_UTC"
+                  elif age_candidates and max(age_candidates) < limit:
+                      result["freshness_verdict"] = "POTENTIALLY_FRESH_BUT_SERVER_TIMEZONE_UNVERIFIED"
+                  else:
+                      result["freshness_verdict"] = "TIMEZONE_AMBIGUITY_CROSSES_FRESHNESS_LIMIT"
               except Exception as error:
                   result["ohlc_error"] = str(error)[:400]
               try:
