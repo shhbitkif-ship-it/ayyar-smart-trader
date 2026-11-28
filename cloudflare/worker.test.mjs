@@ -3357,6 +3357,12 @@ test("multi-timeframe signal is blocked when only one OHLC provider is available
       assert.equal(typeof body.timeframes[interval].source_consensus.provider_diagnostics[0].last_candle_at,"string");
     }
     assert.equal(body.execution_enabled,false);
+    assert.equal(body.confidence,0);
+    assert.equal(body.entry,null);
+    assert.equal(body.stop_loss,null);
+    assert.equal(body.take_profit,null);
+    assert.equal(body.signal_stability.confirmed,false);
+    assert.equal(body.signal_quality.status,"BLOCKED");
   }finally{globalThis.fetch=originalFetch;}
 });
 
