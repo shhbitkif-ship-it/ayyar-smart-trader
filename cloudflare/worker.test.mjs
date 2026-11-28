@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import worker, { validateArchivedSignalForTrade } from "./worker_core.js";
+import worker, { classifyOhlcProviderFailure, classifyXauWeekendSession, validateArchivedSignalForTrade } from "./worker_core.js";
 import { calculateLegacyPaperBalance, calculatePaperEntryFee, calculatePaperSettlement, ledgerEventReplayMatches } from "./ledger_math.mjs";
 
 const originalFetch = globalThis.fetch;
@@ -72,6 +72,51 @@ test("paper ledger fee and settlement math rejects invalid and non-finite values
     exitPrice:101,entryFee:-1,exitFee:0}),/INVALID_PAPER_SETTLEMENT_INPUT/);
 });
 
+test("XAU weekend session estimate follows New York Friday close and Sunday open across DST",()=>{
+  const at=value=>Date.parse(value);
+  assert.equal(classifyXauWeekendSession(at("2026-11-27T21:30:00Z")).status,"NOT_WEEKEND_CLOSED");
+  assert.equal(classifyXauWeekendSession(at("2026-11-27T22:30:00Z")).status,"WEEKEND_CLOSED_ESTIMATE");
+  assert.equal(classifyXauWeekendSession(at("2026-11-28T12:00:00Z")).is_weekend_closed_estimate,true);
+  assert.equal(classifyXauWeekendSession(at("2026-11-29T21:30:00Z")).is_weekend_closed_estimate,true);
+  assert.equal(classifyXauWeekendSession(at("2026-11-29T22:30:00Z")).status,"NOT_WEEKEND_CLOSED");
+  assert.equal(classifyXauWeekendSession(at("2026-07-05T20:30:00Z")).is_weekend_closed_estimate,true);
+  assert.throws(()=>classifyXauWeekendSession(NaN),/finite timestamp/);
+});
+
+test("OHLC provider failures receive explicit diagnostic classes without weakening fail-closed behavior",async()=>{
+  assert.equal(classifyOhlcProviderFailure("Latest completed candle is stale"),"SOURCE_STALE");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data state is missing"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider freshness metadata is missing, invalid, or stale"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data_state.as_of timestamp is missing"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data_state.age_seconds is invalid"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("XAUS OHLC provider data_state.as_of timestamp is stale"),"FRESHNESS_METADATA_INVALID");
+  assert.equal(classifyOhlcProviderFailure("BIQUOTE OHLC provider HTTP 503"),"PROVIDER_UNAVAILABLE");
+  assert.equal(classifyOhlcProviderFailure("BIQUOTE returned duplicate candle timestamps"),"OHLC_INVALID_OR_MISSING");
+  assert.equal(classifyOhlcProviderFailure("unexpected response"),"UNKNOWN_FAILURE");
+
+  const isolatedWorker=(await import("./worker_core.js?provider-failure-diagnostics-test")).default;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("xaus.com/api/v1/chart")) return new Response("unavailable",{status:503});
+    if(value.includes("biquote.io/api/XAUUSD/ohlc")) return new Response("unavailable",{status:503});
+    throw new Error("Unexpected provider URL: "+value);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.confidence,0);
+    assert.equal(body.execution_enabled,false);
+    assert.deepEqual(body.provider_diagnostics.map(item=>item.status),
+      ["PROVIDER_UNAVAILABLE","PROVIDER_UNAVAILABLE"]);
+    assert.equal(body.market_data_status,"DEGRADED");
+    assert.equal(body.session_estimate.reference_timezone,"America/New_York");
+    assert.match(body.warning,/diagnostic only/i);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("health endpoint responds", async () => {
   const response = await worker.fetch(new Request("https://unit.test/health"));
   assert.equal(response.status,200);
@@ -92,6 +137,83 @@ test("fresh quotes require correct units and timestamps", async () => {
     assert.equal(body.quotes.find(q=>q.symbol==="GOLD18").unit,"تومان");
     assert.equal(body.quotes.find(q=>q.symbol==="XAUUSD").unit,"USD/oz");
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Iranian market quotes reject malformed, wrong-unit, stale and future-dated provider rows",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?iranian-quote-validation-boundaries")).default;
+  const now=Date.now();
+  const stamp=offset=>new Date(now+offset).toISOString();
+  const rows=freshItems.map(row=>({...row}));
+  rows[0]={...rows[0],price:"7200000"};
+  rows[1]={...rows[1],unit:"USD"};
+  rows[2]={...rows[2],updated_utc:stamp(-661_000)};
+  rows[3]={...rows[3],updated_utc:stamp(31_000)};
+  rows[4]={...rows[4],stale:true};
+  globalThis.fetch=async url=>{
+    if(String(url).includes("nerkhara.com")) return new Response(JSON.stringify({
+      generated_utc:stamp(0),items:rows
+    }),{status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    const bySymbol=Object.fromEntries(body.quotes.map(quote=>[quote.symbol,quote]));
+    for(const symbol of ["GOLD18","GOLD24","MESGHAL","COIN_EMAMI","COIN_HALF"]){
+      assert.notEqual(bySymbol[symbol].status,"LIVE",symbol+" must not be presented as live");
+      assert.equal(bySymbol[symbol].price,null,symbol+" must not expose an unverified price");
+    }
+    assert.equal(bySymbol.GOLD18.status,"UNAVAILABLE");
+    assert.equal(bySymbol.GOLD24.status,"UNAVAILABLE");
+    for(const symbol of ["MESGHAL","COIN_EMAMI","COIN_HALF"]) assert.equal(bySymbol[symbol].status,"STALE");
+    assert.equal(bySymbol.XAUUSD.status,"LIVE");
+    assert.equal(body.status,"PARTIAL");
+    assert.equal(body.live_quotes,3);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("gold 18k parity is calculated only from fresh synchronized live quotes",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?gold18-parity-diagnostic")).default;
+  const makeItems=(overrides={})=>freshItems.map(row=>({...row,...(overrides[row.id]||{})}));
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:new Date().toISOString(),items:makeItems()
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"AVAILABLE");
+    const expected=2650*70000*0.75/31.1034768;
+    assert.ok(Math.abs(body.theoretical_price_irt_per_gram-expected)<0.02);
+    assert.ok(Math.abs(body.premium_discount_pct-(7200000/expected-1)*100)<0.02);
+    assert.equal(body.inputs.GOLD18.status,"LIVE");
+    assert.match(body.note,/بدون اجرت/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("gold 18k parity fails closed for stale, missing or time-misaligned inputs",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?gold-parity-safety-gate")).default;
+  const now=Date.now();
+  let items=freshItems.map(row=>({...row}));
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    generated_utc:new Date(now).toISOString(),items
+  }),{status:200,headers:{"content-type":"application/json"}});
+  try{
+    items=freshItems.map(row=>({...row,updated_utc:new Date(now).toISOString()}));
+    items.find(row=>row.id==="usd").updated_utc=new Date(now-240_000).toISOString();
+    let response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    let body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.reason,"INPUT_TIMESTAMP_SKEW");
+    items=freshItems.map(row=>({...row,updated_utc:new Date(now).toISOString()}));
+    items.find(row=>row.id==="usd").stale=true;
+    const staleWorker=(await import("./worker_core.js?gold-parity-stale-input-case")).default;
+    response=await staleWorker.fetch(new Request("https://unit.test/v1/market/gold18-parity"));
+    body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.ok(body.missing_inputs.includes("USD_IRT"));
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("XAUS fresh spot is used only as a validated XAU quote fallback when NerkhAra is unavailable",async()=>{
@@ -119,6 +241,125 @@ test("XAUS fresh spot is used only as a validated XAU quote fallback when NerkhA
     assert.equal(xau.price,4123.45);
     assert.ok(body.quotes.filter(q=>q.symbol!=="XAUUSD").every(q=>q.status==="UNAVAILABLE"));
   }finally{globalThis.fetch=originalFetch;}
+});
+
+test("cached XAUS spot quote is downgraded immediately when its source freshness limit expires",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?cached-xaus-freshness-recheck")).default;
+  const originalNow=Date.now;
+  let now=originalNow();
+  Date.now=()=>now;
+  globalThis.fetch=async url=>{
+    if(String(url).includes("nerkhara.com")) return new Response("provider unavailable",{status:503});
+    if(String(url).includes("xaus.com/api/v1/spot")){
+      const stamp=new Date(now-119_000).toISOString();
+      return new Response(JSON.stringify({spot_usd_oz:4123.45,
+        xau:{price:4123.45,currency:"USD",unit:"oz"},
+        data_state:{status:"fresh",as_of:stamp,age_seconds:119},updated_at:stamp}),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const first=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const firstBody=await first.json();
+    const firstXau=firstBody.quotes.find(q=>q.symbol==="XAUUSD");
+    assert.equal(firstXau.status,"LIVE");
+    assert.equal(firstXau.price,4123.45);
+    now+=2_000;
+    const second=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+    const secondBody=await second.json();
+    const secondXau=secondBody.quotes.find(q=>q.symbol==="XAUUSD");
+    assert.equal(secondXau.status,"STALE");
+    assert.equal(secondXau.price,null);
+    assert.equal(secondBody.live_quotes,0);
+    assert.equal(secondBody.status,"UNAVAILABLE");
+    assert.ok(secondBody.freshness_checked_at);
+  }finally{
+    Date.now=originalNow;
+    globalThis.fetch=originalFetch;
+  }
+});
+
+test("XAUS spot fallback rejects missing or non-numeric freshness age metadata",async()=>{
+  for(const age of [undefined,null,"0"]){
+    const isolatedWorker=(await import("./worker_core.js?xaus-spot-invalid-age-"+String(age))).default;
+    globalThis.fetch=async(url)=>{
+      if(String(url).includes("nerkhara.com")) return new Response("provider unavailable",{status:503});
+      if(String(url).includes("xaus.com/api/v1/spot")){
+        const now=new Date().toISOString();
+        const dataState={status:"fresh",as_of:now};
+        if(age!==undefined) dataState.age_seconds=age;
+        return new Response(JSON.stringify({spot_usd_oz:4123.45,
+          xau:{price:4123.45,currency:"USD",unit:"oz"},
+          data_state:dataState,updated_at:now}),
+          {status:200,headers:{"content-type":"application/json"}});
+      }
+      throw new Error("Unexpected provider URL: "+url);
+    };
+    try{
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+      const body=await response.json();
+      assert.equal(response.status,200);
+      assert.equal(body.status,"UNAVAILABLE");
+      assert.equal(body.live_quotes,0);
+      assert.ok(body.quotes.every(q=>q.status==="UNAVAILABLE"));
+    }finally{globalThis.fetch=originalFetch;}
+  }
+});
+
+test("XAUS spot fallback requires explicit valid as-of timestamp",async()=>{
+  for(const asOf of [undefined,"not-a-date",new Date(Date.now()+60_000).toISOString()]){
+    const isolatedWorker=(await import("./worker_core.js?xaus-spot-invalid-asof-"+String(asOf))).default;
+    globalThis.fetch=async(url)=>{
+      if(String(url).includes("nerkhara.com")) return new Response("provider unavailable",{status:503});
+      if(String(url).includes("xaus.com/api/v1/spot")){
+        const now=new Date().toISOString();
+        const dataState={status:"fresh",age_seconds:0};
+        if(asOf!==undefined) dataState.as_of=asOf;
+        return new Response(JSON.stringify({spot_usd_oz:4123.45,
+          xau:{price:4123.45,currency:"USD",unit:"oz"},
+          data_state:dataState,updated_at:now,price_as_of:now}),
+          {status:200,headers:{"content-type":"application/json"}});
+      }
+      throw new Error("Unexpected provider URL: "+url);
+    };
+    try{
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+      const body=await response.json();
+      assert.equal(response.status,200);
+      assert.equal(body.status,"UNAVAILABLE");
+      assert.equal(body.live_quotes,0);
+      assert.ok(body.quotes.every(q=>q.status==="UNAVAILABLE"));
+    }finally{globalThis.fetch=originalFetch;}
+  }
+});
+
+test("XAUS spot fallback rejects ambiguous price and unit metadata",async()=>{
+  const variants=[
+    {spot_usd_oz:"4123.45",xau:{price:4123.45,currency:"USD",unit:"oz"}},
+    {spot_usd_oz:4123.45,xau:{price:4123.45,currency:"EUR",unit:"oz"}},
+    {spot_usd_oz:4123.45,xau:{price:4123.45,currency:"USD",unit:"gram"}}
+  ];
+  for(let index=0;index<variants.length;index++){
+    const isolatedWorker=(await import("./worker_core.js?xaus-spot-invalid-fields-"+index)).default;
+    globalThis.fetch=async(url)=>{
+      if(String(url).includes("nerkhara.com")) return new Response("provider unavailable",{status:503});
+      if(String(url).includes("xaus.com/api/v1/spot")){
+        const now=new Date().toISOString();
+        return new Response(JSON.stringify({...variants[index],
+          data_state:{status:"fresh",as_of:now,age_seconds:0},updated_at:now}),
+          {status:200,headers:{"content-type":"application/json"}});
+      }
+      throw new Error("Unexpected provider URL: "+url);
+    };
+    try{
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+      const body=await response.json();
+      assert.equal(response.status,200);
+      assert.equal(body.status,"UNAVAILABLE");
+      assert.equal(body.live_quotes,0);
+    }finally{globalThis.fetch=originalFetch;}
+  }
 });
 
 test("XAUS spot fallback rejects stale or non-fresh source data",async()=>{
@@ -778,7 +1019,7 @@ test("OHLC endpoint rejects missing XAUS freshness metadata", async () => {
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
     const body=await response.json();assert.equal(response.status,502);
-    assert.match(body.error,/data state is missing/i);assert.equal(body.execution_enabled,false);
+    assert.match(body.error,/XAUS OHLC provider data_state metadata is missing/i);assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
 
@@ -792,7 +1033,7 @@ test("OHLC endpoint rejects stale XAUS freshness metadata even when candle times
   try {
     const response=await worker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=60m"));
     const body=await response.json();assert.equal(response.status,502);
-    assert.match(body.error,/freshness metadata.*stale/i);assert.equal(body.execution_enabled,false);
+    assert.match(body.error,/XAUS OHLC provider data_state.age_seconds is stale/i);assert.equal(body.execution_enabled,false);
   } finally {globalThis.fetch=originalFetch;}
 });
 
@@ -974,6 +1215,11 @@ test("multi-timeframe endpoint requires 15m, 60m, daily trend and temporally sta
     const body=await response.json();
     assert.equal(response.status,200);
     assert.equal(body.market_data_status,"LIVE");
+    assert.ok(["AVAILABLE","UNAVAILABLE"].includes(body.gold18_parity.status));
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.signal,"BUY","Parity diagnostics must not override the independently validated XAU signal");
+    assert.ok(body.market_sources.every(source=>source.market_status==="LIVE"&&source.analysis_ready===true),
+      "Every timeframe must be explicitly LIVE and analysis-ready before a directional signal is allowed");
     assert.equal(body.signal_stability.status,"CONFIRMED");
     assert.equal(body.market_provider,"XAUS+BIQUOTE");
     assert.equal(body.timeframes["15m"].signal,"BUY");
@@ -2793,7 +3039,7 @@ test("scheduled monitor checks every registered paper account using fresh comple
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async()=>new Response(JSON.stringify(xausChartFixture(candles)),{status:200});
   try{
-    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env);
+    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.parse("2026-11-27T21:00:00Z")},env);
     assert.equal(result.status,"OK");
     assert.equal(result.accounts_checked,1);
     assert.equal(result.closed_trades,1,JSON.stringify(result));
@@ -2806,6 +3052,63 @@ test("scheduled monitor checks every registered paper account using fresh comple
     assert.equal(statusBody.status,"OK");
     assert.equal(statusBody.monitor.closed_trades,1);
     assert.equal(statusBody.execution_enabled,false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("scheduled paper monitor persists classified provider failures without touching paper positions",async()=>{
+  const statusStore=new Map();
+  const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.57"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  assert.equal(created.status,201);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response("upstream unavailable",{status:503});
+  try{
+    await assert.rejects(
+      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.parse("2026-11-27T21:00:00Z")},env),
+      /XAUS unavailable:.*BIQUOTE fallback unavailable:/
+    );
+    const status=statusStore.get("paper-monitor:latest");
+    assert.equal(status.status,"ERROR");
+    assert.deepEqual(status.provider_failures.map(item=>item.provider),["XAUS","BIQUOTE"]);
+    assert.deepEqual(status.provider_failures.map(item=>item.failure_class),["PROVIDER_UNAVAILABLE","PROVIDER_UNAVAILABLE"]);
+    assert.equal(status.execution_enabled,false);
+    assert.equal(env.__accounts.size,1);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("scheduled paper monitor records estimated weekend closure without fetching stale candles or changing open positions",async()=>{
+  const statusStore=new Map();
+  const env=paperAccountEnv();
+  env.SIGNAL_HISTORY={put:async(key,value)=>statusStore.set(key,JSON.parse(value)),
+    get:async(key)=>statusStore.get(key)||null};
+  const created=await worker.fetch(new Request("https://unit.test/v1/paper/accounts",{
+    method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"192.0.2.56"},
+    body:JSON.stringify({starting_capital:10000})
+  }),env);
+  const account=await created.json();
+  const opened=await worker.fetch(new Request("https://unit.test/v1/paper/accounts/"+account.account_id+"/trades",{
+    method:"POST",headers:{"content-type":"application/json",authorization:"Bearer "+account.access_token},
+    body:JSON.stringify({symbol:"XAUUSD",side:"BUY",quantity:0.1,entry_price:2000,stop_loss:1990,take_profit:2020})
+  }),env);
+  assert.equal(opened.status,201);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error("provider fetch must not run during estimated weekend closure");};
+  try{
+    const scheduledAt=Date.parse("2026-11-28T12:00:00Z");
+    const result=await worker.scheduled({cron:"*/5 * * * *",scheduledTime:scheduledAt},env);
+    assert.equal(result.status,"MARKET_CLOSED");
+    assert.equal(result.market_session.is_weekend_closed_estimate,true);
+    assert.equal(result.accounts_checked,0);
+    assert.equal(result.execution_enabled,false);
+    const state=env.__accounts.get(account.account_id);
+    assert.equal(state.trades.length,1);
+    assert.equal(state.trades[0].status,"OPEN");
+    assert.equal(statusStore.get("paper-monitor:latest").status,"MARKET_CLOSED");
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -2825,6 +3128,45 @@ test("Wrangler config preserves signal history and declares SQLite paper account
   }]);
 });
 
+
+test("Ayar discovery only accepts one exact TSETMC ticker match and never guesses a code",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-discovery-exact-match-test")).default;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    assert.match(String(url),/Instrument\/GetInstrumentSearch/);
+    return new Response(JSON.stringify({instrumentSearch:[
+      {lVal18AFC:"عیار",lVal30:"صندوق سرمایه‌گذاری طلا",insCode:"12345678901234567"},
+      {lVal18AFC:"طلا",lVal30:"نماد دیگر",insCode:"12345678901234568"}
+    ]}),{status:200,headers:{"content-type":"application/json"}});
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/discovery"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"IDENTIFIED");
+    assert.equal(body.ticker,"عیار");
+    assert.equal(body.ins_code,"12345678901234567");
+    assert.equal(body.execution_enabled,false);
+    assert.match(body.next_step,/NAV/);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test("Ayar discovery fails closed when exact TSETMC ticker match is ambiguous",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-discovery-ambiguous-test")).default;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify({instrumentSearch:[
+    {lVal18AFC:"عیار",insCode:"12345678901234567"},
+    {lVal18AFC:"عیار",insCode:"12345678901234568"}
+  ]}),{status:200,headers:{"content-type":"application/json"}});
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/discovery"));
+    const body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.equal(body.reason,"AMBIGUOUS_EXACT_SYMBOL_MATCH");
+    assert.equal(body.execution_enabled,false);
+    assert.equal(body.ins_code,undefined);
+  } finally { globalThis.fetch=originalFetch; }
+});
 
 test("market snapshot reports PARTIAL instead of LIVE when only some instruments are fresh", async () => {
   const isolatedWorker = (await import("./worker_core.js?partial-market-status-test")).default;
@@ -3132,7 +3474,7 @@ test("scheduled paper monitor refuses BIQUOTE candles with gaps and leaves open 
   };
   try{
     await assert.rejects(
-      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.now()},env),
+      worker.scheduled({cron:"*/5 * * * *",scheduledTime:Date.parse("2026-11-27T21:00:00Z")},env),
       /candle gap\(s\)/
     );
     const stored=env.__accounts.get(account.account_id).trades[0];
@@ -3260,10 +3602,18 @@ test("multi-timeframe signal is blocked when only one OHLC provider is available
     for(const interval of ["15m","60m","1d"]){
       assert.equal(body.timeframes[interval].source_quality,"SINGLE_SOURCE");
       assert.equal(body.timeframes[interval].source_consensus.status,"UNCONFIRMED");
-      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics.length,1);
-      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics[0].provider,"XAUS");
-      assert.ok(body.timeframes[interval].source_consensus.provider_diagnostics[0].candle_count>=60);
-      assert.equal(typeof body.timeframes[interval].source_consensus.provider_diagnostics[0].last_candle_at,"string");
+      assert.equal(body.timeframes[interval].source_consensus.provider_diagnostics.length,2);
+      const xaus=body.timeframes[interval].source_consensus.provider_diagnostics[0];
+      const biquote=body.timeframes[interval].source_consensus.provider_diagnostics[1];
+      assert.equal(xaus.provider,"XAUS");
+      assert.equal(xaus.request_status,"FULFILLED");
+      assert.ok(xaus.candle_count>=60);
+      assert.equal(typeof xaus.last_candle_at,"string");
+      assert.equal(biquote.provider,"BIQUOTE");
+      assert.equal(biquote.request_status,"REJECTED");
+      assert.equal(biquote.failure_class,"PROVIDER_UNAVAILABLE");
+      assert.equal(biquote.candle_count,0);
+      assert.equal(biquote.analysis_ready,false);
     }
     assert.equal(body.execution_enabled,false);
   }finally{globalThis.fetch=originalFetch;}
@@ -3452,4 +3802,134 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
       globalThis.fetch=originalFetch;
     }
   }
+});
+
+
+test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-sided order book",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-live-snapshot-validation-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000);
+  const deven=Number(local.getUTCFullYear()+String(local.getUTCMonth()+1).padStart(2,"0")+String(local.getUTCDate()).padStart(2,"0"));
+  const heven=Number(String(local.getUTCHours()).padStart(2,"0")+String(local.getUTCMinutes()).padStart(2,"0")+String(local.getUTCSeconds()).padStart(2,"0"));
+  const code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch"))
+      return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",lVal30:"صندوق عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo"))
+      return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,zTotTran:1200,qTotTran5J:777,qTotCap:9000000000,instrumentState:{cEtaval:"A "}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode"))
+      return new Response(JSON.stringify({etf:{insCode:code,deven,hEven:heven,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits"))
+      return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade"))
+      return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10},{pTran:104900,qTitTran:20}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/snapshot"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"LIVE",JSON.stringify(body));
+    assert.equal(body.currency_unit,"RIAL");
+    assert.equal(body.price,105000);
+    assert.equal(body.redemption_nav,100000);
+    assert.equal(body.premium_discount_pct,5);
+    assert.equal(body.best_bid.price,104900);
+    assert.equal(body.best_ask.price,105100);
+    assert.equal(body.order_book_spread_bps,19.05);
+    assert.equal(body.trade_tape_sample_count,2);
+    assert.equal(body.trade_tape_sample_volume,30);
+    assert.equal(body.trade_tape_sample_value_rial,3148000);
+    assert.equal(body.provider_reported_daily_traded_value_rial,9000000000);
+    assert.equal(body.provider_reported_daily_traded_volume,777);
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("Ayar market snapshot blocks stale NAV even when the quote is fresh",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-stale-nav-block-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000),stale=new Date(now-3600*1000+210*60*1000);
+  const dateParts=d=>({
+    deven:Number(d.getUTCFullYear()+String(d.getUTCMonth()+1).padStart(2,"0")+String(d.getUTCDate()).padStart(2,"0")),
+    hEven:Number(String(d.getUTCHours()).padStart(2,"0")+String(d.getUTCMinutes()).padStart(2,"0")+String(d.getUTCSeconds()).padStart(2,"0"))
+  });
+  const q=dateParts(local),n=dateParts(stale),code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch"))
+      return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo"))
+      return new Response(JSON.stringify({closingPriceInfo:{insCode:code,...q,pDrCotVal:105000,pClosing:104500,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode"))
+      return new Response(JSON.stringify({etf:{insCode:code,...n,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits"))
+      return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade"))
+      return new Response(JSON.stringify({trade:[]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/snapshot"));
+    const body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.match(body.reason,/stale or misaligned/i);
+    assert.equal(body.price,undefined);
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+
+test("Ayar quality endpoint blocks readiness when thresholds are not configured",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-quality-unconfigured-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000);
+  const deven=Number(local.getUTCFullYear()+String(local.getUTCMonth()+1).padStart(2,"0")+String(local.getUTCDate()).padStart(2,"0"));
+  const heven=Number(String(local.getUTCHours()).padStart(2,"0")+String(local.getUTCMinutes()).padStart(2,"0")+String(local.getUTCSeconds()).padStart(2,"0"));
+  const code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch")) return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo")) return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode")) return new Response(JSON.stringify({etf:{insCode:code,deven,hEven:heven,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits")) return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade")) return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/quality"));
+    const body=await response.json();
+    assert.equal(body.status,"DIAGNOSTIC_ONLY");
+    assert.equal(body.liquidity_status,"UNCONFIGURED");
+    assert.equal(body.trade_readiness,"BLOCKED");
+    assert.equal(body.premium_state,"PREMIUM");
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("Ayar quality endpoint evaluates explicit liquidity limits without issuing a trade signal",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-quality-configured-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000);
+  const deven=Number(local.getUTCFullYear()+String(local.getUTCMonth()+1).padStart(2,"0")+String(local.getUTCDate()).padStart(2,"0"));
+  const heven=Number(String(local.getUTCHours()).padStart(2,"0")+String(local.getUTCMinutes()).padStart(2,"0")+String(local.getUTCSeconds()).padStart(2,"0"));
+  const code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch")) return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo")) return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,qTotCap:9000000000,qTotTran5J:90000,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode")) return new Response(JSON.stringify({etf:{insCode:code,deven,hEven:heven,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits")) return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    if(value.includes("Trade/GetTrade")) return new Response(JSON.stringify({trade:[{pTran:105000,qTitTran:10}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const env={AYAR_MAX_SPREAD_BPS:"25",AYAR_MIN_DAILY_TRADED_VALUE_RIAL:"1000000",
+      AYAR_MIN_BID_DEPTH_RIAL:"1000000",AYAR_MIN_ASK_DEPTH_RIAL:"1000000"};
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/quality"),env);
+    const body=await response.json();
+    assert.equal(body.status,"EVALUATED");
+    assert.equal(body.liquidity_status,"PASS");
+    assert.equal(body.trade_readiness,"LIQUIDITY_CHECKS_PASSED_NOT_A_SIGNAL");
+    assert.equal(body.premium_state,"PREMIUM");
+    assert.equal(body.execution_enabled,false);
+    assert.deepEqual(body.failed_checks,[]);
+  } finally {globalThis.fetch=originalFetch;}
 });

@@ -33,9 +33,16 @@ jobs:
           # Read-only provider contract probes. These never feed the trading engine.
           probes = {
               "xaus_chart_15m": "https://xaus.com/api/v1/chart?symbol=xau&range=5d&interval=15m",
+              "xaus_chart_60m": "https://xaus.com/api/v1/chart?symbol=xau&range=3mo&interval=60m",
+              "xaus_chart_1d": "https://xaus.com/api/v1/chart?symbol=xau&range=1y&interval=1d",
               "xaus_intraday_48h": "https://xaus.com/api/v1/intraday?symbol=xau&hours=48",
               "xaus_spot": "https://xaus.com/api/v1/spot",
-              "yahoo_xauusd_15m": "https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD%3DX?range=5d&interval=15m"
+              "nerkhara_latest": "https://nerkhara.com/api/v1/latest.json",
+              "biquote_health": "https://biquote.io/health",
+              "biquote_quote": "https://biquote.io/api/XAUUSD?allowStale=false",
+              "biquote_ohlc_15m": "https://biquote.io/api/XAUUSD/ohlc?interval=15m&limit=192",
+              "biquote_ohlc_60m": "https://biquote.io/api/XAUUSD/ohlc?interval=1h&limit=168",
+              "biquote_ohlc_1d": "https://biquote.io/api/XAUUSD/ohlc?interval=1d&limit=180"
           }
           for name, url in probes.items():
               try:
@@ -46,23 +53,171 @@ jobs:
                   with urllib.request.urlopen(probe_request, timeout=15) as probe_response:
                       raw = probe_response.read(120000).decode("utf-8", errors="replace")
                       data = json.loads(raw)
-                      result = (data.get("chart") or {}).get("result") or []
-                      quote = ((result[0].get("indicators") or {}).get("quote") or [{}])[0] if result else {}
+                      now_epoch = datetime.now(timezone.utc).timestamp()
+                      points = data.get("points") if isinstance(data, dict) and isinstance(data.get("points"), list) else []
+                      bars = data.get("bars") if isinstance(data, dict) and isinstance(data.get("bars"), list) else []
+                      items = data.get("items") if isinstance(data, dict) and isinstance(data.get("items"), list) else []
+                      selected_items = []
+                      for item in items:
+                          if isinstance(item, dict) and item.get("id") in {"gold-18k", "gold-24k", "gold-mesghal", "coin-emami", "usd", "xau"}:
+                              item_stamp = item.get("updated_utc")
+                              try:
+                                  parsed_item_stamp = datetime.fromisoformat(item_stamp.replace("Z", "+00:00"))
+                                  item_age = round((datetime.now(timezone.utc) - parsed_item_stamp.astimezone(timezone.utc)).total_seconds(), 1)
+                              except (AttributeError, TypeError, ValueError):
+                                  item_age = None
+                              selected_items.append({"id": item.get("id"), "price": item.get("price"), "unit": item.get("unit"),
+                                  "updated_utc": item_stamp, "age_seconds": item_age, "stale_flag": item.get("stale")})
+                      completed_bars = [bar for bar in bars if isinstance(bar, dict) and bar.get("isOpen") is False]
+                      last_bar = max(completed_bars, key=lambda bar: str(bar.get("openTime") or ""), default=None)
+                      last_point_timestamp = points[-1].get("t") if points and isinstance(points[-1], dict) else None
+                      last_bar_close_age_seconds = None
+                      if last_bar and isinstance(last_bar.get("openTime"), str):
+                          try:
+                              bar_open = datetime.fromisoformat(last_bar["openTime"].replace("Z", "+00:00"))
+                              interval_name = data.get("interval")
+                              interval_seconds = {"15m": 900, "1h": 3600, "1d": 86400}.get(interval_name)
+                              if bar_open.tzinfo is not None and interval_seconds:
+                                  last_bar_close_age_seconds = round((datetime.now(timezone.utc) - bar_open.astimezone(timezone.utc)).total_seconds() - interval_seconds, 1)
+                          except ValueError:
+                              pass
+                      point_age_seconds = (
+                          round(now_epoch - last_point_timestamp, 1)
+                          if isinstance(last_point_timestamp, (int, float)) and not isinstance(last_point_timestamp, bool)
+                          else None
+                      )
+                      state = data.get("data_state") if isinstance(data, dict) else None
+                      state = state if isinstance(state, dict) else {}
+                      state_as_of = state.get("as_of")
+                      try:
+                          parsed_as_of = datetime.fromisoformat(state_as_of.replace("Z", "+00:00"))
+                          if parsed_as_of.tzinfo is None:
+                              parsed_as_of = parsed_as_of.replace(tzinfo=timezone.utc)
+                          state_age_seconds = round((datetime.now(timezone.utc) - parsed_as_of.astimezone(timezone.utc)).total_seconds(), 1)
+                      except (AttributeError, TypeError, ValueError):
+                          state_age_seconds = None
                       print("UPSTREAM_PROBE", name, json.dumps({
                           "http": probe_response.status,
-                          "keys": list(data.keys())[:25],
-                          "data_state": data.get("data_state"),
-                          "updated_at": data.get("updated_at"),
-                          "price_as_of": data.get("price_as_of"),
-                          "point_count": len(data.get("points") or []),
-                          "last_points": (data.get("points") or [])[-3:],
-                          "yahoo_rows": len(result[0].get("timestamp") or []) if result else 0,
-                          "yahoo_last_timestamp": (result[0].get("timestamp") or [None])[-1] if result else None,
-                          "yahoo_last_close": (quote.get("close") or [None])[-1] if quote else None,
-                          "error": data.get("error")
+                          "keys": list(data.keys())[:25] if isinstance(data, dict) else [],
+                          "data_state": state or None,
+                          "state_as_of_age_seconds": state_age_seconds,
+                          "updated_at": data.get("updated_at") if isinstance(data, dict) else None,
+                          "price_as_of": data.get("price_as_of") if isinstance(data, dict) else None,
+                          "point_count": len(points),
+                          "last_points": points[-3:],
+                          "last_point_timestamp": last_point_timestamp,
+                          "last_point_age_seconds": point_age_seconds,
+                          "bar_count": len(bars),
+                          "completed_bar_count": len(completed_bars),
+                          "generated_utc": data.get("generated_utc") if isinstance(data, dict) else None,
+                          "selected_price_items": selected_items,
+                          "last_completed_bar": last_bar,
+                          "last_bar_close_age_seconds": last_bar_close_age_seconds,
+                          "quote_timestamp": data.get("timestamp") if isinstance(data, dict) else None,
+                          "quote_mid": data.get("mid") if isinstance(data, dict) else None,
+                          "quote_state": data.get("marketState") if isinstance(data, dict) else None,
+                          "error": data.get("error") if isinstance(data, dict) else "Unexpected JSON root type"
                       }, ensure_ascii=False))
               except Exception as error:
                   print("UPSTREAM_PROBE", name, json.dumps({"error": str(error)[:400]}))
+
+          # AlgoSpecial is a diagnostic-only candidate. Its timestamps are documented as broker-server
+          # time (not UTC), so nearest-offset ages are informational and MUST NOT qualify it as live.
+          from datetime import timedelta
+          from urllib.parse import urlencode
+
+          algo_now = datetime.now(timezone.utc)
+          # Use the full 31-calendar-day preview window to expose the provider's latest available bars,
+          # even when its catalog has stopped refreshing and recent-date queries return zero rows.
+          algo_from = (algo_now.date() - timedelta(days=30)).isoformat()
+          algo_to = algo_now.date().isoformat()
+          for tf, seconds_per_bar in (("M15", 900), ("H1", 3600), ("D1", 86400)):
+              params = {"symbol": "XAUUSD", "tf": tf, "from": algo_from, "to": algo_to, "format": "json"}
+              urls = {
+                  "ohlc": "https://www.algospecial.com/api/ohlc.php?" + urlencode(params),
+                  "quality": "https://www.algospecial.com/api/data-quality.php?" + urlencode({"symbol": "XAUUSD", "tf": tf}),
+              }
+              result = {"timeframe": tf, "requested_from": algo_from, "requested_to": algo_to,
+                        "timestamp_timezone": "broker_server_time_per_provider_docs",
+                        "freshness_authoritative": False}
+              try:
+                  req = urllib.request.Request(urls["ohlc"], headers={"Accept": "application/json",
+                      "User-Agent": "AyyarSmartTrader-ProviderProbe/1.0"})
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      ohlc_payload = json.loads(resp.read(2_000_000).decode("utf-8"))
+                      rows = ohlc_payload.get("data") if isinstance(ohlc_payload, dict) else None
+                      rows = rows if isinstance(rows, list) else []
+                      stamps, invalid_ohlc, duplicate_count = [], 0, 0
+                      seen = set()
+                      for bar in rows:
+                          if not isinstance(bar, dict):
+                              invalid_ohlc += 1
+                              continue
+                          stamp = bar.get("Timestamp")
+                          parsed = None
+                          if isinstance(stamp, str):
+                              try:
+                                  parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                              except ValueError:
+                                  try:
+                                      parsed = datetime.strptime(stamp, "%Y.%m.%d %H:%M:%S")
+                                  except ValueError:
+                                      pass
+                          if parsed is None:
+                              invalid_ohlc += 1
+                          else:
+                              stamps.append(parsed)
+                              if stamp in seen:
+                                  duplicate_count += 1
+                              seen.add(stamp)
+                          try:
+                              op, hi, lo, cl = (float(bar[k]) for k in ("Open", "High", "Low", "Close"))
+                              if not all(math.isfinite(v) and v > 0 for v in (op, hi, lo, cl)) or hi < max(op, cl, lo) or lo > min(op, cl, hi):
+                                  invalid_ohlc += 1
+                          except (KeyError, TypeError, ValueError):
+                              invalid_ohlc += 1
+                      last_stamp = rows[-1].get("Timestamp") if rows and isinstance(rows[-1], dict) else None
+                      age_candidates = []
+                      if stamps:
+                          last_dt = stamps[-1]
+                          if last_dt.tzinfo is not None:
+                              age_candidates = [round((algo_now - last_dt.astimezone(timezone.utc)).total_seconds(), 1)]
+                          else:
+                              for offset in range(-12, 15):
+                                  candidate = last_dt.replace(tzinfo=timezone(timedelta(hours=offset)))
+                                  age_candidates.append(round((algo_now - candidate.astimezone(timezone.utc)).total_seconds(), 1))
+                      result.update({"http": resp.status, "rows": len(rows), "payload_rows": ohlc_payload.get("rows"),
+                          "first_timestamp": rows[0].get("Timestamp") if rows and isinstance(rows[0], dict) else None,
+                          "last_timestamp": last_stamp, "last_timestamp_age_candidate_min_seconds": min(age_candidates) if age_candidates else None,
+                          "last_timestamp_age_candidate_max_seconds": max(age_candidates) if age_candidates else None,
+                          "timestamp_timezone_ambiguous": bool(stamps and stamps[-1].tzinfo is None),
+                          "invalid_or_missing_ohlc_count": invalid_ohlc, "duplicate_timestamp_count": duplicate_count,
+                          "timestamps_monotonic": all(a <= b for a, b in zip(stamps, stamps[1:]))})
+                  freshness_limits = {"M15": 1800, "H1": 7200, "D1": 172800}
+                  limit = freshness_limits[tf]
+                  result["freshness_limit_seconds"] = limit
+                  if not stamps:
+                      result["freshness_verdict"] = "NO_DATA_IN_REQUESTED_WINDOW"
+                  elif age_candidates and min(age_candidates) > limit:
+                      result["freshness_verdict"] = "STALE_EVEN_AT_NEWEST_PLAUSIBLE_SERVER_OFFSET"
+                  elif age_candidates and max(age_candidates) < limit and stamps[-1].tzinfo is not None:
+                      result["freshness_verdict"] = "FRESH_TIMESTAMPED_UTC"
+                  elif age_candidates and max(age_candidates) < limit:
+                      result["freshness_verdict"] = "POTENTIALLY_FRESH_BUT_SERVER_TIMEZONE_UNVERIFIED"
+                  else:
+                      result["freshness_verdict"] = "TIMEZONE_AMBIGUITY_CROSSES_FRESHNESS_LIMIT"
+              except Exception as error:
+                  result["ohlc_error"] = str(error)[:400]
+              try:
+                  req = urllib.request.Request(urls["quality"], headers={"Accept": "application/json",
+                      "User-Agent": "AyyarSmartTrader-ProviderProbe/1.0"})
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      quality = json.loads(resp.read(500000).decode("utf-8"))
+                      result["quality_http"] = resp.status
+                      result["quality_report"] = {k: quality.get(k) for k in ("score", "grade", "rows", "start", "end", "critical_count", "warning_count", "checks", "issues") if k in quality}
+              except Exception as error:
+                  result["quality_error"] = str(error)[:400]
+              print("UPSTREAM_PROBE", "algospecial_xau_" + tf.lower(), json.dumps(result, ensure_ascii=False))
 
           request = urllib.request.Request(
               base + "/v1/signals/multi-timeframe?symbol=xau",

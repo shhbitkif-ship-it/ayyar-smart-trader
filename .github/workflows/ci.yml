@@ -92,6 +92,7 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, urllib.request
+          from datetime import datetime, timezone, timedelta
 
           base = os.environ["API_BASE"].rstrip("/")
 
@@ -134,6 +135,11 @@ jobs:
               "biquote_xauusd_1h": "https://biquote.io/api/XAUUSD/ohlc?interval=1h&limit=200",
               "biquote_xauusd_1d": "https://biquote.io/api/XAUUSD/ohlc?interval=1d&limit=200"
           }
+          today = datetime.now(timezone.utc).date()
+          probes["goldprice_daily_xau"] = (
+              "https://api.goldprice.dev/v1/bars?symbol=XAU-USD-SPOT&interval=1d"
+              f"&from={(today-timedelta(days=29)).isoformat()}&to={today.isoformat()}&limit=40"
+          )
           probe_results = {}
           for name, url in probes.items():
               req = urllib.request.Request(url, headers={
@@ -162,6 +168,27 @@ jobs:
                               "15m_buckets": len(buckets),
                               "minimum_samples_per_bucket": min(buckets.values(),default=0),
                               "last_points": points[-4:]
+                          }
+                      elif name.startswith("goldprice_daily"):
+                          data = json.loads(raw)
+                          bars = data.get("bars") or []
+                          closed = sorted((bar for bar in bars if bar.get("is_closed") is True and bar.get("bar_start")),
+                              key=lambda bar: bar["bar_start"])
+                          latest = closed[-1] if closed else None
+                          latest_age = None
+                          if latest:
+                              latest_at = datetime.fromisoformat(latest["bar_start"].replace("Z","+00:00"))
+                              latest_age = (datetime.now(timezone.utc)-latest_at).total_seconds()
+                          probe_results[name] = {
+                              "http": response.status, "symbol": data.get("symbol"),
+                              "interval": data.get("interval"), "tier": (data.get("meta") or {}).get("tier"),
+                              "source_id": (data.get("meta") or {}).get("source_id"),
+                              "delayed_minutes": data.get("delayed_minutes"),
+                              "closed_rows": len(closed),
+                              "latest_closed_bar": latest,
+                              "latest_bar_open_age_seconds": round(latest_age,1) if latest_age is not None else None,
+                              "intraday_signal_eligible": False,
+                              "note": "Free plan supplies daily spot bars only; diagnostic cross-check, not an intraday signal source."
                           }
                       elif name.startswith("biquote"):
                           data = json.loads(raw)

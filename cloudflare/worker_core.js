@@ -852,6 +852,15 @@ function diagnoseCandleGaps(gaps) {
     note:"A repeated timing pattern does not prove a market closure. Per-gap timing and duration are diagnostic only; no missing candle is filled, interpolated, or ignored."};
 }
 
+function classifyOhlcProviderFailure(reason) {
+  const message=String(reason||"");
+  if(/freshness metadata|data state is|data_state|as_of timestamp|age_seconds/i.test(message)) return "FRESHNESS_METADATA_INVALID";
+  if(/stale/i.test(message)) return "SOURCE_STALE";
+  if(/HTTP [0-9]{3}|fetch failed|network|timeout|provider unavailable/i.test(message)) return "PROVIDER_UNAVAILABLE";
+  if(/malformed|duplicate candle|timestamp.*aligned|unexpected.*schema|no completed.*candles/i.test(message)) return "OHLC_INVALID_OR_MISSING";
+  return "UNKNOWN_FAILURE";
+}
+
 const CANDLE_SYMBOLS = new Map([["xau", "xau"]]);
 const CANDLE_INTERVALS = new Map([["15m", 900], ["30m", 1800], ["60m", 3600], ["1d", 86400]]);
 
@@ -871,14 +880,27 @@ async function fetchGoldCandlesFromXaus(symbol, interval) {
   if (!response.ok) throw new Error("XAUS OHLC provider HTTP " + response.status);
   const payload = await response.json();
   const state = payload?.data_state;
-  if (state?.status !== "fresh")
-    throw new Error("XAUS OHLC provider data state is " + String(state?.status || "missing"));
+  if (!state || typeof state !== "object")
+    throw new Error("XAUS OHLC provider data_state metadata is missing");
+  if (state.status !== "fresh")
+    throw new Error("XAUS OHLC provider data state is " + String(state.status || "missing"));
+  if (typeof state.as_of !== "string" || !state.as_of.trim())
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is missing");
   const stateStamp = parseStamp(state.as_of);
+  if (!stateStamp)
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is invalid");
+  if (state.age_seconds === undefined || state.age_seconds === null || state.age_seconds === "")
+    throw new Error("XAUS OHLC provider data_state.age_seconds is missing");
   const stateAge = Number(state.age_seconds);
-  const timestampAge = stateStamp ? (Date.now() - stateStamp.getTime()) / 1000 : NaN;
-  if (!stateStamp || !Number.isFinite(stateAge) || stateAge < 0 || stateAge > XAUS_MAX_AGE_SECONDS ||
-      !Number.isFinite(timestampAge) || timestampAge < -30 || timestampAge > XAUS_MAX_AGE_SECONDS)
-    throw new Error("XAUS OHLC provider freshness metadata is missing, invalid, or stale");
+  if (!Number.isFinite(stateAge) || stateAge < 0)
+    throw new Error("XAUS OHLC provider data_state.age_seconds is invalid");
+  if (stateAge > XAUS_MAX_AGE_SECONDS)
+    throw new Error("XAUS OHLC provider data_state.age_seconds is stale");
+  const timestampAge = (Date.now() - stateStamp.getTime()) / 1000;
+  if (!Number.isFinite(timestampAge) || timestampAge < -30)
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is in the future");
+  if (timestampAge > XAUS_MAX_AGE_SECONDS)
+    throw new Error("XAUS OHLC provider data_state.as_of timestamp is stale");
   if (!Array.isArray(payload?.points)) throw new Error("XAUS OHLC provider returned an unexpected chart schema");
   const intervalMs = intervalSeconds * 1000;
   const currentBucket = Math.floor(Date.now() / intervalMs) * intervalMs;
@@ -1020,8 +1042,13 @@ async function fetchGoldCandles(symbol, interval) {
     const fallback=await fetchGoldCandlesFromBiquote(symbol,interval);
     return {...fallback, fallback_reason:primaryError};
   } catch(error) {
-    throw new Error("XAUS unavailable: "+primaryError+"; BIQUOTE fallback unavailable: "+
-      String(error?.message||"unknown provider error"));
+    const fallbackError=String(error?.message||"unknown provider error");
+    const combined=new Error("XAUS unavailable: "+primaryError+"; BIQUOTE fallback unavailable: "+fallbackError);
+    combined.provider_failures=[
+      {provider:"XAUS",failure_class:classifyOhlcProviderFailure(primaryError),reason:primaryError},
+      {provider:"BIQUOTE",failure_class:classifyOhlcProviderFailure(fallbackError),reason:fallbackError}
+    ];
+    throw combined;
   }
 }
 
@@ -1038,20 +1065,35 @@ async function fetchGoldCandlesWithConsensus(symbol, interval) {
   const errors = results.map((result, index) => result.status === "rejected"
     ? (index === 0 ? "XAUS: " : "BIQUOTE: ") + String(result.reason?.message || "unavailable")
     : null).filter(Boolean);
-  if (!available.length) throw new Error("No OHLC provider available for consensus: " + errors.join("; "));
+  if (!available.length) {
+    const error=new Error("No OHLC provider available for consensus: " + errors.join("; "));
+    error.provider_failures=results.map((result,index)=>result.status==="rejected"?{
+      provider:index===0?"XAUS":"BIQUOTE",
+      reason:String(result.reason?.message||"Provider unavailable")
+    }:null).filter(Boolean);
+    throw error;
+  }
   const primary = available[0];
-  const providerDiagnostics = available.map(item => {
-    const latest = item.candles?.[item.candles.length - 1];
-    return {
-      provider: item.provider,
-      candle_count: item.candles?.length ?? 0,
-      last_candle_at: latest?.timestamp ?? null,
-      last_candle_close_at: item.last_candle_close_at ?? null,
-      age_seconds: item.age_seconds ?? null,
-      freshness_limit_seconds: item.freshness_limit_seconds ?? null,
-      data_quality: item.data_quality?.status ?? "UNKNOWN",
-      analysis_ready: item.analysis_ready === true
-    };
+  const providerDiagnostics = results.map((result,index) => {
+    const provider=index===0?"XAUS":"BIQUOTE";
+    if(result.status==="rejected") {
+      const reason=String(result.reason?.message||"Provider unavailable");
+      return {provider,request_status:"REJECTED",
+        failure_class:classifyOhlcProviderFailure(reason),error:reason,
+        candle_count:0,last_candle_at:null,last_candle_close_at:null,
+        age_seconds:null,freshness_limit_seconds:null,data_quality:"UNAVAILABLE",
+        analysis_ready:false};
+    }
+    const item=result.value;
+    const latest=item.candles?.[item.candles.length-1];
+    return {provider:item.provider,request_status:"FULFILLED",
+      failure_class:null,error:null,candle_count:item.candles?.length??0,
+      last_candle_at:latest?.timestamp??null,
+      last_candle_close_at:item.last_candle_close_at??null,
+      age_seconds:item.age_seconds??null,
+      freshness_limit_seconds:item.freshness_limit_seconds??null,
+      data_quality:item.data_quality?.status??"UNKNOWN",
+      analysis_ready:item.analysis_ready===true};
   });
   const base = {
     ...primary,
@@ -1565,6 +1607,29 @@ function randomHex(byteLength) {
   return Array.from(bytes,byte=>byte.toString(16).padStart(2,"0")).join("");
 }
 
+function classifyXauWeekendSession(nowMs=Date.now()) {
+  if(!Number.isFinite(nowMs)) throw new Error("nowMs must be a finite timestamp");
+  const parts=new Intl.DateTimeFormat("en-US",{
+    timeZone:"America/New_York",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"
+  }).formatToParts(new Date(nowMs));
+  const values=Object.fromEntries(parts.filter(part=>part.type!=="literal").map(part=>[part.type,part.value]));
+  const hour=Number(values.hour),minute=Number(values.minute);
+  if(!Number.isInteger(hour)||!Number.isInteger(minute)||!values.weekday)
+    throw new Error("Unable to determine New York market-session clock");
+  const afterFridayClose=values.weekday==="Fri"&&(hour>17||(hour===17&&minute>=0));
+  const saturday=values.weekday==="Sat";
+  const beforeSundayOpen=values.weekday==="Sun"&&hour<17;
+  const weekendClosed=afterFridayClose||saturday||beforeSundayOpen;
+  return {
+    status:weekendClosed?"WEEKEND_CLOSED_ESTIMATE":"NOT_WEEKEND_CLOSED",
+    is_weekend_closed_estimate:weekendClosed,
+    reference_timezone:"America/New_York",
+    reference_close:"Friday 17:00",
+    reference_open:"Sunday 17:00",
+    note:"Calendar heuristic only; broker holidays and instrument-specific trading hours may differ. This estimate never overrides quote or candle freshness checks."
+  };
+}
+
 function json(data, status=200) {
   return new Response(JSON.stringify(data), {status,headers:{
     "content-type":"application/json; charset=utf-8","cache-control":"no-store",
@@ -1613,22 +1678,272 @@ async function fetchXausSpotQuote() {
     const payload=await response.json();
     const state=payload?.data_state;
     if(state?.status!=="fresh") return null;
-    const stamp=parseStamp(state.as_of||payload.price_as_of||payload.updated_at);
-    const ageFromSource=Number(state.age_seconds);
+    const stamp=typeof state.as_of==="string"?parseStamp(state.as_of):null;
+    const ageFromSource=typeof state.age_seconds==="number"?state.age_seconds:NaN;
     const ageFromTimestamp=stamp?(Date.now()-stamp.getTime())/1000:NaN;
-    const price=Number(payload?.spot_usd_oz??payload?.xau?.price);
+    const rawPrice=payload?.spot_usd_oz??payload?.xau?.price;
+    const price=rawPrice;
     const unit=payload?.xau?.unit;
     const currency=payload?.xau?.currency;
+    const updatedAt=parseStamp(payload.updated_at);
+    const updatedAge=updatedAt?(Date.now()-updatedAt.getTime())/1000:NaN;
     if(!stamp||!Number.isFinite(ageFromSource)||ageFromSource<0||ageFromSource>XAUS_MAX_AGE_SECONDS||
        !Number.isFinite(ageFromTimestamp)||ageFromTimestamp< -30||ageFromTimestamp>XAUS_MAX_AGE_SECONDS||
        !Number.isFinite(price)||price<=0||price>1e15||
-       (currency&&currency!=="USD")||(unit&&!["oz","troy_oz"].includes(unit))||
-       !parseStamp(payload.updated_at)||Math.abs((Date.now()-parseStamp(payload.updated_at).getTime())/1000)>XAUS_MAX_AGE_SECONDS) return null;
+       currency!=="USD"||!["oz","troy_oz"].includes(unit)||
+       !Number.isFinite(updatedAge)||updatedAge< -30||updatedAge>XAUS_MAX_AGE_SECONDS) return null;
     return {id:"xau",price,unit:"USD",updated_utc:stamp.toISOString(),stale:false};
   } catch { return null; }
 }
+function calculateGold18kParity(snapshot,now=Date.now()) {
+  const quotes=Array.isArray(snapshot?.quotes)?snapshot.quotes:[];
+  const bySymbol=new Map(quotes.map(quote=>[quote.symbol,quote]));
+  const required=["GOLD18","USD_IRT","XAUUSD"];
+  const inputs=Object.fromEntries(required.map(symbol=>[symbol,bySymbol.get(symbol)||null]));
+  const unavailable=required.filter(symbol=>{
+    const quote=inputs[symbol];
+    if(!quote||quote.status!=="LIVE"||!Number.isFinite(quote.price)||quote.price<=0) return true;
+    const stamp=parseStamp(quote.timestamp);
+    if(!stamp) return true;
+    const age=(now-stamp.getTime())/1000;
+    return age < -30 || age > (quote.source==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:
+      quote.source==="XAUS"?XAUS_MAX_AGE_SECONDS:MAX_AGE_SECONDS);
+  });
+  const base={status:"UNAVAILABLE",symbol:"GOLD18",unit:"تومان/گرم",
+    formula:"XAUUSD × USD_IRT × 0.75 ÷ 31.1034768",
+    inputs:Object.fromEntries(required.map(symbol=>[symbol,inputs[symbol]?{
+      status:inputs[symbol].status,price:inputs[symbol].price,
+      timestamp:inputs[symbol].timestamp,source:inputs[symbol].source}:null])),
+    note:"برآورد نظری طلای ۱۸ عیار؛ بدون اجرت، مالیات، کارمزد و حباب بازار."};
+  if(unavailable.length) return {...base,reason:"REQUIRED_LIVE_INPUT_MISSING",missing_inputs:unavailable};
+  const stamps=required.map(symbol=>parseStamp(inputs[symbol].timestamp).getTime());
+  const skewSeconds=(Math.max(...stamps)-Math.min(...stamps))/1000;
+  if(skewSeconds>180) return {...base,reason:"INPUT_TIMESTAMP_SKEW",timestamp_skew_seconds:round2(skewSeconds)};
+  const theoretical=inputs.XAUUSD.price*inputs.USD_IRT.price*0.75/31.1034768;
+  const observed=inputs.GOLD18.price;
+  if(!Number.isFinite(theoretical)||theoretical<=0||!Number.isFinite(observed)||observed<=0)
+    return {...base,reason:"INVALID_PARITY_CALCULATION"};
+  return {...base,status:"AVAILABLE",theoretical_price_irt_per_gram:round2(theoretical),
+    observed_market_price_irt_per_gram:observed,
+    premium_discount_pct:round2((observed/theoretical-1)*100),
+    timestamp_skew_seconds:round2(skewSeconds),reason:null};
+}
+
+function refreshCachedSnapshotFreshness(snapshot,now=Date.now()) {
+  if(!snapshot||!Array.isArray(snapshot.quotes)) return snapshot;
+  const quotes=snapshot.quotes.map(quote=>{
+    if(quote?.status!=="LIVE") return quote;
+    const stamp=parseStamp(quote.timestamp);
+    const age=stamp?(now-stamp.getTime())/1000:null;
+    const maxAge=quote.source==="Talasanj"?TALASANJ_MAX_AGE_SECONDS:
+      quote.source==="XAUS"?XAUS_MAX_AGE_SECONDS:MAX_AGE_SECONDS;
+    const fresh=Boolean(Number.isFinite(quote.price)&&quote.price>0&&stamp&&
+      age>=-30&&age<=maxAge&&quote.meta?.unit_valid===true);
+    return {...quote,price:fresh?quote.price:null,status:fresh?"LIVE":"STALE",
+      age_seconds:age===null?null:Math.round(age*10)/10,
+      meta:{...(quote.meta||{}),reason:fresh?null:"Cached quote exceeded its source freshness limit or failed validation"}};
+  });
+  const liveQuotes=quotes.filter(quote=>quote.status==="LIVE").length;
+  return {...snapshot,quotes,live_quotes:liveQuotes,
+    status:liveQuotes===quotes.length?"LIVE":liveQuotes>0?"PARTIAL":"UNAVAILABLE",
+    freshness_checked_at:new Date(now).toISOString()};
+}
+
+async function discoverAyarInstrument() {
+  const endpoint="https://cdn.tsetmc.com/api/Instrument/GetInstrumentSearch/"+encodeURIComponent("عیار");
+  try {
+    const response=await fetch(endpoint,{
+      headers:{accept:"application/json","user-agent":"Mozilla/5.0 AyyarSmartTrader/1.0"},
+      signal:AbortSignal.timeout(8000)
+    });
+    if(!response.ok) throw new Error("TSETMC instrument search HTTP "+response.status);
+    const payload=await response.json();
+    const rows=Array.isArray(payload)?payload:
+      Array.isArray(payload?.instrumentSearch)?payload.instrumentSearch:
+      Array.isArray(payload?.instrumentsearch)?payload.instrumentsearch:null;
+    if(!rows) throw new Error("TSETMC instrument search schema is unrecognized");
+    const normalize=value=>String(value??"").replace(/\u200c/g,"").replace(/\s+/g,"").trim();
+    const matches=rows.filter(row=>{
+      const symbol=normalize(row?.lVal18AFC??row?.symbol??row?.insName??row?.instrument?.lVal18AFC);
+      return symbol==="عیار";
+    }).map(row=>({
+      symbol:"عیار",
+      name:String(row?.lVal30??row?.name??row?.instrument?.lVal30??"").slice(0,120),
+      ins_code:String(row?.insCode??row?.inscode??row?.instrument?.insCode??"")
+    })).filter(row=>/^\d{8,20}$/.test(row.ins_code));
+    if(matches.length!==1) return {
+      status:"UNAVAILABLE",symbol:"AYAR",source:"TSETMC",
+      reason:matches.length===0?"EXACT_SYMBOL_NOT_FOUND":"AMBIGUOUS_EXACT_SYMBOL_MATCH",
+      candidate_count:matches.length,retrieved_at:new Date().toISOString(),
+      execution_enabled:false,
+      note:"Instrument identity is not confirmed. No fund quote, NAV, or trading signal is inferred."
+    };
+    return {status:"IDENTIFIED",symbol:"AYAR",ticker:matches[0].symbol,
+      instrument_name:matches[0].name,ins_code:matches[0].ins_code,
+      source:"TSETMC",source_url:endpoint,retrieved_at:new Date().toISOString(),
+      next_step:"Instrument identity only; live price, NAV, timestamp alignment and liquidity remain unverified.",
+      execution_enabled:false};
+  } catch(error) {
+    return {status:"UNAVAILABLE",symbol:"AYAR",source:"TSETMC",
+      reason:String(error?.message||"TSETMC instrument discovery failed").slice(0,240),
+      retrieved_at:new Date().toISOString(),execution_enabled:false,
+      note:"No instrument code or market price is guessed when TSETMC discovery is unavailable."};
+  }
+}
+
+
+function tsetmcLocalTimestamp(deven,hEven) {
+  if(!Number.isInteger(Number(deven))||!Number.isInteger(Number(hEven))) return null;
+  const date=String(deven).padStart(8,"0"),time=String(hEven).padStart(6,"0");
+  if(!/^\d{8}$/.test(date)||!/^\d{6}$/.test(time)) return null;
+  const y=Number(date.slice(0,4)),m=Number(date.slice(4,6)),d=Number(date.slice(6,8));
+  const hh=Number(time.slice(0,2)),mm=Number(time.slice(2,4)),ss=Number(time.slice(4,6));
+  if(m<1||m>12||d<1||d>31||hh>23||mm>59||ss>59) return null;
+  // TSETMC dEven/hEven are Tehran local time (UTC+03:30).
+  const utc=Date.UTC(y,m-1,d,hh,mm,ss)-210*60*1000;
+  const check=new Date(utc+210*60*1000);
+  if(check.getUTCFullYear()!==y||check.getUTCMonth()!==m-1||check.getUTCDate()!==d) return null;
+  return utc;
+}
+
+async function fetchAyarMarketSnapshot(insCode,now=Date.now()) {
+  const base="https://cdn.tsetmc.com/api/";
+  const headers={accept:"application/json","user-agent":"Mozilla/5.0 AyyarSmartTrader/1.0"};
+  const request=async path=>{
+    const response=await fetch(base+path,{headers,signal:AbortSignal.timeout(8000)});
+    if(!response.ok) throw new Error("TSETMC HTTP "+response.status+" for "+path.split("/")[0]);
+    return response.json();
+  };
+  try {
+    const [quotePayload,bookPayload,navPayload,tradePayload]=await Promise.all([
+      request("ClosingPrice/GetClosingPriceInfo/"+insCode),
+      request("BestLimits/"+insCode),
+      request("Fund/GetETFByInsCode/"+insCode),
+      request("Trade/GetTrade/"+insCode)
+    ]);
+    const quote=quotePayload?.closingPriceInfo;
+    const nav=navPayload?.etf;
+    const book=bookPayload?.bestLimits;
+    const trades=tradePayload?.trade;
+    if(!quote||String(quote.insCode)!==String(insCode)||!nav||
+       String(nav.insCode)!==String(insCode)||!Array.isArray(book)||!Array.isArray(trades))
+      throw new Error("TSETMC Ayar response schema or instrument identity mismatch");
+    const last=Number(quote.pDrCotVal),close=Number(quote.pClosing);
+    const redemptionNav=Number(nav.pRedTran),subscriptionNav=Number(nav.pSubTran);
+    const quoteAt=tsetmcLocalTimestamp(quote.dEven,quote.hEven);
+    const navAt=tsetmcLocalTimestamp(nav.deven,nav.hEven);
+    const quoteAge=quoteAt===null?null:(now-quoteAt)/1000;
+    const navAge=navAt===null?null:(now-navAt)/1000;
+    const active=String(quote.instrumentState?.cEtaval??"").trim()==="A"||
+      String(quote.instrumentState?.cEtavalTitle??"").trim()==="مجاز";
+    const fresh=quoteAge!==null&&navAge!==null&&quoteAge>=-30&&navAge>=-30&&
+      quoteAge<=1200&&navAge<=1200&&Math.abs(quoteAt-navAt)<=300000;
+    const validPrices=[last,close,redemptionNav,subscriptionNav].every(v=>Number.isFinite(v)&&v>0&&v<=1e15);
+    if(!fresh||!validPrices||!active)
+      throw new Error(!fresh?"TSETMC quote/NAV timestamps are stale or misaligned":
+        !active?"Ayar instrument is not in an active permitted state":"TSETMC returned invalid price or NAV values");
+    const levels=book.map(level=>({
+      bid_price:Number(level?.pd),bid_volume:Number(level?.qd),
+      ask_price:Number(level?.po),ask_volume:Number(level?.qo)
+    })).filter(level=>[level.bid_price,level.bid_volume,level.ask_price,level.ask_volume]
+      .every(v=>Number.isFinite(v)&&v>=0));
+    const top=levels[0];
+    if(!top||top.bid_price<=0||top.ask_price<=0||top.bid_volume<=0||top.ask_volume<=0||
+       top.ask_price<top.bid_price)
+      throw new Error("TSETMC order book is empty or invalid");
+    const spreadBps=((top.ask_price-top.bid_price)/((top.ask_price+top.bid_price)/2))*10000;
+    const validTrades=trades.filter(trade=>Number.isFinite(Number(trade?.pTran))&&
+      Number(trade.pTran)>0&&Number.isFinite(Number(trade?.qTitTran))&&Number(trade.qTitTran)>0);
+    const tradedVolume=validTrades.reduce((sum,trade)=>sum+Number(trade.qTitTran),0);
+    const tradedValue=validTrades.reduce((sum,trade)=>sum+Number(trade.pTran)*Number(trade.qTitTran),0);
+    const premium=(last/redemptionNav-1)*100;
+    return {
+      status:"LIVE",symbol:"AYAR",source:"TSETMC",ins_code:String(insCode),
+      currency_unit:"RIAL",price:last,closing_price:close,
+      redemption_nav:redemptionNav,subscription_nav:subscriptionNav,
+      premium_discount_pct:Number(premium.toFixed(4)),
+      quote_at:new Date(quoteAt).toISOString(),nav_at:new Date(navAt).toISOString(),
+      quote_age_seconds:Math.round(quoteAge),nav_age_seconds:Math.round(navAge),
+      best_bid:{price:top.bid_price,volume:top.bid_volume},
+      best_ask:{price:top.ask_price,volume:top.ask_volume},
+      order_book_levels:levels.length,
+      order_book_spread_bps:Number(spreadBps.toFixed(2)),
+      order_book_bid_depth_rial:levels.reduce((sum,level)=>sum+level.bid_price*level.bid_volume,0),
+      order_book_ask_depth_rial:levels.reduce((sum,level)=>sum+level.ask_price*level.ask_volume,0),
+      trade_tape_sample_count:validTrades.length,
+      trade_tape_sample_volume:tradedVolume,
+      trade_tape_sample_value_rial:tradedValue,
+      provider_reported_daily_traded_volume:Number.isFinite(Number(quote.qTotTran5J))?Number(quote.qTotTran5J):null,
+      provider_reported_daily_traded_value_rial:Number.isFinite(Number(quote.qTotCap))?Number(quote.qTotCap):null,
+      execution_enabled:false,
+      note:"TSETMC is an undocumented public data surface. This is a market-data diagnostic, not broker execution or an investment signal."
+    };
+  } catch(error) {
+    return {status:"UNAVAILABLE",symbol:"AYAR",source:"TSETMC",
+      reason:String(error?.message||"Ayar market snapshot unavailable").slice(0,240),
+      retrieved_at:new Date(now).toISOString(),execution_enabled:false,
+      note:"No stale, partial, mismatched, or inferred quote/NAV/order-book values are published."};
+  }
+}
+
+
+function evaluateAyarMarketQuality(market,env={}) {
+  if(!market||market.status!=="LIVE"||market.execution_enabled!==false) {
+    return {status:"UNAVAILABLE",liquidity_status:"UNAVAILABLE",premium_state:"UNAVAILABLE",
+      trade_readiness:"BLOCKED",reasons:["FRESH_MARKET_SNAPSHOT_REQUIRED"],execution_enabled:false};
+  }
+  const premium=Number(market.premium_discount_pct);
+  const premiumState=!Number.isFinite(premium)?"UNAVAILABLE":premium>0?"PREMIUM":premium<0?"DISCOUNT":"AT_NAV";
+  const config={
+    max_spread_bps:env.AYAR_MAX_SPREAD_BPS,
+    min_daily_traded_value_rial:env.AYAR_MIN_DAILY_TRADED_VALUE_RIAL,
+    min_bid_depth_rial:env.AYAR_MIN_BID_DEPTH_RIAL,
+    min_ask_depth_rial:env.AYAR_MIN_ASK_DEPTH_RIAL
+  };
+  const missing=Object.entries(config).filter(([,v])=>v===undefined||v===null||String(v).trim()===""||
+    !Number.isFinite(Number(v))||Number(v)<=0).map(([k])=>k);
+  if(missing.length) return {
+    status:"DIAGNOSTIC_ONLY",liquidity_status:"UNCONFIGURED",premium_state:premiumState,
+    premium_discount_pct:premium,trade_readiness:"BLOCKED",
+    required_configuration:missing,
+    measures:{spread_bps:market.order_book_spread_bps,
+      daily_traded_value_rial:market.provider_reported_daily_traded_value_rial,
+      bid_depth_rial:market.order_book_bid_depth_rial,
+      ask_depth_rial:market.order_book_ask_depth_rial},
+    reasons:["LIQUIDITY_THRESHOLDS_NOT_CONFIGURED"],
+    note:"No arbitrary liquidity cutoffs or trade signal are applied.",
+    execution_enabled:false
+  };
+  const limits=Object.fromEntries(Object.entries(config).map(([k,v])=>[k,Number(v)]));
+  const measures={
+    spread_bps:Number(market.order_book_spread_bps),
+    daily_traded_value_rial:Number(market.provider_reported_daily_traded_value_rial),
+    bid_depth_rial:Number(market.order_book_bid_depth_rial),
+    ask_depth_rial:Number(market.order_book_ask_depth_rial)
+  };
+  const checks={
+    spread_ok:Number.isFinite(measures.spread_bps)&&measures.spread_bps<=limits.max_spread_bps,
+    daily_traded_value_ok:Number.isFinite(measures.daily_traded_value_rial)&&measures.daily_traded_value_rial>=limits.min_daily_traded_value_rial,
+    bid_depth_ok:Number.isFinite(measures.bid_depth_rial)&&measures.bid_depth_rial>=limits.min_bid_depth_rial,
+    ask_depth_ok:Number.isFinite(measures.ask_depth_rial)&&measures.ask_depth_rial>=limits.min_ask_depth_rial
+  };
+  const failed=Object.entries(checks).filter(([,ok])=>!ok).map(([k])=>k);
+  return {
+    status:"EVALUATED",liquidity_status:failed.length?"FAIL":"PASS",
+    premium_state:premiumState,premium_discount_pct:premium,
+    trade_readiness:failed.length?"BLOCKED":"LIQUIDITY_CHECKS_PASSED_NOT_A_SIGNAL",
+    measures,limits,checks,failed_checks:failed,
+    reasons:failed.length?["LIQUIDITY_THRESHOLDS_NOT_MET"]:[],
+    note:"Premium/discount is measured against redemption NAV only. Passing liquidity checks does not create a BUY/SELL signal.",
+    execution_enabled:false
+  };
+}
+
 async function snapshot(env={}) {
-  if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) return cached;
+  if(cached && cached.status!=="UNAVAILABLE" && Date.now()-cachedAt<(cached.quotes?.[0]?.source==="Talasanj"?15000:60000)) {
+    cached=refreshCachedSnapshotFreshness(cached);
+    return cached;
+  }
   try {
     let payload=await fetchTalasanj(env);
     let provider="Talasanj";
@@ -1689,6 +2004,14 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       scheduled_at:new Date(scheduledTime).toISOString(),completed_at:new Date().toISOString(),
       execution_enabled:false,mode:"PAPER_ONLY"
     });
+    const sessionEstimate=classifyXauWeekendSession(Number.isFinite(scheduledTime)?scheduledTime:Date.now());
+    if(sessionEstimate.is_weekend_closed_estimate) return await savePaperMonitorStatus(env,{
+      status:"MARKET_CLOSED",market_session:sessionEstimate,accounts_checked:0,
+      trades_processed:0,closed_trades:0,
+      scheduled_at:new Date(scheduledTime).toISOString(),started_at:startedAt,
+      completed_at:new Date().toISOString(),execution_enabled:false,mode:"PAPER_ONLY",
+      note:"Weekend closure is a calendar estimate only. No provider freshness rule was relaxed and no paper positions were changed."
+    });
     const market=await fetchGoldCandles("xau","15m");
     if(!["LIVE","PARTIAL"].includes(market.status)||!["XAUS","BIQUOTE"].includes(market.provider)||!market.candles?.length)
       throw new Error("Fresh completed XAU/USD 15m candles from an approved provider unavailable; no paper positions were changed");
@@ -1730,6 +2053,11 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       status:"ERROR",scheduled_at:new Date(scheduledTime).toISOString(),
       started_at:startedAt,completed_at:new Date().toISOString(),
       error:String(error?.message||"Scheduled paper monitor failed").slice(0,300),
+      provider_failures:Array.isArray(error?.provider_failures)?error.provider_failures.slice(0,2).map(item=>({
+        provider:String(item.provider||"unknown"),
+        failure_class:String(item.failure_class||"UNKNOWN_FAILURE"),
+        reason:String(item.reason||"Provider unavailable").slice(0,240)
+      })):[],
       execution_enabled:false,mode:"PAPER_ONLY"
     }).catch(()=>{});
     throw error;
@@ -1967,7 +2295,25 @@ export default {
           execution_enabled:false},400);
       }
     }
+    if(url.pathname==="/v1/market/ayar/discovery"&&request.method==="GET")
+      return json(await discoverAyarInstrument());
+    if(url.pathname==="/v1/market/ayar/snapshot"&&request.method==="GET") {
+      const identity=await discoverAyarInstrument();
+      if(identity.status!=="IDENTIFIED") return json({...identity,market_status:"UNAVAILABLE"});
+      return json({...await fetchAyarMarketSnapshot(identity.ins_code),instrument:identity});
+    }
+    if(url.pathname==="/v1/market/ayar/quality"&&request.method==="GET") {
+      const identity=await discoverAyarInstrument();
+      if(identity.status!=="IDENTIFIED") return json({status:"UNAVAILABLE",instrument:identity,
+        trade_readiness:"BLOCKED",execution_enabled:false});
+      const market=await fetchAyarMarketSnapshot(identity.ins_code);
+      return json({...evaluateAyarMarketQuality(market,env),market,instrument:identity});
+    }
     if(url.pathname==="/v1/market/quotes"&&request.method==="GET") return json(await snapshot(env));
+    if(url.pathname==="/v1/market/gold18-parity"&&request.method==="GET") {
+      const market=await snapshot(env);
+      return json(calculateGold18kParity(market));
+    }
     if(url.pathname==="/v1/market/history"&&request.method==="GET") {
       const symbol=url.searchParams.get("symbol") || "gold-18k";
       if(!HISTORY_IDS.has(symbol)) return json({error:"Unsupported symbol",allowed_symbols:[...HISTORY_IDS]},400);
@@ -2012,6 +2358,13 @@ export default {
       const intervals=["15m","60m","1d"];
       try {
         const markets=await Promise.all(intervals.map(interval=>fetchGoldCandlesWithConsensus(symbol,interval)));
+        let gold18Parity;
+        try {
+          gold18Parity=calculateGold18kParity(await snapshot(env));
+        } catch(error) {
+          gold18Parity={status:"UNAVAILABLE",symbol:"GOLD18",reason:"PARITY_DIAGNOSTIC_UNAVAILABLE",
+            note:"Parity diagnostic failed closed; it does not affect the XAU signal gate."};
+        }
         const analyses=markets.map((market,i)=>evaluateSignal({
           candles:market.candles,timeframe_minutes:market.interval_seconds/60
         }));
@@ -2034,6 +2387,8 @@ export default {
         const expectedTrend=intraday==="BUY"?"BULLISH":"BEARISH";
         const trendAligned=analyses.every(analysis=>analysis.trend===expectedTrend);
         const dataQualityClean=markets.every(market=>
+          market.status==="LIVE" &&
+          market.analysis_ready===true &&
           market.data_quality?.status==="CLEAN" &&
           market.source_quality==="CONVERGED" &&
           market.source_consensus?.status==="CONVERGED"
@@ -2074,12 +2429,14 @@ export default {
           entry:aligned?base.entry:null,stop_loss:aligned?base.stop_loss:null,
           take_profit:aligned?base.take_profit:null,risk_reward_ratio:aligned?2:null,
           timeframes:byInterval,market_data_status:dataQualityClean?"LIVE":"DEGRADED",
+          gold18_parity:gold18Parity,
           signal_stability:stability,
           market_provider:[...new Set(markets.flatMap(market=>market.source_consensus?.providers||[market.provider]))].join("+"),
           market_sources:markets.map(market=>({interval:market.interval,provider:market.provider,
             source_url:market.source_url,
             fallback_reason:market.source_consensus?.errors?.join("; ")||market.fallback_reason||null,
-            last_candle_at:market.last_candle_at,data_quality:market.data_quality,
+            last_candle_at:market.last_candle_at,analysis_ready:market.analysis_ready===true,
+            market_status:market.status,data_quality:market.data_quality,
             source_quality:market.source_quality,source_consensus:market.source_consensus})),
           last_candle_at:markets[1].last_candle_at,
           market_regime:regimes[1],
@@ -2101,12 +2458,19 @@ export default {
         return json(result);
       } catch(e) {
         const reason=String(e?.message||"Multi-timeframe OHLC data unavailable");
+        const providerFailures=Array.isArray(e?.provider_failures)?e.provider_failures:[];
+        const providerDiagnostics=["XAUS","BIQUOTE"].map(provider=>{
+          const failure=providerFailures.find(item=>item.provider===provider);
+          return {provider,status:failure?classifyOhlcProviderFailure(failure.reason):"NOT_CHECKED",
+            reason:failure?.reason||null};
+        });
+        const sessionEstimate=classifyXauWeekendSession();
         const unavailableTimeframes=Object.fromEntries(intervals.map(interval=>[interval,{
           signal:"NO_TRADE",proposed_signal:"NO_TRADE",confidence:0,
           data_status:"UNAVAILABLE",data_quality:{status:"UNAVAILABLE",reason},
           source_quality:"UNAVAILABLE",
           source_consensus:{status:"UNAVAILABLE",required_providers:["XAUS","BIQUOTE"],
-            providers:[],provider_diagnostics:[],errors:[reason]},
+            providers:[],provider_diagnostics:providerDiagnostics,errors:providerFailures.map(item=>item.provider+": "+item.reason)},
           reason
         }]));
         return json({
@@ -2116,12 +2480,13 @@ export default {
             blocked_reasons:["Multi-timeframe market data is unavailable; directional signals are blocked."]},
           data_status:"UNAVAILABLE",market_data_status:"DEGRADED",
           signal_stability:{status:"UNAVAILABLE",confirmed:false,confirmations:0,required_confirmations:2},
-          timeframes:unavailableTimeframes,
+          timeframes:unavailableTimeframes,provider_diagnostics:providerDiagnostics,
+          session_estimate:sessionEstimate,
           market_sources:intervals.map(interval=>({interval,status:"UNAVAILABLE",
             data_quality:{status:"UNAVAILABLE",reason},source_quality:"UNAVAILABLE",
             source_consensus:unavailableTimeframes[interval].source_consensus})),
           reason,execution_enabled:false,
-          warning:"All three real completed timeframes are required. No synthetic candles or orders are produced."
+          warning:"Provider failure classes and XAU weekend session are diagnostic only. Session estimates never override stale or invalid OHLC checks. All three real completed timeframes are required; no synthetic candles or orders are produced."
         });
       }
     }
@@ -2217,7 +2582,7 @@ export default {
     if(url.pathname==="/v1/market/status"&&request.method==="GET") {
       const s=await snapshot(env);
       return json({status:s.status,as_of:s.as_of,live_quotes:s.quotes.filter(q=>q.status==="LIVE").length,
-        total_quotes:s.quotes.length,attribution:s.attribution});
+        total_quotes:s.quotes.length,session_estimate:classifyXauWeekendSession(),attribution:s.attribution});
     }
     if(url.pathname==="/v1/risk/policy"&&request.method==="GET") return json({
       default_risk_per_trade:0.01,max_daily_loss:0.03,max_drawdown:0.08,execution_enabled:false,
@@ -2445,3 +2810,4 @@ export default {
     return json({error:"Not found"},404);
   }
 };
+export { classifyOhlcProviderFailure, classifyXauWeekendSession };
