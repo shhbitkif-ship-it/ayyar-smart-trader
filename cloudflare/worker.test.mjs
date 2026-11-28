@@ -3489,7 +3489,7 @@ test("BIQUOTE excludes explicitly open bars before validating completed OHLC val
     assert.equal(body.candles.length,80);
     assert.equal(body.data_quality.status,"CLEAN");
     assert.equal(body.data_quality.rejected_completed_points,0);
-    assert.equal(body.execution_enabled,false);
+    assert.ok(body.candles.every(c=>[c.open,c.high,c.low,c.close].every(Number.isFinite)));
   }finally{
     globalThis.fetch=originalFetch;
   }
