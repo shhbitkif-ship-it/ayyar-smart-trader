@@ -3302,3 +3302,32 @@ test("multi-timeframe consensus compares all OHLC fields, not only candle closes
     }
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("XAUS candle age is measured from candle close, matching BIQUOTE semantics", async () => {
+  const isolatedWorker=(await import("./worker_core.js?xaus-close-age-semantics-test")).default;
+  const intervalMs=15*60*1000;
+  const currentBucket=Math.floor(Date.now()/intervalMs)*intervalMs;
+  const candles=Array.from({length:80},(_,i)=>{
+    const open=3500+i*.1,close=open+.05;
+    return {timestamp:new Date(currentBucket-(80-i)*intervalMs).toISOString(),
+      open,high:close+.1,low:open-.1,close};
+  });
+  globalThis.fetch=async url=>{
+    if(String(url).includes("xaus.com/api/v1/chart"))
+      return new Response(JSON.stringify(xausChartFixture(candles)),
+        {status:200,headers:{"content-type":"application/json"}});
+    throw new Error("Unexpected provider URL: "+url);
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/candles?symbol=xau&interval=15m"));
+    const body=await response.json();
+    const expectedAge=(Date.now()-(Date.parse(candles.at(-1).timestamp)+intervalMs))/1000;
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.provider,"XAUS");
+    assert.equal(body.last_candle_close_at,new Date(Date.parse(candles.at(-1).timestamp)+intervalMs).toISOString());
+    assert.ok(Math.abs(body.age_seconds-Math.max(0,Math.round(expectedAge)))<=1,
+      "age_seconds must be measured from candle close, not candle open");
+    assert.equal(body.freshness_limit_seconds,600);
+  }finally{globalThis.fetch=originalFetch;}
+});
