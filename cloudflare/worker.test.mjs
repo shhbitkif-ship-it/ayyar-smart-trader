@@ -3295,3 +3295,41 @@ test("multi-timeframe consensus compares all OHLC fields, not only candle closes
     }
   }finally{globalThis.fetch=originalFetch;}
 });
+
+
+test("multi-timeframe consensus rejects a single recent OHLC outlier just above tolerance", async () => {
+  const isolatedWorker=(await import("./worker_core.js?single-recent-ohcl-outlier-test")).default;
+  const intervals={"15m":900,"60m":3600,"1d":86400};
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const parsed=new URL(String(url));
+    const interval=parsed.searchParams.get("interval");
+    const seconds=intervals[interval==="1h"?"60m":interval];
+    const lastClosed=Math.floor(Date.now()/(seconds*1000))*(seconds*1000)-seconds*1000;
+    const candles=Array.from({length:80},(_,i)=>{
+      const close=2600+i*.15;
+      return {timestamp:new Date(lastClosed-(79-i)*seconds*1000).toISOString(),
+        open:close-.05,high:close+.2,low:close-.2,close};
+    });
+    if(parsed.hostname==="biquote.io"){
+      const bars=candles.map((c,i)=>({openTime:c.timestamp,open:c.open,
+        high:i===78?c.high*1.0051:c.high,low:c.low,close:c.close,isOpen:false}));
+      return new Response(JSON.stringify({symbol:"XAUUSD",
+        interval:interval==="60m"?"1h":interval,bars}),
+        {status:200,headers:{"content-type":"application/json"}});
+    }
+    return new Response(JSON.stringify(xausChartFixture(candles)),{status:200,
+      headers:{"content-type":"application/json"}});
+  };
+  try{
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/signals/multi-timeframe?symbol=xau"));
+    const body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.signal,"NO_TRADE");
+    assert.equal(body.execution_enabled,false);
+    for(const interval of ["15m","60m","1d"]){
+      assert.equal(body.timeframes[interval].source_quality,"DIVERGENT");
+      assert.ok(body.timeframes[interval].source_consensus.max_ohlc_spread_pct>0.5);
+    }
+  }finally{globalThis.fetch=originalFetch;}
+});
