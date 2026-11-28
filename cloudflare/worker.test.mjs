@@ -3803,3 +3803,67 @@ test("multi-timeframe signal fails closed when either OHLC provider returns a no
     }
   }
 });
+
+
+test("Ayar market snapshot requires fresh matching quote, NAV, and a valid two-sided order book",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-live-snapshot-validation-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000);
+  const deven=Number(local.getUTCFullYear()+String(local.getUTCMonth()+1).padStart(2,"0")+String(local.getUTCDate()).padStart(2,"0"));
+  const heven=Number(String(local.getUTCHours()).padStart(2,"0")+String(local.getUTCMinutes()).padStart(2,"0")+String(local.getUTCSeconds()).padStart(2,"0"));
+  const code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch"))
+      return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",lVal30:"صندوق عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo"))
+      return new Response(JSON.stringify({closingPriceInfo:{insCode:code,dEven:deven,hEven:heven,pDrCotVal:105000,pClosing:104500,zTotTran:1200,qTotCap:9000000000,instrumentState:{cEtaval:"A "}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode"))
+      return new Response(JSON.stringify({etf:{insCode:code,deven,hEven,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits"))
+      return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/snapshot"));
+    const body=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(body.status,"LIVE",JSON.stringify(body));
+    assert.equal(body.currency_unit,"RIAL");
+    assert.equal(body.price,105000);
+    assert.equal(body.redemption_nav,100000);
+    assert.equal(body.premium_discount_pct,5);
+    assert.equal(body.best_bid.price,104900);
+    assert.equal(body.best_ask.price,105100);
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test("Ayar market snapshot blocks stale NAV even when the quote is fresh",async()=>{
+  const isolatedWorker=(await import("./worker_core.js?ayar-stale-nav-block-test")).default;
+  const now=Date.now(),local=new Date(now+210*60*1000),stale=new Date(now-3600*1000+210*60*1000);
+  const dateParts=d=>({
+    deven:Number(d.getUTCFullYear()+String(d.getUTCMonth()+1).padStart(2,"0")+String(d.getUTCDate()).padStart(2,"0")),
+    hEven:Number(String(d.getUTCHours()).padStart(2,"0")+String(d.getUTCMinutes()).padStart(2,"0")+String(d.getUTCSeconds()).padStart(2,"0"))
+  });
+  const q=dateParts(local),n=dateParts(stale),code="12345678901234567",originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.includes("Instrument/GetInstrumentSearch"))
+      return new Response(JSON.stringify({instrumentSearch:[{lVal18AFC:"عیار",insCode:code}]}),{status:200});
+    if(value.includes("ClosingPrice/GetClosingPriceInfo"))
+      return new Response(JSON.stringify({closingPriceInfo:{insCode:code,...q,pDrCotVal:105000,pClosing:104500,instrumentState:{cEtaval:"A"}}}),{status:200});
+    if(value.includes("Fund/GetETFByInsCode"))
+      return new Response(JSON.stringify({etf:{insCode:code,...n,pRedTran:100000,pSubTran:100500}}),{status:200});
+    if(value.includes("BestLimits"))
+      return new Response(JSON.stringify({bestLimits:[{pd:104900,qd:500,po:105100,qo:600}]}),{status:200});
+    throw new Error("Unexpected TSETMC URL "+value);
+  };
+  try {
+    const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/ayar/snapshot"));
+    const body=await response.json();
+    assert.equal(body.status,"UNAVAILABLE");
+    assert.match(body.reason,/stale or misaligned/i);
+    assert.equal(body.price,undefined);
+    assert.equal(body.execution_enabled,false);
+  } finally {globalThis.fetch=originalFetch;}
+});
