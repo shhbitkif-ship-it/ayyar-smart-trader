@@ -1736,6 +1736,14 @@ async function runScheduledPaperMonitor(env, scheduledTime) {
       scheduled_at:new Date(scheduledTime).toISOString(),completed_at:new Date().toISOString(),
       execution_enabled:false,mode:"PAPER_ONLY"
     });
+    const sessionEstimate=classifyXauWeekendSession(Number.isFinite(scheduledTime)?scheduledTime:Date.now());
+    if(sessionEstimate.is_weekend_closed_estimate) return await savePaperMonitorStatus(env,{
+      status:"MARKET_CLOSED",market_session:sessionEstimate,accounts_checked:0,
+      trades_processed:0,closed_trades:0,
+      scheduled_at:new Date(scheduledTime).toISOString(),started_at:startedAt,
+      completed_at:new Date().toISOString(),execution_enabled:false,mode:"PAPER_ONLY",
+      note:"Weekend closure is a calendar estimate only. No provider freshness rule was relaxed and no paper positions were changed."
+    });
     const market=await fetchGoldCandles("xau","15m");
     if(!["LIVE","PARTIAL"].includes(market.status)||!["XAUS","BIQUOTE"].includes(market.provider)||!market.candles?.length)
       throw new Error("Fresh completed XAU/USD 15m candles from an approved provider unavailable; no paper positions were changed");
