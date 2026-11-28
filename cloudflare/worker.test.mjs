@@ -220,6 +220,34 @@ test("XAUS spot fallback requires explicit valid as-of timestamp",async()=>{
   }
 });
 
+test("XAUS spot fallback rejects ambiguous price and unit metadata",async()=>{
+  const variants=[
+    {spot_usd_oz:"4123.45",xau:{price:4123.45,currency:"USD",unit:"oz"}},
+    {spot_usd_oz:4123.45,xau:{price:4123.45,currency:"EUR",unit:"oz"}},
+    {spot_usd_oz:4123.45,xau:{price:4123.45,currency:"USD",unit:"gram"}}
+  ];
+  for(let index=0;index<variants.length;index++){
+    const isolatedWorker=(await import("./worker_core.js?xaus-spot-invalid-fields-"+index)).default;
+    globalThis.fetch=async(url)=>{
+      if(String(url).includes("nerkhara.com")) return new Response("provider unavailable",{status:503});
+      if(String(url).includes("xaus.com/api/v1/spot")){
+        const now=new Date().toISOString();
+        return new Response(JSON.stringify({...variants[index],
+          data_state:{status:"fresh",as_of:now,age_seconds:0},updated_at:now}),
+          {status:200,headers:{"content-type":"application/json"}});
+      }
+      throw new Error("Unexpected provider URL: "+url);
+    };
+    try{
+      const response=await isolatedWorker.fetch(new Request("https://unit.test/v1/market/quotes"));
+      const body=await response.json();
+      assert.equal(response.status,200);
+      assert.equal(body.status,"UNAVAILABLE");
+      assert.equal(body.live_quotes,0);
+    }finally{globalThis.fetch=originalFetch;}
+  }
+});
+
 test("XAUS spot fallback rejects stale or non-fresh source data",async()=>{
   const isolatedWorker=(await import("./worker_core.js?xaus-spot-stale-fallback-test")).default;
   globalThis.fetch=async(url)=>{
